@@ -1,21 +1,53 @@
-#### Monitoring des Validateur GnoLand
+# Monitoring GnoLand Validators
 
-L'objectif est de mettre en place des Dashboard Grafana avec un systeme d'alerte quand un validator est en défauts.
+The goal is to set up Grafana dashboards with an alert system to detect when a validator is failing.
 
-liens : 
-- https://docs.gno.land/gno-infrastructure/validators/validators-setting-up-a-new-chain
+## List of Alerts
+- Missing block
+- RAM swap usage
+- CPU usage over 80%
+- Disk usage over 80%
 
-## Environement de test :
+## Tools
+- Docker
+- Prometheus
+- OLTP
+- Node Exporter
+- Discord
 
+## Useful Links
+- [GnoLand Validator Setup Guide](https://docs.gno.land/gno-infrastructure/validators/validators-setting-up-a-new-chain)
 
+---
 
-- Clone repos Gnoland 
-``` git clone git@github.com:gnolang/gno.git ```
+# Testing Environment
 
-# buil Image Gnolan 
+### Step 1: Clone GnoLand Repository
+```sh
+git clone git@github.com:gnolang/gno.git
+```
 
-```docker build -t gnoland-image --target=gnoland . ```
+### Step 2: Build GnoLand Docker Image
+```sh
+docker build -t gnoland-image --target=gnoland .
+```
 
-# docker compose 
+### Step 3: Clone This Repository
+```sh
+git clone <repository_url>
+```
 
+---
+
+# Installation Steps
+
+## Install Prometheus
+
+## Install Grafana
+
+## Configure Data Sources
+
+## Set Up Dashboards
+
+## Configure Alerts
 
