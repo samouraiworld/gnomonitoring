@@ -22,7 +22,7 @@ fast_sync = true
 home = ""
 
 # A custom human readable name for this node
-moniker = "louis-ThinkPad-T470"
+moniker = "895b61949155"
 
 # Path to the JSON file containing the private key to use for node authentication in the p2p protocol
 node_key_file = "secrets/node_key.json"
@@ -40,7 +40,7 @@ priv_validator_state_file = "secrets/priv_validator_state.json"
 # TCP or UNIX socket address for the profiling server to listen on
 prof_laddr = ""
 
-# TCP or UNIX socket address of the ABCI application,
+# TCP or UNIX socket address of the ABCI application, 
 # or the name of an ABCI application compiled in with the Tendermint binary
 proxy_app = "tcp://127.0.0.1:26658"
 
@@ -207,7 +207,7 @@ proxy_app = "tcp://127.0.0.1:26658"
   enabled = true
 
   # the endpoint to export metrics to, like a local OpenTelemetry collector
-  exporter_endpoint = "localhost:4317"
+  exporter_endpoint = "otel-collector:4317"
   meter_name = "tm2"
 
   # the ID helps to distinguish instances of the same service that exist at the same time (e.g. instances of a horizontally scaled service), in Prometheus this is transformed into the label 'exported_instance

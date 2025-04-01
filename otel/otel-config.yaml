@@ -11,11 +11,11 @@ processors:
 exporters:
   prometheus:
     endpoint: "0.0.0.0:9464"
-  debug:  # Remplacer "logging" par "debug"
+  debug:  
 
 service:
   pipelines:
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [prometheus, debug]  # Remplacer "logging" par "debug"
+      exporters: [prometheus, debug]  
