@@ -18,7 +18,8 @@ services:  # Correction ici (services au lieu de service)
     image: gnolang/gnoland:latest
     container_name: validator1
     volumes:
-      - ./validator1:/root/.gno
+      - ./validator1/config.toml:/root/gnoland-data/config.toml
+      - ./validator1/genesis.json:/root/gno/genesis.json      
     ports:
       - "26656:26656"  # P2P
       - "26657:26657"  # RPC
