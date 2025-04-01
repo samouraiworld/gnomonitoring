@@ -1,11 +1,11 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 
-Validateur/secrets/*
+Validateur/gnoland-data/secrets/*
 
-Validateur/db/*
+Validateur/gnoland-data/db/*
 
-Validateur/wal/*
+Validateur/gnoland-data/wal/*
 
 
-Validateur/genesis.json
+

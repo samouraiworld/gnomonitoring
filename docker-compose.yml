@@ -17,14 +17,16 @@ services:
     volumes:
       - ./Validateur/gnoland-data:/gnoroot/gnoland-data/:rw
       - ./Validateur/genesis.json:/gnoroot/genesis.json
+      - initValidator.sh:/gnoroot/initValidator.sh
     ports:
       - "26656:26656" # P2P
       - "26657:26657" # RPC
       - "26660:26660" # Metrics (si activé dans Gnoland)
     #command: [ "gnoland", "start", "--lazy" ]
-    command: [ "gnoland", "start", "config", "/gnoroot/gnoland-data/config/config.toml" ]
+    #command: [ "gnoland", "start", "config", "/gnoroot/gnoland-data/config/config.toml" ]
     networks:
       - monitoring
+    entrypoint: [ "sh", "/gnoroot/entrypoint.sh" ] # Utilisation du script
 
 networks:
   monitoring:
