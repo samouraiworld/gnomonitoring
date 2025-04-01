@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:9464']
+
+  - job_name: "node_exporter"
+    static_configs:
+      - targets: ["192.168.49.1:9100"]

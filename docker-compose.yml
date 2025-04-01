@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:  # Correction ici (services au lieu de service)
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    volumes:
+      - .otel/otel-config.yaml:/etc/otel/config.yaml
+    command: ["--config=/etc/otel/config.yaml"]
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+      - "9464:9464"  # Exposition des métriques pour Prometheus
+    networks:
+      - monitoring
+  
+  validator1:
+    image: gnolang/gnoland:latest
+    container_name: validator1
+    volumes:
+      - ./validator1:/root/.gno
+    ports:
+      - "26656:26656"  # P2P
+      - "26657:26657"  # RPC
+      - "26660:26660"  # Metrics
+    command: ["gno", "start"]
+
+networks:
+  monitoring:
+    driver: bridge
