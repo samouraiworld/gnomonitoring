@@ -15,18 +15,17 @@ services:
     image: gnoland-image:latest
     container_name: validator1
     volumes:
-      - ./Validateur/gnoland-data:/gnoroot/gnoland-data/:rw
-      - ./Validateur/genesis.json:/gnoroot/genesis.json
-      - initValidator.sh:/gnoroot/initValidator.sh
+      - ./initvalidator.sh:/gnoroot/initvalidator.sh
+      - ./Validateur/config.toml:/gnoroot/gnoland-data/config/config.toml
     ports:
       - "26656:26656" # P2P
       - "26657:26657" # RPC
       - "26660:26660" # Metrics (si activé dans Gnoland)
     #command: [ "gnoland", "start", "--lazy" ]
     #command: [ "gnoland", "start", "config", "/gnoroot/gnoland-data/config/config.toml" ]
+    entrypoint: [ "sh", "/gnoroot/initvalidator.sh" ]
     networks:
       - monitoring
-    entrypoint: [ "sh", "/gnoroot/entrypoint.sh" ] # Utilisation du script
 
 networks:
   monitoring:

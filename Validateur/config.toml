@@ -22,7 +22,7 @@ fast_sync = true
 home = ""
 
 # A custom human readable name for this node
-moniker = "895b61949155"
+moniker = "2ac1edfd4a04"
 
 # Path to the JSON file containing the private key to use for node authentication in the p2p protocol
 node_key_file = "secrets/node_key.json"
