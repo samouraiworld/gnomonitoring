@@ -3,7 +3,12 @@
 The goal is to set up Grafana dashboards with an alert system to detect when a validator is failing.
 
 ## List of Alerts
-- Missing block
+- Missing block : 
+To know if a block is missing is simple: it's the difference between the total number of blocks received and the number of blocks signed. The metrics provided via telemetry do not give this information. However, through the RPC, we can retrieve this data.
+
+So, I created a Go code to expose these metrics to Prometheus.
+
+
 - RAM swap usage
 - CPU usage over 80%
 - Disk usage over 80%
