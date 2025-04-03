@@ -82,14 +82,36 @@ cd ../gnomonitoring/MissingBlock
 
 ---
 
-## Installation Steps
+## Install Prometheus / Grafana / node_exporter with Ansible
 
-## Install Prometheus
-
-## Install Grafana
-
-## Configure Data Sources
+## Configure Data Sources of Grafana
 
 ## Set Up Dashboards
 
 ## Configure Alerts
+
+## Recommandation
+
+The naming of targets in Prometheus is important for several reasons, notably for effective management of alerts, queries, and dashboards in Grafana.
+
+Here's why naming targets plays a crucial role:
+
+- **Data Organization**: The name of the targets makes it easy to identify and organize data. For example, naming a target as gnoland_validator_1 allows you to quickly distinguish different validators or services. This helps avoid confusion when there are multiple data sources in Prometheus.
+
+- **Selection in Grafana**: When configuring panels in Grafana, the target's name plays an important role in correctly retrieving metrics. If a target is misnamed, it may become difficult to select the right metrics or create queries to display data in the dashboards.
+
+- **Alerts and Filtering**: Prometheus alerts can be configured to be triggered by specific conditions on particular targets. If the target names are inconsistent, it can complicate alert management, making it harder to monitor specific services or validators.
+
+##### Best Practices for Naming Targets in Prometheus
+
+Here are some good practices to follow when naming your targets in Prometheus:
+
+- **Precise and Descriptive**: Use names that are precise and easy to understand. For example, for a validator, use gnoland_validator_1 instead of validator_1, especially if you have multiple validators.
+
+- **Use Labels**: In addition to the target name, Prometheus allows you to add labels to distinguish different aspects of the same target. For example, for a validator, you can use a label like validator="gnoland_validator_1". This will allow you to filter metrics more easily based on these labels in Grafana.
+
+- **Consistent Format**: If you're monitoring multiple services, make sure to adopt a consistent naming convention. For example, if monitoring multiple validators, you could have targets like gnoland_validator_1, gnoland_validator_2, etc.
+
+- **Include Useful Details**: You can include information about the version or environment of the validator in the target name. For example: gnoland_validator_1_v1.0 or gnoland_validator_1_prod.
+
+By following these recommendations, you simplify the management of targets in Prometheus, and this makes using Grafana smoother and more consistent for creating dashboards and alerts
