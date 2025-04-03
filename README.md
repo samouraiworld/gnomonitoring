@@ -10,12 +10,32 @@ Once the telemetry was enabled, I realized there was no information regarding mi
 
 Finally, I started configuring Grafana for alerts, with CPU stress tests.
 
+---
+
+## Architecture
+
+---
+
 ## List of Alerts
 
 - Missing block :
-To know if a block is missing is simple: it's the difference between the total number of blocks received and the number of blocks signed. The metrics provided via telemetry do not give this information. However, through the RPC, we can retrieve this data.
+    To know if a block is missing is simple: it's the difference between the total number of blocks received and the number of blocks signed. The metrics provided via telemetry do not give this information.
 
-So, I created a Go code to expose these metrics to Prometheus.
+    Using RPC to Retrieve Metrics:
+     To get these metrics, I used the RPC APIs of Gnoland, such as the status API (to get the latest block number) and the validators API (to retrieve validation information, particularly signed blocks).
+
+    Programming in Go to Expose Metrics: I wrote a Go program that makes HTTP requests to the Gnoland RPC API to retrieve this information, processes it, and exposes the results as Prometheus metrics.
+
+        Created Metrics:
+
+        - gnoland_total_blocks: The total number of blocks received.
+        - gnoland_signed_blocks: The number of blocks signed by the validator.
+        - gnoland_missed_blocks: The number of blocks missed by the validator.
+
+    Setting up the Exporter with Docker: I created a Dockerfile to containerize my Go program and make it available in a Docker container.
+
+        - I used a Golang base image to build the Go program.
+        - After building the program, I created a lighter final image based on Alpine for running the program.
 
 - RAM swap usage
 - CPU usage over 80%
