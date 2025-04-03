@@ -1,0 +1,98 @@
+---
+- name: Install Prometheus on Debian
+  hosts: debian
+  become: yes
+  vars:
+    prometheus_version: "2.44.0"  # Remplacez par la version souhaitée
+
+  tasks:
+    - name: Mettre à jour la liste des paquets
+      apt:
+        update_cache: yes
+
+    - name: Installer les dépendances nécessaires
+      apt:
+        name:
+          - wget
+          - tar
+          - curl
+        state: present
+
+    - name: Télécharger Prometheus
+      get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+
+    - name: Extraire l'archive de Prometheus
+      unarchive:
+        src: "/tmp/prometheus-{{ prometheus_version }}.tar.gz"
+        dest: "/opt"
+        remote_src: yes
+
+    - name: Créer un utilisateur Prometheus
+      user:
+        name: prometheus
+        shell: /bin/bash
+        create_home: no
+
+    - name: Créer les répertoires pour Prometheus
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+        - /var/log/prometheus
+
+    - name: Copier le fichier de configuration Prometheus
+      copy:
+        src: /opt/prometheus-{{ prometheus_version }}.linux-amd64/prometheus.yml
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: '0644'
+
+    - name: Copier les binaires Prometheus
+      copy:
+        src: "/opt/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        owner: prometheus
+        group: prometheus
+        mode: '0755'
+      loop:
+        - prometheus
+        - promtool
+
+    - name: Créer un service systemd pour Prometheus
+      copy:
+        dest: /etc/systemd/system/prometheus.service
+        content: |
+          [Unit]
+          Description=Prometheus Monitoring
+          After=network.target
+
+          [Service]
+          User=prometheus
+          Group=prometheus
+          ExecStart=/usr/local/bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/var/lib/prometheus/ --web.listen-address=0.0.0.0:9090
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Recharger les unités systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Démarrer le service Prometheus
+      systemd:
+        name: prometheus
+        state: started
+        enabled: yes
+
+    - name: Vérifier que Prometheus fonctionne
+      uri:
+        url: http://localhost:9090
+        status_code: 200
