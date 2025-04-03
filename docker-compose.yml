@@ -11,6 +11,15 @@ services:
     networks:
       - monitoring
 
+  block-exporter:
+    image: block_exporter
+    container_name: block-exporter
+    ports:
+      - "8080:8080" # Port pour l’export des métriques
+    networks:
+      - monitoring
+    command: [ "go", "run", "block_exporter.go" ]
+
   validator1:
     image: gnoland-image:latest
     container_name: validator1

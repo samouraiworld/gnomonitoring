@@ -1,14 +1,8 @@
 FROM golang:1.22 as builder
 
-WORKDIR /app
-COPY . .
+WORKDIR /root
+COPY go.mod go.sum block_exporter.go ./
 
 RUN go mod tidy
 RUN go build -o block_exporter .
 
-# Image finale
-FROM alpine:latest
-WORKDIR /root/
-COPY --from=builder /app/block_exporter .
-
-CMD ["./block_exporter"]

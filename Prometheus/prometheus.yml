@@ -8,4 +8,4 @@ scrape_configs:
 
   - job_name: "node_exporter"
     static_configs:
-      - targets: ["192.168.49.1:9100"]
+      - targets: ["localhost:9100"]

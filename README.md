@@ -14,7 +14,7 @@ So, I created a Go code to expose these metrics to Prometheus.
 - Disk usage over 80%
 
 ## Tools
-- Docker
+- Docker 
 - Prometheus
 - OLTP
 - Node Exporter
@@ -27,20 +27,29 @@ So, I created a Go code to expose these metrics to Prometheus.
 
 # Testing Environment
 
-### Step 1: Clone GnoLand Repository
+### Step 1: Clone GnoLand Repository and this repository 
 ```sh
 git clone git@github.com:gnolang/gno.git
+git clone https://github.com/samouraiworld/gnomonitoring.git
+
 ```
 
-### Step 2: Build GnoLand Docker Image
+### Step 2: Build GnoLand Docker Image and docker image of directory missing block 
 ```sh
+cd gno/
 docker build -t gnoland-image --target=gnoland .
+cd ../gnomonitoring/MissingBlock
+./build.sh 
+```
+### Step 3: Clone This Repository and compose 
+```sh
+
 ```
 
-### Step 3: Clone This Repository
-```sh
-git clone <repository_url>
-```
+
+
+
+
 
 ---
 
