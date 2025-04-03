@@ -2,14 +2,13 @@
 
 The goal is to set up Grafana dashboards with an alert system to detect when a validator is failing.
 
-En premier,il as fallut comprendre la logique d un validateur sur gnoland. j'ai dábord suivis le setup guide de gnoland pour installer un validateur en local. J'ai par la suite chercher si il y avait des logs que je pouvais transformer en metrics pour prometheus.
-Navigant dans la configuration je me suis apercu qu on pouvais activer des télemetrie. Et que gnoland nous fournissait dans le repertoire misc telemtry des dashboard Grafana et qu il fallait utilisé oltp pour transformer les metrics pour prometheus.
+First, I had to understand the logic of a validator on Gnoland. I followed the Gnoland setup guide to set up a local validator. Then, I explored the logs to see if there was any data that could be transformed into metrics for Prometheus. While navigating through the configuration, I found that telemetry could be activated, and Gnoland provided Grafana dashboards in the misc/telemetry folder. It was also necessary to use OLTP to transform the metrics and expose them to Prometheus.
 
-J ai donc crée un docker-compose avec deux service: OLTP et un validateur gnoland. J ai pousser cela sur le serveur monitorting pour commencer mes testes. Bien evidement au préalable j ai installer Grafana, Prometheus, docker et un node_exporter sur le serveur monitoring en tant que service.
+I then created a docker-compose file with two services: OLTP and a Gnoland validator. I deployed this on the monitoring server to begin my tests. Of course, I had previously installed Grafana, Prometheus, Docker, and node_exporter on the monitoring server as services.
 
-Une fois les telemtry activer je me suis apercu qu'il n avait pas d'information sur les bloks perdu, il fallait les calculers. Les informations necesaire etant disponible via le rpc du validateur dans la parti status et Validateur.
+Once the telemetry was enabled, I realized there was no information regarding missed blocks, which needed to be calculated. The necessary information was available through the validator's RPC, in the status and validator sections. I then created a Go program to calculate and expose these metrics to Prometheus. I containerized this program in Docker and integrated it into my docker-compose file.
 
- Une fois maitrisé cela en local, j ai construit l'image docker d'un validateur.
+Finally, I started configuring Grafana for alerts, with CPU stress tests.
 
 ## List of Alerts
 
