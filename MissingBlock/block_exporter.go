@@ -1,176 +1,116 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
+	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
+	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gopkg.in/yaml.v3"
 )
 
-// Structure de la configuration
+// Structure de configuration YAML
 type Config struct {
+	RPCEndpoint      string `yaml:"rpc_endpoint"`
 	ValidatorAddress string `yaml:"validator_address"`
 }
 
 var config Config
 
-// Structures pour le parsing JSON
-type StatusResponse struct {
-	Result struct {
-		SyncInfo struct {
-			LatestBlockHeight string `json:"latest_block_height"`
-		} `json:"sync_info"`
-	} `json:"result"`
-}
-
-type ValidatorResponse struct {
-	Result struct {
-		BlockHeight  string `json:"block_height"` // Ce champ est maintenant un string, comme retourné par l'API
-		SignedBlocks int    `json:"signed_blocks"`
-	} `json:"result"`
-}
-
-// Définition des métriques Prometheus
-var (
-	totalBlocks = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "gnoland_total_blocks",
-		Help: "Total number of blocks received by the validator",
-	})
-
-	signedBlocks = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "gnoland_signed_blocks",
-		Help: "Total number of blocks signed by the validator",
-	})
-
-	missedBlocks = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "gnoland_missed_blocks",
-		Help: "Total number of blocks missed by the validator",
-	})
-)
-
-// Charger la configuration depuis un fichier YAML
+// Charger config.yaml
 func loadConfig() {
-	bytes, err := os.ReadFile("config.yaml") // Utilisation de os.ReadFile
+	data, err := os.ReadFile("config.yaml")
 	if err != nil {
 		log.Fatalf("Error reading config file: %v", err)
 	}
 
-	err = yaml.Unmarshal(bytes, &config)
+	err = yaml.Unmarshal(data, &config)
 	if err != nil {
-		log.Fatalf("Error parsing YAML: %v", err)
+		log.Fatalf("Error parsing config file: %v", err)
 	}
-	log.Println("Configuration loaded:", config)
+
+	log.Printf("Config loaded: RPC=%s, Validator=%s\n", config.RPCEndpoint, config.ValidatorAddress)
 }
 
-// Structure pour suivre l'état des blocs
-type ValidatorState struct {
-	LastSignedBlock int // Dernier bloc signé
-	MissedBlocks    int // Nombre de blocs manqués
-}
+var (
+	missedBlocks = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "gnoland_missed_blocks",
+		Help: "Number of blocks missed by the validator",
+	})
 
-var validatorsMap = make(map[string]*ValidatorState)
-
-// Fonction pour récupérer les métriques
-func fetchMetrics() {
-	// Récupérer l'état général du validateur (numéro de bloc)
-	statusURL := config.ValidatorAddress + "/status"
-	statusResp, err := http.Get(statusURL)
-	if err != nil {
-		log.Println("Error fetching status from RPC:", err)
-		return
-	}
-	defer statusResp.Body.Close()
-
-	var status StatusResponse
-	if err := json.NewDecoder(statusResp.Body).Decode(&status); err != nil {
-		log.Println("Error decoding status JSON:", err)
-		return
-	}
-
-	// Récupérer les informations spécifiques au validateur (bloc signé)
-	validatorURL := config.ValidatorAddress + "/validators"
-	validatorResp, err := http.Get(validatorURL)
-	if err != nil {
-		log.Println("Error fetching validator info from RPC:", err)
-		return
-	}
-	defer validatorResp.Body.Close()
-
-	var validator ValidatorResponse
-	if err := json.NewDecoder(validatorResp.Body).Decode(&validator); err != nil {
-		log.Println("Error decoding validator JSON:", err)
-		return
-	}
-
-	// Conversion des chaînes en int
-	totalBlocksHeight, err := strconv.Atoi(status.Result.SyncInfo.LatestBlockHeight)
-	if err != nil {
-		log.Println("Error converting LatestBlockHeight:", err)
-		return
-	}
-
-	// Convertir block_height en int
-	signedBlocksCount, err := strconv.Atoi(validator.Result.BlockHeight)
-	if err != nil {
-		log.Println("Error converting BlockHeight:", err)
-		return
-	}
-
-	// Mise à jour des métriques
-	totalBlocks.Set(float64(totalBlocksHeight))
-	signedBlocks.Set(float64(signedBlocksCount))
-
-	// Initialiser ou mettre à jour l'état du validateur dans la map
-	if _, exists := validatorsMap[config.ValidatorAddress]; !exists {
-		// Si le validateur n'existe pas dans la map, on l'ajoute
-		validatorsMap[config.ValidatorAddress] = &ValidatorState{
-			LastSignedBlock: signedBlocksCount,
-			MissedBlocks:    0,
-		}
-	}
-
-	// Vérification des blocs manqués
-	validatorState := validatorsMap[config.ValidatorAddress]
-
-	// Si le validateur a manqué des blocs
-	if signedBlocksCount > validatorState.LastSignedBlock+1 {
-		missedBlocksCount := signedBlocksCount - validatorState.LastSignedBlock - 1
-		validatorState.MissedBlocks += missedBlocksCount
-	}
-
-	// Mettre à jour le dernier bloc signé
-	validatorState.LastSignedBlock = signedBlocksCount
-
-	// Mise à jour de la métrique des blocs manqués
-	missedBlocks.Set(float64(validatorState.MissedBlocks))
-}
+	consecutiveMissedBlocks = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "gnoland_consecutive_missed_blocks",
+		Help: "Number of consecutive missed blocks by the validator",
+	})
+)
 
 func main() {
-	// Charger la configuration
 	loadConfig()
 
-	// Enregistrement des métriques
-	prometheus.MustRegister(totalBlocks)
-	prometheus.MustRegister(signedBlocks)
 	prometheus.MustRegister(missedBlocks)
+	prometheus.MustRegister(consecutiveMissedBlocks)
 
-	// Mise à jour des métriques toutes les 10 secondes
+	rpcClient, err := rpcclient.NewHTTPClient(config.RPCEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to connect to RPC: %v", err)
+	}
+
+	client := gnoclient.Client{RPCClient: rpcClient}
+
 	go func() {
+		missedTotal := 0
+		consecutive := 0
+		var previousHeight int64 = 0
+
 		for {
-			fetchMetrics()
-			log.Println("Metrics updated")
-			time.Sleep(10 * time.Second)
+			height, err := client.LatestBlockHeight()
+			if err != nil {
+				log.Println("Error fetching latest height:", err)
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			if height == previousHeight {
+				time.Sleep(1 * time.Second)
+				continue
+			}
+			previousHeight = height
+
+			block, err := client.Block(height)
+			if err != nil {
+				log.Println("Error fetching block:", err)
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			found := false
+			for _, precommit := range block.Block.LastCommit.Precommits {
+				if precommit != nil && precommit.ValidatorAddress.String() == config.ValidatorAddress {
+					found = true
+					break
+				}
+			}
+
+			if found {
+				consecutive = 0
+			} else {
+				missedTotal++
+				consecutive++
+				log.Printf("Validator missed block %d\n", height)
+			}
+
+			missedBlocks.Set(float64(missedTotal))
+			consecutiveMissedBlocks.Set(float64(consecutive))
+
+			time.Sleep(1 * time.Second)
 		}
 	}()
 
-	// Serveur HTTP pour Prometheus
 	http.Handle("/metrics", promhttp.Handler())
-	log.Println("Starting metrics server on :8888")
+	log.Println("Prometheus metrics available on :8888/metrics")
 	log.Fatal(http.ListenAndServe(":8888", nil))
 }

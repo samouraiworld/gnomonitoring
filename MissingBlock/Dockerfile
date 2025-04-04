@@ -1,4 +1,4 @@
-FROM golang:1.22 as builder
+FROM golang:1.23.4 as builder
 
 WORKDIR /root
 COPY go.mod go.sum block_exporter.go ./

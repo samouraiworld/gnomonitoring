@@ -18,7 +18,7 @@ services:
       - ./MissingBlock/block_exporter.go:/root/block_exporter.go
       - ./MissingBlock/config.yaml:/root/config.yaml
       - ./MissingBlock/go.mod:/root/go.mod
-      - ./MissingBlock/sum.go:/root/sum.mod
+      - ./MissingBlock/sum.go:/root/sum.go
     ports:
       - "8888:8888" # Port pour l’export des métriques
     networks:
