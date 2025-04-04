@@ -14,8 +14,13 @@ services:
   block-exporter:
     image: block_exporter
     container_name: block-exporter
+    volumes:
+      - ./MissingBlock/block_exporter.go:/root/block_exporter.go
+      - ./MissingBlock/config.yaml:/root/config.yaml
+      - ./MissingBlock/go.mod:/root/go.mod
+      - ./MissingBlock/sum.go:/root/sum.mod
     ports:
-      - "8080:8080" # Port pour l’export des métriques
+      - "8888:8888" # Port pour l’export des métriques
     networks:
       - monitoring
     command: [ "go", "run", "block_exporter.go" ]

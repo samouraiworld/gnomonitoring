@@ -5,7 +5,8 @@ TUNNELS=(
     "9464:127.0.0.1:9464 root@monitoring" #oltp
     "9090:127.0.0.1:9090 root@monitoring" #node_exporter
     "9100:127.0.0.1:9100 root@monitoring" #prometheus
-    "26657:127.0.0.1:26657 root@monitoring" #prometheus
+    "26657:127.0.0.1:26657 root@monitoring" #rpc
+    "8888:127.0.0.1:8888 root@monitoring" #block_exproter
 )
 
 

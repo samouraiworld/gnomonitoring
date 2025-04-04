@@ -31,8 +31,9 @@ type StatusResponse struct {
 
 type ValidatorResponse struct {
 	Result struct {
-		BlockHeight  string `json:"block_height"` // Ce champ est maintenant un string, comme retourné par l'API
-		SignedBlocks int    `json:"signed_blocks"`
+		ValidatorInfo struct {
+			SignedBlocks int `json:"signed_blocks"`
+		} `json:"validator_info"`
 	} `json:"result"`
 }
 
@@ -67,14 +68,6 @@ func loadConfig() {
 	}
 	log.Println("Configuration loaded:", config)
 }
-
-// Structure pour suivre l'état des blocs
-type ValidatorState struct {
-	LastSignedBlock int // Dernier bloc signé
-	MissedBlocks    int // Nombre de blocs manqués
-}
-
-var validatorsMap = make(map[string]*ValidatorState)
 
 // Fonction pour récupérer les métriques
 func fetchMetrics() {
@@ -115,40 +108,12 @@ func fetchMetrics() {
 		return
 	}
 
-	// Convertir block_height en int
-	signedBlocksCount, err := strconv.Atoi(validator.Result.BlockHeight)
-	if err != nil {
-		log.Println("Error converting BlockHeight:", err)
-		return
-	}
+	signedBlocksCount := validator.Result.BlockHeight
 
 	// Mise à jour des métriques
 	totalBlocks.Set(float64(totalBlocksHeight))
 	signedBlocks.Set(float64(signedBlocksCount))
-
-	// Initialiser ou mettre à jour l'état du validateur dans la map
-	if _, exists := validatorsMap[config.ValidatorAddress]; !exists {
-		// Si le validateur n'existe pas dans la map, on l'ajoute
-		validatorsMap[config.ValidatorAddress] = &ValidatorState{
-			LastSignedBlock: signedBlocksCount,
-			MissedBlocks:    0,
-		}
-	}
-
-	// Vérification des blocs manqués
-	validatorState := validatorsMap[config.ValidatorAddress]
-
-	// Si le validateur a manqué des blocs
-	if signedBlocksCount > validatorState.LastSignedBlock+1 {
-		missedBlocksCount := signedBlocksCount - validatorState.LastSignedBlock - 1
-		validatorState.MissedBlocks += missedBlocksCount
-	}
-
-	// Mettre à jour le dernier bloc signé
-	validatorState.LastSignedBlock = signedBlocksCount
-
-	// Mise à jour de la métrique des blocs manqués
-	missedBlocks.Set(float64(validatorState.MissedBlocks))
+	missedBlocks.Set(float64(totalBlocksHeight - signedBlocksCount))
 }
 
 func main() {
