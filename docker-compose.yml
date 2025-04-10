@@ -6,8 +6,8 @@ services:
       - ./otel/otel-config.yaml:/etc/otel/config.yaml
     command: [ "--config=/etc/otel/config.yaml" ]
     ports:
-      - "9464:9464" # for Prometheus
-      - "4317:4317" # for Gnoland
+      - "127.0.0.1:9464:9464" # for Prometheus
+      - "127.0.0.1:4317:4317" # for Gnoland
     networks:
       - monitoring
 
@@ -20,7 +20,7 @@ services:
       - ./MissingBlock/go.mod:/root/go.mod
       - ./MissingBlock/sum.go:/root/sum.go
     ports:
-      - "8888:8888" # Port pour l’export des métriques
+      - "127.0.0.1:8888:8888" # Port pour l’export des métriques
     networks:
       - monitoring
     command: [ "go", "run", "block_exporter.go" ]
@@ -32,9 +32,9 @@ services:
       - ./initvalidator.sh:/gnoroot/initvalidator.sh
       - ./Validateur/config.toml:/gnoroot/gnoland-data/config/config.toml
     ports:
-      - "26656:26656" # P2P
-      - "26657:26657" # RPC
-      - "26660:26660" # Metrics (si activé dans Gnoland)
+      - "127.0.0.1:26656:26656" # P2P
+      - "127.0.0.1:26657:26657" # RPC
+      - "127.0.0.1:26660:26660" # Metrics (si activé dans Gnoland)
     #command: [ "gnoland", "start", "--lazy" ]
     #command: [ "gnoland", "start", "config", "/gnoroot/gnoland-data/config/config.toml" ]
     entrypoint: [ "sh", "/gnoroot/initvalidator.sh" ]
@@ -46,7 +46,7 @@ services:
     container_name: cadvisor
     restart: unless-stopped
     ports:
-      - "9090:8080"
+      - "127.0.0.1:9191:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
