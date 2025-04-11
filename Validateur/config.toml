@@ -22,7 +22,7 @@ fast_sync = true
 home = ""
 
 # A custom human readable name for this node
-moniker = "2ac1edfd4a04"
+moniker = "validator1"
 
 # Path to the JSON file containing the private key to use for node authentication in the p2p protocol
 node_key_file = "secrets/node_key.json"
@@ -117,7 +117,7 @@ proxy_app = "tcp://127.0.0.1:26658"
   max_packet_msg_payload_size = 1024
 
   # Comma separated list of nodes to keep persistent connections to
-  persistent_peers = ""
+  persistent_peers = "validator2:26656"
 
   # Set true to enable the peer-exchange reactor
   pex = true

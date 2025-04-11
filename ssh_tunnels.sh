@@ -7,6 +7,7 @@ TUNNELS=(
     "9100:127.0.0.1:9100 root@monitoring" #prometheus
     "26657:127.0.0.1:26657 root@monitoring" #rpc
     "8888:127.0.0.1:8888 root@monitoring" #block_exproter
+    "9191:127.0.0.1:9191 root@monitoring" #Cadvisor
 )
 
 
