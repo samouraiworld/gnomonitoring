@@ -31,7 +31,7 @@ services:
     volumes:
       - ./initvalidator.sh:/gnoroot/initvalidator.sh
       - ./Validateur/config.toml:/gnoroot/gnoland-data/config/config.toml
-      - ./Validateur/genesis.json:/gnoroot/genesis.json
+      #- ./Validateur/genesis.json:/gnoroot/genesis.json
       - ./Validateur/secrets:/gnoroot/gnoland-data/secrets
     ports:
       - "127.0.0.1:26656:26656" # P2P
@@ -47,9 +47,9 @@ services:
     image: gnoland-image:latest
     container_name: validator2
     volumes:
-      # - ./initvalidator.sh:/gnoroot/initvalidator.sh
+      - ./initvalidator2.sh:/gnoroot/initvalidator.sh
       - ./Validateur/config.toml:/gnoroot/config.toml
-      - ./Validateur/genesis.json:/gnoroot/genesis.json
+      - ./Validateur/genesis.json:/gnoroot/gnoland-data/genesis.json
       #- ./Validateur/secrets:/gnoroot/gnoland-data/secrets
     ports:
       - "26656" # P2P
@@ -57,8 +57,7 @@ services:
       - "26660" # Metrics (si activé dans Gnoland)
     #command: [ "gnoland", "start", "--lazy" ]
     #command: [ "gnoland", "start", "config", "/gnoroot/gnoland-data/config/config.toml" ]
-    # entrypoint: [ "sh", "/gnoroot/initvalidator.sh" ]
-    command: [ "tail", "-f", "/dev/null" ]
+    entrypoint: [ "sh", "/gnoroot/initvalidator.sh" ]
     networks:
       - monitoring
 

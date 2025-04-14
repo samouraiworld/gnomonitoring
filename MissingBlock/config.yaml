@@ -1,2 +1,2 @@
-rpc_endpoint: "http://172.21.0.1:26657"
-validator_address: "g13569ncavrghtcty4f7wds378skzwm9w3p2lt56"
+rpc_endpoint: "http://validator1:26657"
+validator_address: "g14r850k2q3pdqn3tzxmvmdvc3ltuz5kmszd8h08"

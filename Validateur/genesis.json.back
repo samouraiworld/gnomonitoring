@@ -19,16 +19,7 @@
         "value": "Kqdx+WLKOgB9cX8oY2mqLutsGrdZt14YGYHte4FkDBQ="
       },
       "power": "10",
-      "name": "validator1"
-    },
-    {
-      "address": "g1g5vzx9u5gglj87jf6namye2zjzq62w53v76eq6",
-      "pub_key": {
-        "@type": "/tm.PubKeyEd25519",
-        "value": "DenY7T6/EzS8k3pQXvmxTLUDIDeVnTHsUIxknbnGPw4="
-      },
-      "power": "10",
-      "name": "validator2"
+      "name": "testvalidator"
     }
   ],
   "app_hash": null,
