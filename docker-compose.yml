@@ -15,10 +15,10 @@ services:
     image: block_exporter
     container_name: block-exporter
     volumes:
-      - ./MissingBlock/block_exporter.go:/root/block_exporter.go
-      - ./MissingBlock/config.yaml:/root/config.yaml
-      - ./MissingBlock/go.mod:/root/go.mod
-      - ./MissingBlock/sum.go:/root/sum.go
+      - ./block_exporter/block_exporter.go:/root/block_exporter.go
+      - ./block_exporter/config.yaml:/root/config.yaml
+      - ./block_exporter/go.mod:/root/go.mod
+      - ./block_exporter/sum.go:/root/sum.go
     ports:
       - "127.0.0.1:8888:8888" # Port pour l’export des métriques
     networks:
@@ -29,34 +29,14 @@ services:
     image: gnoland-image:latest
     container_name: validator1
     volumes:
-      - ./initvalidator.sh:/gnoroot/initvalidator.sh
-      - ./Validateur/config.toml:/gnoroot/gnoland-data/config/config.toml
-      #- ./Validateur/genesis.json:/gnoroot/genesis.json
-      - ./Validateur/secrets:/gnoroot/gnoland-data/secrets
+      - ./Validator/initvalidator.sh:/gnoroot/initvalidator.sh
+      - ./Validator/config.toml:/gnoroot/config.toml
+     # - ./Validator/genesis.json:/gnoroot/genesis.json
+      #- ./Validator/secrets/:/gnoroot/gnoland-data/secrets/
     ports:
       - "127.0.0.1:26656:26656" # P2P
       - "127.0.0.1:26657:26657" # RPC
       - "127.0.0.1:26660:26660" # Metrics (si activé dans Gnoland)
-    #command: [ "gnoland", "start", "--lazy" ]
-    #command: [ "gnoland", "start", "config", "/gnoroot/gnoland-data/config/config.toml" ]
-    entrypoint: [ "sh", "/gnoroot/initvalidator.sh" ]
-    networks:
-      - monitoring
-
-  validator2:
-    image: gnoland-image:latest
-    container_name: validator2
-    volumes:
-      - ./initvalidator2.sh:/gnoroot/initvalidator.sh
-      - ./Validateur/config.toml:/gnoroot/config.toml
-      - ./Validateur/genesis.json:/gnoroot/gnoland-data/genesis.json
-      #- ./Validateur/secrets:/gnoroot/gnoland-data/secrets
-    ports:
-      - "26656" # P2P
-      - "26657" # RPC
-      - "26660" # Metrics (si activé dans Gnoland)
-    #command: [ "gnoland", "start", "--lazy" ]
-    #command: [ "gnoland", "start", "config", "/gnoroot/gnoland-data/config/config.toml" ]
     entrypoint: [ "sh", "/gnoroot/initvalidator.sh" ]
     networks:
       - monitoring

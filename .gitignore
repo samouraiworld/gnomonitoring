@@ -1,11 +1,6 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-
-Validateur/gnoland-data/secrets/*
-
-Validateur/gnoland-data/db/*
-
-Validateur/gnoland-data/wal/*
+Validator/secrets/*
 
 
 
