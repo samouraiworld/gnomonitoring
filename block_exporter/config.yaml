@@ -1,2 +1,2 @@
-rpc_endpoint: "http://validator1:26657"
-validator_address: "g1wyh0n8htkjnqaz3t56uhpqkf2fmej29xtegwx8"
+rpc_endpoint: "https://rpc.test6.testnets.gno.land"
+validator_address: "g1p3lyk676gludkk6hqceem58c6xgnpsld45s4v9"
