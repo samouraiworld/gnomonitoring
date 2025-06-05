@@ -2,17 +2,17 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"regexp"
 )
 
 func main() {
-	addr := "g1tq3gyzjmuu4gzu4np4ckfgun87j540gvx43d65"
-	addr := 
-	url := fmt.Sprintf("https://test6.testnets.gno.land/r/gnoland/valopers/v2:%s", addr)
+	//addr := "g1tq3gyzjmuu4gzu4np4ckfgun87j540gvx43d65"
 
+	//url := fmt.Sprintf("https://test6.testnets.gno.land/r/gnoland/valopers/v2:%s", addr)
+	url := "https://test6.testnets.gno.land/r/gnoland/valopers/v2"
 	resp, err := http.Get(url)
 	if err != nil {
 		log.Fatalf("Erreur HTTP: %v", err)
@@ -23,7 +23,7 @@ func main() {
 		log.Fatalf("Status code non OK: %d", resp.StatusCode)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatalf("Erreur lecture réponse: %v", err)
 	}
@@ -38,3 +38,7 @@ func main() {
 		fmt.Println("Moniker non trouvé")
 	}
 }
+
+
+
+https://test6.api.onbloc.xyz/v1/stats/monthly-active-accounts
