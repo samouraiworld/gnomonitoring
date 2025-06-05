@@ -123,7 +123,27 @@ func main() {
 	}
 
 	log.Printf("Fenêtre glissante initialisée jusqu’au bloc %d.\n", latestHeight)
+	// send report all days
+	go func() {
+		for {
+			// Heure actuelle
+			now := time.Now()
 
+			// Heure du prochain envoi (par exemple à 21h00)
+			next := time.Date(now.Year(), now.Month(), now.Day(), 16, 0, 0, 0, now.Location())
+			if next.Before(now) {
+				next = next.Add(24 * time.Hour)
+			}
+
+			durationUntilNext := next.Sub(now)
+			log.Printf("Prochain rapport Discord dans %s", durationUntilNext)
+
+			time.Sleep(durationUntilNext)
+			sendDailyStats()
+		}
+	}()
+
+	// init Monimap all 5 min if have a news validator
 	go func() {
 		for {
 			initMonikerMap()
@@ -295,5 +315,35 @@ func verifyValidatorCount() {
 		log.Printf(message)
 		// sendDiscordAlert(message)
 
+	}
+}
+func sendDailyStats() {
+	monikerMutex.RLock()
+	defer monikerMutex.RUnlock()
+
+	var buffer bytes.Buffer
+	buffer.WriteString("📊 **Résumé quotidien de la participation** :\n\n")
+
+	for val, rate := range participationRate {
+		moniker := monikerMap[val]
+		if moniker == "" {
+			moniker = "inconnu"
+		}
+
+		emoji := "🟢"
+		if rate < 95.0 {
+			emoji = "🔴"
+		}
+		buffer.WriteString(fmt.Sprintf("%s %s (%s): %.2f%%\n", emoji, moniker, val, rate))
+	}
+
+	payload := map[string]string{
+		"content": buffer.String(),
+	}
+	body, _ := json.Marshal(payload)
+
+	_, err := http.Post(config.DiscordWebhookURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		log.Printf("Erreur en envoyant les stats journalières sur Discord : %v", err)
 	}
 }
