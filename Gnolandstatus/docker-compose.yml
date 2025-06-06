@@ -1,13 +1,13 @@
-service:
-  moni-Gnoland:
-    image: moniGnoland
+services:
+  moni-goland:
+    build: .
     restart: on-failure
-    container_name: moni-Gnoland
+    container_name: moni-goland
     volumes:
-      - ./moniGnoland.go:/root/moniGnoland.go
+      #   - ./moniGnoland.go:/root/moniGnoland.go
       - ./config.yaml:/root/config.yaml
-      - ./go.mod:/root/go.mod
-      - ./go.sum:/root/go.sum
+    #   - ./go.mod:/root/go.mod
+    #   - ./go.sum:/root/go.sum
     ports:
       - 8888:8888
     command: [ "go", "run", "moniGnoland.go" ]
