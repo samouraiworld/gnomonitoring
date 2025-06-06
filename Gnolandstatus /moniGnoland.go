@@ -313,6 +313,7 @@ func verifyValidatorCount() {
 	if actual != expected {
 		message := fmt.Sprintf("⚠️ Attention : seuls %d validateurs récupérés sur %d attendus !", actual, expected)
 		log.Printf(message)
+		initMonikerMap()
 		// sendDiscordAlert(message)
 
 	}
