@@ -1,6 +1,6 @@
 service:
   block-exporter:
-    image: block_exporter
+    build: .
     restart: on-failure
     container_name: block-exporter
     volumes:

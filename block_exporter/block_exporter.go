@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 type Config struct {
 	RPCEndpoint      string `yaml:"rpc_endpoint"`
 	ValidatorAddress string `yaml:"validator_address"`
+	MetricsPort      int    `yaml:"metrics_port"`
 }
 
 var config Config
@@ -112,5 +114,8 @@ func main() {
 
 	http.Handle("/metrics", promhttp.Handler())
 	log.Println("Prometheus metrics available on :8888/metrics")
-	log.Fatal(http.ListenAndServe(":8888", nil))
+	//log.Fatal(http.ListenAndServe(":8888", nil))
+	addr := fmt.Sprintf(":%d", config.MetricsPort)
+	log.Printf("Prometheus metrics available on %s/metrics", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }

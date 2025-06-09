@@ -27,6 +27,7 @@ type Config struct {
 	WindowSize        int    `yaml:"windows_size"`
 	DailyReportHour   int    `yaml:"daily_report_hour"`
 	DailyReportMinute int    `yaml:"daily_report_minute"`
+	MetricsPort       int    `yaml:"metrics_port"`
 }
 
 var testAlert = flag.Bool("test-alert", false, "Send alert test for Discord")
@@ -255,7 +256,10 @@ func main() {
 	// Exposure Prometheus
 	http.Handle("/metrics", promhttp.Handler())
 	log.Println("Prometheus metrics available on :8888/metrics")
-	log.Fatal(http.ListenAndServe(":8888", nil))
+	//log.Fatal(http.ListenAndServe(":8888", nil))
+	addr := fmt.Sprintf(":%d", config.MetricsPort)
+	log.Printf("Prometheus metrics available on %s/metrics", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
 func sendDiscordAlert(validator string, rate float64, moniker string, startHeight int64, endHeight int64) {
