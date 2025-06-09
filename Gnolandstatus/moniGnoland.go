@@ -20,13 +20,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Structure de configuration YAML
+// Config Yaml
 type Config struct {
 	RPCEndpoint       string `yaml:"rpc_endpoint"`
 	DiscordWebhookURL string `yaml:"discord_webhook_url"`
+	WindowSize        int    `yaml:"windows_size"`
+	DailyReportHour   int    `yaml:"daily_report_hour"`
+	DailyReportMinute int    `yaml:"daily_report_minute"`
 }
 
-var testAlert = flag.Bool("test-alert", false, "Envoie une alerte test Discord")
+var testAlert = flag.Bool("test-alert", false, "Send alert test for Discord")
 
 var config Config
 
@@ -51,10 +54,10 @@ type BlockParticipation struct {
 }
 
 var (
-	blockWindow       []BlockParticipation
-	windowSize        = 100
+	blockWindow []BlockParticipation
+	//windowSize        = 100
 	participationRate = make(map[string]float64)
-	lastAlertSent     = make(map[string]int64) // pour éviter de spammer
+	lastAlertSent     = make(map[string]int64) // to avoid spamming
 	monikerMap        = make(map[string]string)
 )
 
@@ -62,13 +65,31 @@ var (
 var validatorParticipation = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "gnoland_validator_participation_rate",
-		Help: "Taux de participation (%) du validateur sur la fenêtre glissante",
+		Help: "Validator participation rate (%) over the sliding window",
 	},
 	[]string{"validator_address", "moniker"},
 )
 
+// prometheus var start and end block analyse
+var (
+	blockWindowStartHeight = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "gnoland_block_window_start_height",
+			Help: "Start height of the current block window",
+		},
+	)
+	blockWindowEndHeight = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "gnoland_block_window_end_height",
+			Help: "End height of the current block window",
+		},
+	)
+)
+
 func init() {
 	prometheus.MustRegister(validatorParticipation)
+	prometheus.MustRegister(blockWindowStartHeight)
+	prometheus.MustRegister(blockWindowEndHeight)
 }
 
 var monikerMutex sync.RWMutex
@@ -76,13 +97,13 @@ var monikerMutex sync.RWMutex
 func main() {
 	flag.Parse()
 
-	if *testAlert {
-		sendDiscordAlert("g1test123456", 42.0, "🧪TEST Moniker")
-		return
-	}
-
 	loadConfig()
 	initMonikerMap()
+
+	if *testAlert {
+		sendDiscordAlert("g1test123456", 42.0, "🧪TEST Moniker", 200, 300)
+		return
+	}
 
 	rpcClient, err := rpcclient.NewHTTPClient(config.RPCEndpoint)
 	if err != nil {
@@ -91,13 +112,14 @@ func main() {
 
 	client := gnoclient.Client{RPCClient: rpcClient}
 
-	// Initialisation de la fenêtre avec les derniers blocs
+	// Initializing the window with the latest blocks
+
 	latestHeight, err := client.LatestBlockHeight()
 	if err != nil {
-		log.Fatalf("Erreur en récupérant le dernier height: %v", err)
+		log.Fatalf("Error retrieving last height: %v", err)
 	}
 
-	startHeight := latestHeight - int64(windowSize) + 1
+	startHeight := latestHeight - int64(config.WindowSize) + 1
 	if startHeight < 1 {
 		startHeight = 1
 	}
@@ -105,7 +127,7 @@ func main() {
 	for h := startHeight; h <= latestHeight; h++ {
 		block, err := client.Block(h)
 		if err != nil || block.Block.LastCommit == nil {
-			log.Printf("Erreur bloc %d: %v", h, err)
+			log.Printf("Error block %d: %v", h, err)
 			continue
 		}
 
@@ -122,21 +144,21 @@ func main() {
 		})
 	}
 
-	log.Printf("Fenêtre glissante initialisée jusqu’au bloc %d.\n", latestHeight)
+	log.Printf("Sliding window initialized to block %d.\n", latestHeight)
 	// send report all days
 	go func() {
 		for {
-			// Heure actuelle
+
 			now := time.Now()
 
-			// Heure du prochain envoi (par exemple à 21h00)
-			next := time.Date(now.Year(), now.Month(), now.Day(), 16, 0, 0, 0, now.Location())
+			// Time of next sending (for example at 9:00 p.m.)
+			next := time.Date(now.Year(), now.Month(), now.Day(), config.DailyReportHour, config.DailyReportMinute, 0, 0, now.Location())
 			if next.Before(now) {
 				next = next.Add(24 * time.Hour)
 			}
 
 			durationUntilNext := next.Sub(now)
-			log.Printf("Prochain rapport Discord dans %s", durationUntilNext)
+			log.Printf("Next Discord report in %s", durationUntilNext)
 
 			time.Sleep(durationUntilNext)
 			sendDailyStats()
@@ -151,7 +173,7 @@ func main() {
 		}
 	}()
 
-	// Démarrer la boucle de suivi temps réel
+	// Start the real-time tracking loop
 	go func() {
 
 		currentHeight := latestHeight
@@ -160,15 +182,16 @@ func main() {
 
 			latest, err := client.LatestBlockHeight()
 			if err != nil {
-				log.Printf("Erreur récupération height: %v", err)
+				log.Printf("Recovery error: height: %v", err)
 				continue
 			}
 
 			if latest <= currentHeight {
-				continue // Pas de nouveau bloc
+				continue // not news block
 			}
 			log.Println("last block ", latest)
-			// Charger les nouveaux blocs (si plusieurs à la fois)
+			// Load new blocks (if more than one at a time)
+
 			for h := currentHeight + 1; h <= latest; h++ {
 				block, err := client.Block(h)
 				println(block)
@@ -188,19 +211,26 @@ func main() {
 					Height:     h,
 					Validators: participating,
 				})
-				if len(blockWindow) > windowSize {
+				if len(blockWindow) > config.WindowSize {
 					blockWindow = blockWindow[1:]
 				}
 
-				log.Printf("Bloc %d ajouté à la fenêtre", h)
+				log.Printf("Block %d added to window", h)
 
-				// Calcul des taux de participation
+				//Calculation of participation rates
 				validatorCounts := make(map[string]int)
 				for _, bp := range blockWindow {
 					for val := range bp.Validators {
 						validatorCounts[val]++
 					}
 				}
+
+				start := blockWindow[0].Height
+				end := blockWindow[len(blockWindow)-1].Height
+
+				// for prometheus
+				blockWindowStartHeight.Set(float64(start))
+				blockWindowEndHeight.Set(float64(end))
 
 				for val, moniker := range monikerMap {
 					count := validatorCounts[val]
@@ -210,8 +240,8 @@ func main() {
 					log.Printf("Validator %s (%s) : %.2f%% \n", val, moniker, rate)
 					validatorParticipation.WithLabelValues(val, moniker).Set(rate)
 					if rate < 100 {
-						if lastAlertSent[val] < h-int64(windowSize) {
-							sendDiscordAlert(val, rate, moniker)
+						if lastAlertSent[val] < h-int64(config.WindowSize) {
+							sendDiscordAlert(val, rate, moniker, start, end)
 							lastAlertSent[val] = h
 						}
 					}
@@ -222,17 +252,17 @@ func main() {
 		}
 	}()
 
-	// Exposition Prometheus
+	// Exposure Prometheus
 	http.Handle("/metrics", promhttp.Handler())
 	log.Println("Prometheus metrics available on :8888/metrics")
 	log.Fatal(http.ListenAndServe(":8888", nil))
 }
 
-func sendDiscordAlert(validator string, rate float64, moniker string) {
+func sendDiscordAlert(validator string, rate float64, moniker string, startHeight int64, endHeight int64) {
 	webhookURL := config.DiscordWebhookURL
 
-	message := fmt.Sprintf("⚠️ Le validateur %s (%s) a un taux de participation de %.2f%% sur les %d derniers blocs.",
-		moniker, validator, rate, windowSize)
+	message := fmt.Sprintf("⚠️ Validator %s (%s) has a participation rate of %.2f%% over the last %d blocks (from block %d to %d).",
+		moniker, validator, rate, config.WindowSize, startHeight, endHeight)
 
 	payload := map[string]string{"content": message}
 	body, _ := json.Marshal(payload)
@@ -243,14 +273,14 @@ func sendDiscordAlert(validator string, rate float64, moniker string) {
 func initMonikerMap() {
 	resp, err := http.Get("https://test6.api.onbloc.xyz/v1/blocks?limit=40")
 	if err != nil {
-		log.Fatalf("Erreur lors de la récupération des blocs : %v", err)
+		log.Fatalf("Error retrieving blocks: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Lire tout le corps une seule fois
+	// Read the entire body once
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalf("Erreur lors de la lecture de la réponse : %v", err)
+		log.Fatalf("Error reading response: %v", err)
 	}
 
 	// Structure pour parser le JSON
@@ -269,16 +299,15 @@ func initMonikerMap() {
 
 	var blocksResp BlocksResponse
 	if err := json.Unmarshal(body, &blocksResp); err != nil {
-		log.Fatalf("Erreur de décodage JSON : %v", err)
+		log.Fatalf("Error decode JSON : %v", err)
 	}
 	monikerMutex.Lock()
 	defer monikerMutex.Unlock()
 
 	monikerMap = make(map[string]string)
 
-	// Afficher chaque pair blockProposer + blockProposerLabel
+	// Display each pair blockProposer + blockProposerLabel
 	for _, block := range blocksResp.Data.Items {
-		//fmt.Printf("Address: %s | Moniker: %s\n", block.BlockProposer, block.BlockProposerLabel)
 		monikerMap[block.BlockProposer] = block.BlockProposerLabel
 
 	}
@@ -288,7 +317,7 @@ func initMonikerMap() {
 func verifyValidatorCount() {
 	resp, err := http.Get("https://test6.api.onbloc.xyz/v1/stats/summary/accounts")
 	if err != nil {
-		log.Printf("Erreur récupération du résumé des comptes : %v", err)
+		log.Printf("Error retrieving account summary : %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -302,16 +331,16 @@ func verifyValidatorCount() {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&summaryResp); err != nil {
-		log.Printf("Erreur de décodage JSON résumé : %v", err)
+		log.Printf("Error decode JSON summary : %v", err)
 		return
 	}
 
 	expected := summaryResp.Data.Data.Validators
 	actual := len(monikerMap)
-	log.Printf("Nombre de validateurs dans les blocs récupérés : %d / %d attendus\n", actual, expected)
+	log.Printf("Number of validators in recovered blocks: %d / %d expected\n", actual, expected)
 
 	if actual != expected {
-		message := fmt.Sprintf("⚠️ Attention : seuls %d validateurs récupérés sur %d attendus !", actual, expected)
+		message := fmt.Sprintf("⚠️ Warning: only %d validators recovered out of %d expected!", actual, expected)
 		log.Printf(message)
 		initMonikerMap()
 		// sendDiscordAlert(message)
@@ -322,8 +351,12 @@ func sendDailyStats() {
 	monikerMutex.RLock()
 	defer monikerMutex.RUnlock()
 
+	start := blockWindow[0].Height
+	end := blockWindow[len(blockWindow)-1].Height
+
 	var buffer bytes.Buffer
-	buffer.WriteString("📊 **Résumé quotidien de la participation** :\n\n")
+	//buffer.WriteString("📊 **Daily participation summary** :\n\n")
+	buffer.WriteString(fmt.Sprintf("📊 **Daily participation summary** (Blocks %d → %d) :\n\n", start, end))
 
 	for val, rate := range participationRate {
 		moniker := monikerMap[val]
@@ -335,7 +368,7 @@ func sendDailyStats() {
 		if rate < 95.0 {
 			emoji = "🔴"
 		}
-		buffer.WriteString(fmt.Sprintf("%s %s (%s): %.2f%%\n", emoji, moniker, val, rate))
+		buffer.WriteString(fmt.Sprintf("  %s Validator : %s addr: (%s) rate : %.2f%%\n", emoji, moniker, val, rate))
 	}
 
 	payload := map[string]string{
@@ -345,6 +378,6 @@ func sendDailyStats() {
 
 	_, err := http.Post(config.DiscordWebhookURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
-		log.Printf("Erreur en envoyant les stats journalières sur Discord : %v", err)
+		log.Printf("Error sending daily stats on Discord: : %v", err)
 	}
 }
