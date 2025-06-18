@@ -9,6 +9,7 @@ Two services are available:
 
 ## BLOCK EXPORTER
 
+![Dashboard principal](assets/Block_Exporter.png)
 You need to have Docker and Docker Compose installed on the server.
 
 First, you need to configure the YAML configuration file :
@@ -40,6 +41,7 @@ And now, at the URL <http://localhost:8888/metrics>, you can view the following 
 
 ## Gnoland Status
 
+![Discord alert dayli ](assets/discord_view.png)
 You need to have Docker and Docker Compose installed on the server.
 First, you need to configure the YAML configuration file :
 
@@ -68,6 +70,7 @@ docker compose up -d
 ```
 
 And now, at the URL <http://localhost:8888/metrics>, you can view the following metrics:
+![Status of Validator](assets/status_of_validator.png)
 
 - gnoland_validator_participation_rate{moniker="samourai-dev-team-1",validator_address="g1tq3gyzjmuu4gzu4np4ckfgun87j540gvx43d65"} 100
 - gnoland_block_window_start_height 100

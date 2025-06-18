@@ -1,4 +1,4 @@
-service:
+services:
   block-exporter:
     build: .
     restart: on-failure
