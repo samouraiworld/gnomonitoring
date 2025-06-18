@@ -1,20 +1,25 @@
-# Monitoring GnoLand Validators
+# 🛠️ Monitoring Gnoland Validators
 
-Here we provide tools to monitor the Gnoland blockchain and its validators.
+This repository provides lightweight tools to monitor the [Gnoland](https://gno.land) blockchain and its validators.
+
 Two services are available:
 
-- **block_exporter:** Allows you to track missed blocks from your Gnoland validator. It exposes metrics for Prometheus, enabling the creation of dashboards and alerts using Grafana.
+- **Block Exporter:** Tracks missed blocks from a specific Gnoland validator. It exposes [Prometheus](https://prometheus.io/) metrics, enabling [Grafana](https://grafana.com/) dashboards and alerts.
 
-- **GnolandStatus**: Allows you to monitor the state of the Gnoland blockchain across all validators. It calculates a participation rate over a defined block window and sends a Discord alert when a validator's participation rate drops below 100%. It also exposes metrics for Prometheus.
+- **GnolandStatus:** Monitors the overall validator set, calculates participation rates over a sliding block window, and sends alerts to Discord if a validator’s rate drops below 100%. Also exposes Prometheus metrics.
 
 ## BLOCK EXPORTER
 
 ![Dashboard principal](assets/Block_Exporter.png)
-You need to have Docker and Docker Compose installed on the server.
+
+### Requirements
+
+- [Docker](https://www.docker.com/)
+- [Docker Compose](https://docs.docker.com/compose/)
 
 First, you need to configure the YAML configuration file :
 
-```
+```bash
 cd block_exporter
 cp config.yaml.template config.yaml 
 nano config.yaml
@@ -22,15 +27,15 @@ nano config.yaml
 
 You must specify your validator's address, and it's also possible to change the RPC service address.
 
-```
+```yaml
 rpc_endpoint: "https://rpc.test6.testnets.gno.land"
 validator_address: "replace with your validator address"
 port: 8888
 ```
 
-Now you just need to start the Docker container:
+Start the container:
 
-```
+```bash
 docker compose up -d 
 ```
 
