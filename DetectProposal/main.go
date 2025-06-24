@@ -81,7 +81,7 @@ func main() {
 				sendDiscordAlert(msg)
 				lastChecked++
 			} else {
-				fmt.Println("Aucune nouvelle proposition.")
+				fmt.Println("No new proposals..")
 			}
 		}
 	}
@@ -98,12 +98,12 @@ func sendDiscordAlert(msg string) {
 func saveConfig() {
 	data, err := yaml.Marshal(&config)
 	if err != nil {
-		log.Printf("Erreur lors de la sérialisation de la config : %v", err)
+		log.Printf("Error serializing config : %v", err)
 		return
 	}
 
 	err = os.WriteFile("config.yaml", data, 0644)
 	if err != nil {
-		log.Printf("Erreur lors de l’écriture du fichier config.yaml : %v", err)
+		log.Printf("Error writing config.yaml file : %v", err)
 	}
 }
