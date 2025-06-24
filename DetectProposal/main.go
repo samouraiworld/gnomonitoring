@@ -22,7 +22,7 @@ type Config struct {
 
 var config Config
 
-// Charger config.yaml
+// Load config.yaml
 func loadConfig() {
 	data, err := os.ReadFile("config.yaml")
 	if err != nil {
@@ -37,29 +37,30 @@ func loadConfig() {
 	log.Printf("Config loaded: discord URL %s", config.DiscordWebhookURL)
 }
 
-func proposalExists(i int) (bool, string) {
+func proposalExists(i int) (bool, string, string) {
 	url := fmt.Sprintf("https://test6.testnets.gno.land/r/gov/dao:%d", i)
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Erreur HTTP : %v\n", err)
-		return false, ""
+		return false, "", ""
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return false, ""
+		return false, "", ""
 	}
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
 		fmt.Printf("Erreur parsing HTML : %v\n", err)
-		return true, ""
+		return true, "", ""
 	}
+
+	title := doc.Find("h3[id]").Eq(0).Text()
 
 	moniker := doc.Find("h2[id]").Eq(1).Text()
 
-	fmt.Printf("moniker: %s\n", moniker)
-	return true, moniker
+	return true, title, moniker
 }
 func main() {
 	loadConfig()
@@ -71,17 +72,17 @@ func main() {
 		select {
 		case <-ticker.C:
 			fmt.Printf("🔍 Vérif proposal %d...\n", lastChecked+1)
-			exists, moniker := proposalExists(lastChecked + 1)
+			exists, title, moniker := proposalExists(lastChecked + 1)
 
 			if exists {
 				config.LastCheckedID = lastChecked + 1
 				saveConfig()
-				msg := fmt.Sprintf("🗳️ News Proposal %s https://test6.testnets.gno.land/r/gov/dao:%d \n", moniker, lastChecked+1)
-				fmt.Printf("🗳️ News Proposal %s : dao:%d\n", moniker, lastChecked+1)
+				msg := fmt.Sprintf("🗳️ New Proposal %s by %s https://test6.testnets.gno.land/r/gov/dao:%d \n", title, moniker, lastChecked+1)
+				fmt.Println(msg)
 				sendDiscordAlert(msg)
 				lastChecked++
 			} else {
-				fmt.Println("No new proposals..")
+				fmt.Println("No new proposal..")
 			}
 		}
 	}
