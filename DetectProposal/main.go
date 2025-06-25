@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -56,7 +57,8 @@ func proposalExists(i int) (bool, string, string) {
 		return true, "", ""
 	}
 
-	title := doc.Find("h3[id]").Eq(0).Text()
+	// title := doc.Find("h3[id]").Eq(0).Text()
+	title := strings.TrimPrefix(doc.Find("h3[id]").Eq(0).Text(), "Title: ")
 
 	moniker := doc.Find("h2[id]").Eq(1).Text()
 
@@ -77,7 +79,7 @@ func main() {
 			if exists {
 				config.LastCheckedID = lastChecked + 1
 				saveConfig()
-				msg := fmt.Sprintf("🗳️ New Proposal %s by %s https://test6.testnets.gno.land/r/gov/dao:%d \n", title, moniker, lastChecked+1)
+				msg := fmt.Sprintf("🗳️ ** New Proposal: %s ** \n by %s \n 🔗source: https://test6.testnets.gno.land/r/gov/dao:%d \n", title, moniker, lastChecked+1)
 				fmt.Println(msg)
 				sendDiscordAlert(msg)
 				lastChecked++
