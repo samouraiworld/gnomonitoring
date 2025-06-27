@@ -88,8 +88,39 @@ func main() {
 	// init Monimap all 5 min if have a news validator
 	go func() {
 		for {
+
+			//copy monikermap
+			internal.MonikerMutex.RLock()
+			old := make(map[string]string)
+			for k, v := range internal.MonikerMap {
+				old[k] = v
+			}
+			internal.MonikerMutex.RUnlock()
+			//update Moniker map
 			internal.InitMonikerMap()
+
+			//conmparate
+			internal.MonikerMutex.RLock()
+			newLength := len(internal.MonikerMap)
+			oldLength := len(old)
+			if newLength != oldLength {
+				// search news validator
+				for addr, moniker := range internal.MonikerMap {
+					if _, exists := old[addr]; !exists {
+						// Send Discord Alert
+						internal.SendDiscordAlert(
+							fmt.Sprintf("**NEWS **%s", addr),
+							100.0, // ou une valeur par défaut
+							moniker,
+							0,
+							0,
+						)
+					}
+				}
+			}
+
 			time.Sleep(5 * time.Minute)
+
 		}
 	}()
 
