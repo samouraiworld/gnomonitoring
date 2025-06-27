@@ -11,7 +11,7 @@ import (
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/samouraiworld/gnomonitoring/Gnolandstatus/Backend/internal"
+	"github.com/samouraiworld/gnomonitoring/Gnolandstatus/internal"
 )
 
 func main() {

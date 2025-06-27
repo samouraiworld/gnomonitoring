@@ -3,7 +3,6 @@ services:
     image: moni-gnoland
     restart: on-failure
     container_name: moni-goland
-    network_mode: host 
     volumes:
       #   - ./moniGnoland.go:/root/moniGnoland.go
       - ./config.yaml:/root/config.yaml

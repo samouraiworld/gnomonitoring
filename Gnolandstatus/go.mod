@@ -1,4 +1,4 @@
-module github.com/samouraiworld/gnomonitoring/Gnolandstatus/Backend
+module github.com/samouraiworld/gnomonitoring/Gnolandstatus
 
 go 1.23.0
 
