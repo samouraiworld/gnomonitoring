@@ -71,7 +71,7 @@ func main() {
 
 			now := time.Now()
 
-			// Time of next sending (for example at 9:00 p.m.)
+			// Time of next sendinginternal. (for example at 9:00 p.m.)
 			next := time.Date(now.Year(), now.Month(), now.Day(), internal.Config.DailyReportHour, internal.Config.DailyReportMinute, 0, 0, now.Location())
 			if next.Before(now) {
 				next = next.Add(24 * time.Hour)

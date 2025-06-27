@@ -1,8 +1,11 @@
-FROM golang:1.23.5 as builder
+FROM debian:bookworm
 
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /root
-COPY go.mod go.sum moniGnoland.go .
+COPY config.yaml main ./
 
-RUN go mod tidy
-# RUN go build -o block_exporter .
+
+CMD ["/root/main"]
+
 

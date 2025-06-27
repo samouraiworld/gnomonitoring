@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"gopkg.in/yaml.v2"
@@ -47,82 +48,81 @@ func SendDiscordAlert(validator string, rate float64, moniker string, startHeigh
 }
 
 func InitMonikerMap() {
-	resp, err := http.Get("https://test6.api.onbloc.xyz/v1/blocks?limit=40")
+	// 1. Récupérer la liste des validateurs depuis Gno RPC
+	url := fmt.Sprintf("%s/validators", strings.TrimRight(Config.RPCEndpoint, "/"))
+	resp, err := http.Get(url)
 	if err != nil {
-		log.Fatalf("Error retrieving blocks: %v", err)
+		log.Fatalf("Error retrieving validators: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Read the entire body once
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalf("Error reading response: %v", err)
+		log.Fatalf("Error reading validator response: %v", err)
 	}
 
-	// Structure pour parser le JSON
+	type Validator struct {
+		Address string `json:"address"`
+	}
+	type ValidatorsResponse struct {
+		Result struct {
+			Validators []Validator `json:"validators"`
+		} `json:"result"`
+	}
+
+	var validatorsResp ValidatorsResponse
+	if err := json.Unmarshal(body, &validatorsResp); err != nil {
+		log.Fatalf("Error decoding validator JSON: %v", err)
+	}
+
+	// 2. Récupérer les monikers depuis onbloc.xyz
+	blockResp, err := http.Get("https://test6.api.onbloc.xyz/v1/blocks?limit=40")
+	if err != nil {
+		log.Fatalf("Error retrieving block data: %v", err)
+	}
+	defer blockResp.Body.Close()
+
+	blockBody, err := io.ReadAll(blockResp.Body)
+	if err != nil {
+		log.Fatalf("Error reading block response: %v", err)
+	}
+
 	type Block struct {
 		BlockProposer      string `json:"blockProposer"`
 		BlockProposerLabel string `json:"blockProposerLabel"`
 	}
-
-	type Data struct {
+	type BlockData struct {
 		Items []Block `json:"items"`
 	}
-
 	type BlocksResponse struct {
-		Data Data `json:"data"`
+		Data BlockData `json:"data"`
 	}
 
 	var blocksResp BlocksResponse
-	if err := json.Unmarshal(body, &blocksResp); err != nil {
-		log.Fatalf("Error decode JSON : %v", err)
+	if err := json.Unmarshal(blockBody, &blocksResp); err != nil {
+		log.Fatalf("Error decoding block JSON: %v", err)
 	}
+
+	// 3. Mapper adresse → moniker
 	MonikerMutex.Lock()
 	defer MonikerMutex.Unlock()
 
 	MonikerMap = make(map[string]string)
 
-	// Display each pair blockProposer + blockProposerLabel
-	for _, block := range blocksResp.Data.Items {
-		MonikerMap[block.BlockProposer] = block.BlockProposerLabel
-
+	for _, val := range validatorsResp.Result.Validators {
+		moniker := "inconnu"
+		for _, b := range blocksResp.Data.Items {
+			if b.BlockProposer == val.Address {
+				moniker = b.BlockProposerLabel
+				break
+			}
+		}
+		MonikerMap[val.Address] = moniker
 	}
-	VerifyValidatorCount()
+
+	log.Printf("✅ MonikerMap initialized: %d validators\n", len(MonikerMap))
 }
 
-func VerifyValidatorCount() {
-	resp, err := http.Get("https://test6.api.onbloc.xyz/v1/stats/summary/accounts")
-	if err != nil {
-		log.Printf("Error retrieving account summary : %v", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	var summaryResp struct {
-		Data struct {
-			Data struct {
-				Validators int `json:"validators"`
-			} `json:"data"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&summaryResp); err != nil {
-		log.Printf("Error decode JSON summary : %v", err)
-		return
-	}
-
-	expected := summaryResp.Data.Data.Validators
-	actual := len(MonikerMap)
-	log.Printf("Number of validators in recovered blocks: %d / %d expected\n", actual, expected)
-
-	if actual != expected {
-		message := fmt.Sprintf("⚠️ Warning: only %d validators recovered out of %d expected!", actual, expected)
-		log.Printf(message)
-		InitMonikerMap()
-		// sendDiscordAlert(message)
-
-	}
-}
 func SendDailyStats() {
 	MonikerMutex.RLock()
 	defer MonikerMutex.RUnlock()
