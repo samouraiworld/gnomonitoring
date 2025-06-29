@@ -68,19 +68,22 @@ func main() {
 	// send report all days
 	go func() {
 		for {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("⚠️ Panic in daily stats goroutine: %v", r)
+				}
+			}()
 
 			now := time.Now()
-
-			// Time of next sendinginternal. (for example at 9:00 p.m.)
 			next := time.Date(now.Year(), now.Month(), now.Day(), internal.Config.DailyReportHour, internal.Config.DailyReportMinute, 0, 0, now.Location())
 			if next.Before(now) {
 				next = next.Add(24 * time.Hour)
 			}
-
 			durationUntilNext := next.Sub(now)
 			log.Printf("Next Discord report in %s", durationUntilNext)
 
 			time.Sleep(durationUntilNext)
+			log.Println("⏰ Time reached. Sending daily stats...")
 			internal.SendDailyStats()
 		}
 	}()
