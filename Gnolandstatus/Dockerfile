@@ -1,11 +1,8 @@
-FROM debian:bookworm
+FROM golang:1.23.5 AS builder
 
-
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /root
-COPY config.yaml main ./
+COPY . ./
 
-
-CMD ["/root/main"]
+RUN go mod tidy
 
 
