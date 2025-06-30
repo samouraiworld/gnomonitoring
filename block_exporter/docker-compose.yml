@@ -1,0 +1,13 @@
+services:
+  block-exporter:
+    build: .
+    restart: on-failure
+    container_name: block-exporter
+    volumes:
+      - ./block_exporter.go:/root/block_exporter.go
+      - ./config.yaml:/root/config.yaml
+      - ./go.mod:/root/go.mod
+      - ./go.sum:/root/go.sum
+    ports:
+      - 8888:8888
+    command: [ "go", "run", "block_exporter.go" ]
