@@ -26,7 +26,12 @@ func LoadConfig() {
 		log.Fatalf("Error parsing config file: %v", err)
 	}
 
-	log.Printf("Config loaded: RPC=%s \n discord URL %s", Config.RPCEndpoint, Config.DiscordWebhookURL)
+	log.Printf("Config loaded: RPC=%s \n"+
+		"discord URL %s \n"+
+		"WindowsSize=%d	\n"+
+		"DailyReportHour= %d\n"+
+		"DailyReportMinute= %d \n"+
+		"MetricsPort= %d \n", Config.RPCEndpoint, Config.DiscordWebhookURL, Config.WindowSize, Config.DailyReportHour, Config.DailyReportMinute, Config.MetricsPort)
 }
 
 func Init() {
@@ -150,10 +155,19 @@ func SendDailyStats() {
 	payload := map[string]string{
 		"content": buffer.String(),
 	}
-	body, _ := json.Marshal(payload)
 
-	_, err := http.Post(Config.DiscordWebhookURL, "application/json", bytes.NewBuffer(body))
+	body, _ := json.Marshal(payload)
+	if Config.DiscordWebhookURL == "" {
+		log.Println("❌ Discord webhook is empty — skipping alert")
+		return
+	}
+
+	resp, err := http.Post(Config.DiscordWebhookURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("Error sending daily stats on Discord: : %v", err)
+		return
 	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Printf("✅ Discord response: %s — HTTP %d", string(respBody), resp.StatusCode)
 }
