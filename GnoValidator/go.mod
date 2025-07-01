@@ -1,4 +1,4 @@
-module github.com/samouraiworld/gnomonitoring/Gnolandstatus
+module github.com/samouraiworld/gnomonitoring/GnoValidateur
 
 go 1.23.0
 
