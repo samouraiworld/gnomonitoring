@@ -4,9 +4,8 @@ import (
 	"database/sql"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // ← Import anonyme indispensable
-
-	"github.com/samouraiworld/gnomonitoring/GovDao/internal"
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/samouraiworld/gnomonitoring/backend/internal"
 )
 
 var db *sql.DB
@@ -15,7 +14,9 @@ func main() {
 	internal.LoadConfig()
 	db = internal.InitDB()
 	internal.StartWebhookAPI(db)
-	// lastChecked := internal.Config.LastCheckedID //init valor
+
+	go internal.StartValidatorMonitoring(db)
+
 	ticker := time.NewTicker(time.Duration(internal.Config.IntervallSecond) * time.Second)
 	defer ticker.Stop()
 

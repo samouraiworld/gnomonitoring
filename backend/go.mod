@@ -1,12 +1,11 @@
-module github.com/samouraiworld/gnomonitoring/GnoValidateur
+module github.com/samouraiworld/gnomonitoring/backend
 
 go 1.23.0
 
 toolchain go1.23.10
 
 require (
-	github.com/gnolang/gno v0.0.0-20250627155834-aa4f563f4a1d
-	github.com/prometheus/client_golang v1.22.0
+	github.com/PuerkitoBio/goquery v1.10.3
 	gopkg.in/yaml.v2 v2.4.0
 )
 
@@ -55,7 +54,6 @@ require (
 	golang.org/x/crypto v0.37.0 // indirect
 	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8 // indirect
 	golang.org/x/mod v0.24.0 // indirect
-	golang.org/x/net v0.39.0 // indirect
 	golang.org/x/sync v0.13.0 // indirect
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
@@ -65,4 +63,12 @@ require (
 	google.golang.org/grpc v1.69.4 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+)
+
+require (
+	github.com/andybalholm/cascadia v1.3.3 // indirect
+	github.com/gnolang/gno v0.0.0-20250701075758-8b9b62367bfb
+	github.com/mattn/go-sqlite3 v1.14.28 // indirect
+	github.com/prometheus/client_golang v1.22.0
+	golang.org/x/net v0.39.0 // indirect
 )
