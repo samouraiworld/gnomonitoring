@@ -1,7 +1,0 @@
-rpc_endpoint: "https://rpc.test6.testnets.gno.land"
-discord_webhook_url : ""
-windows_size : 100
-daily_report_hour: 16 
-daily_report_minute: 0
-metrics_port: 8888
-

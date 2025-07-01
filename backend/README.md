@@ -1,9 +1,9 @@
 # add webhook
 
 ```bash
-url -X POST http://localhost:8080/webhook \
+curl -X POST http://localhost:8080/webhook \
   -H "Content-Type: application/json" \
-  -d '{"url": "URL_WEBHOOK", "type": ["discord"/"slacl"}'
+  -d '{"url": "URL_WEBHOOK", "type": ["discord"/"slack"}'
 ```
 
 # List of webhook

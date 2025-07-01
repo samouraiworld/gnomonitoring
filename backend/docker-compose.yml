@@ -2,10 +2,15 @@ services:
   detect-proposal:
     build: .
     restart: on-failure
-    container_name: detect-proposal
+    container_name: gnomonitoring-backend
     volumes:
       - ./main.go:/root/main.go
       - ./config.yaml:/root/config.yaml
       - ./go.mod:/root/go.mod
-      - ./go.sum:/root/go.sum
+      - ./go.sum:/root/go.sum 
+      - ./webhooks.db:/root/webhooks.db
+    ports:
+      - 8888:8888
+      - 8989:8989
+    
     command: [ "go", "run", "main.go" ]
