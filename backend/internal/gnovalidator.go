@@ -143,11 +143,10 @@ func StartValidatorMonitoring(db *sql.DB) {
 			SendDailyStats(db)
 		}
 	}()
-
 	// init Monimap all 5 min if have a news validator
 	go func() {
 		for {
-
+			log.Println("Copy du moniker for init moniker")
 			//copy monikermap
 			MonikerMutex.RLock()
 			old := make(map[string]string)
@@ -155,8 +154,10 @@ func StartValidatorMonitoring(db *sql.DB) {
 				old[k] = v
 			}
 			MonikerMutex.RUnlock()
+
 			//update Moniker map
 			InitMonikerMap()
+			MonikerMap["g1FAKE1234"] = "FakeMoniker" //for test
 
 			//conmparate
 			MonikerMutex.RLock()
@@ -167,9 +168,9 @@ func StartValidatorMonitoring(db *sql.DB) {
 				for addr, moniker := range MonikerMap {
 					if _, exists := old[addr]; !exists {
 						// Send Discord Alert
-						msg := fmt.Sprintf("**News Validator %s addr: %s  **", addr, moniker)
-						msgS := fmt.Sprintf("*News Validator %s addr: %s  *", addr, moniker)
-
+						msg := fmt.Sprintf("**✅ News Validator %s addr: %s  **", addr, moniker)
+						msgS := fmt.Sprintf("*✅ News Validator %s addr: %s  *", addr, moniker)
+						log.Println(msg)
 						SendDiscordAlertValidator(msg, db)
 						SendSlackAlertValidator(msgS, db)
 
@@ -177,7 +178,7 @@ func StartValidatorMonitoring(db *sql.DB) {
 				}
 			}
 
-			time.Sleep(5 * time.Minute)
+			time.Sleep(1 * time.Minute)
 
 		}
 	}()
