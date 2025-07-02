@@ -19,6 +19,7 @@ import (
 
 var TestAlert = flag.Bool("test-alert", false, "Send alert test for Discord")
 var MonikerMutex sync.RWMutex
+var lastRPCErrorAlert time.Time //anti spam for error RPC
 
 type BlockParticipation struct {
 	Height     int64
@@ -146,18 +147,54 @@ func StartValidatorMonitoring(db *sql.DB) {
 	go func() {
 
 		currentHeight := latestHeight
+		lastProgressHeight := currentHeight
+		lastProgressTime := time.Now()
 
 		for {
 
 			latest, err := client.LatestBlockHeight()
 			if err != nil {
 				log.Printf("Recovery error: height: %v", err)
+
+				if time.Since(lastRPCErrorAlert) > 10*time.Minute {
+					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
+					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
+
+					SendDiscordAlertValidator(msg, db)
+					SendSlackAlertValidator(msg, db)
+
+					lastRPCErrorAlert = time.Now()
+				}
+
+				time.Sleep(10 * time.Second)
 				continue
 			}
 
-			if latest <= currentHeight {
-				continue // not news block
+			lastRPCErrorAlert = time.Time{}
+
+			//  Stagnation detection
+			if latest == lastProgressHeight {
+				if time.Since(lastProgressTime) > 2*time.Minute {
+					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d for more than 2 minutes", latest)
+					log.Println(msg)
+					SendDiscordAlertValidator(msg, db)
+					SendSlackAlertValidator(msg, db)
+
+					lastProgressTime = time.Now() // évite le spam
+				}
+			} else {
+				lastProgressHeight = latest
+				lastProgressTime = time.Now()
 			}
+
+			if latest <= currentHeight {
+				time.Sleep(3 * time.Second)
+				continue
+			}
+
+			// if latest <= currentHeight {
+			// 	continue // not news block
+			// }
 			log.Println("last block ", latest)
 			// Load new blocks (if more than one at a time)
 
@@ -167,7 +204,7 @@ func StartValidatorMonitoring(db *sql.DB) {
 				if h%100 == 0 {
 					log.Println("🔁 Refresh MonikerMap after 100 blocks")
 
-					// Copie snapshot avant mise à jour
+					// Copy snapshot before update
 					oldMap := make(map[string]string)
 					MonikerMutex.RLock()
 					for k, v := range MonikerMap {
@@ -341,7 +378,7 @@ func SendSlackAlertValidator(message string, db *sql.DB) error {
 			continue
 		}
 
-		payload := map[string]string{"text": message} // Slack attend le champ "text"
+		payload := map[string]string{"text": message}
 		body, _ := json.Marshal(payload)
 
 		resp, err := http.Post(hook.URL, "application/json", bytes.NewBuffer(body))
