@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -276,81 +274,81 @@ func StartValidatorMonitoring(db *sql.DB) {
 
 }
 
-func InitMonikerMap() {
-	// 1. Récupérer la liste des validateurs depuis Gno RPC
-	url := fmt.Sprintf("%s/validators", strings.TrimRight(Config.RPCEndpoint, "/"))
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Fatalf("Error retrieving validators: %v", err)
-	}
-	defer resp.Body.Close()
+// func InitMonikerMap() {
+// 	// 1. Récupérer la liste des validateurs depuis Gno RPC
+// 	url := fmt.Sprintf("%s/validators", strings.TrimRight(Config.RPCEndpoint, "/"))
+// 	resp, err := http.Get(url)
+// 	if err != nil {
+// 		log.Fatalf("Error retrieving validators: %v", err)
+// 	}
+// 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Error reading validator response: %v", err)
-	}
+// 	body, err := io.ReadAll(resp.Body)
+// 	if err != nil {
+// 		log.Fatalf("Error reading validator response: %v", err)
+// 	}
 
-	type Validator struct {
-		Address string `json:"address"`
-	}
-	type ValidatorsResponse struct {
-		Result struct {
-			Validators []Validator `json:"validators"`
-		} `json:"result"`
-	}
+// 	type Validator struct {
+// 		Address string `json:"address"`
+// 	}
+// 	type ValidatorsResponse struct {
+// 		Result struct {
+// 			Validators []Validator `json:"validators"`
+// 		} `json:"result"`
+// 	}
 
-	var validatorsResp ValidatorsResponse
-	if err := json.Unmarshal(body, &validatorsResp); err != nil {
-		log.Fatalf("Error decoding validator JSON: %v", err)
-	}
+// 	var validatorsResp ValidatorsResponse
+// 	if err := json.Unmarshal(body, &validatorsResp); err != nil {
+// 		log.Fatalf("Error decoding validator JSON: %v", err)
+// 	}
 
-	// 2. Récupérer les monikers depuis onbloc.xyz
-	blockResp, err := http.Get("https://test6.api.onbloc.xyz/v1/blocks?limit=40")
-	if err != nil {
-		log.Fatalf("Error retrieving block data: %v", err)
-	}
-	defer blockResp.Body.Close()
+// 	// 2. Récupérer les monikers depuis onbloc.xyz
+// 	blockResp, err := http.Get("https://test6.api.onbloc.xyz/v1/blocks?limit=40")
+// 	if err != nil {
+// 		log.Fatalf("Error retrieving block data: %v", err)
+// 	}
+// 	defer blockResp.Body.Close()
 
-	blockBody, err := io.ReadAll(blockResp.Body)
-	if err != nil {
-		log.Fatalf("Error reading block response: %v", err)
-	}
+// 	blockBody, err := io.ReadAll(blockResp.Body)
+// 	if err != nil {
+// 		log.Fatalf("Error reading block response: %v", err)
+// 	}
 
-	type Block struct {
-		BlockProposer      string `json:"blockProposer"`
-		BlockProposerLabel string `json:"blockProposerLabel"`
-	}
-	type BlockData struct {
-		Items []Block `json:"items"`
-	}
-	type BlocksResponse struct {
-		Data BlockData `json:"data"`
-	}
+// 	type Block struct {
+// 		BlockProposer      string `json:"blockProposer"`
+// 		BlockProposerLabel string `json:"blockProposerLabel"`
+// 	}
+// 	type BlockData struct {
+// 		Items []Block `json:"items"`
+// 	}
+// 	type BlocksResponse struct {
+// 		Data BlockData `json:"data"`
+// 	}
 
-	var blocksResp BlocksResponse
-	if err := json.Unmarshal(blockBody, &blocksResp); err != nil {
-		log.Fatalf("Error decoding block JSON: %v", err)
-	}
+// 	var blocksResp BlocksResponse
+// 	if err := json.Unmarshal(blockBody, &blocksResp); err != nil {
+// 		log.Fatalf("Error decoding block JSON: %v", err)
+// 	}
 
-	// 3. Mapper adresse → moniker
-	MonikerMutex.Lock()
-	defer MonikerMutex.Unlock()
+// 	// 3. Mapper adresse → moniker
+// 	MonikerMutex.Lock()
+// 	defer MonikerMutex.Unlock()
 
-	MonikerMap = make(map[string]string)
+// 	MonikerMap = make(map[string]string)
 
-	for _, val := range validatorsResp.Result.Validators {
-		moniker := "inconnu"
-		for _, b := range blocksResp.Data.Items {
-			if b.BlockProposer == val.Address {
-				moniker = b.BlockProposerLabel
-				break
-			}
-		}
-		MonikerMap[val.Address] = moniker
-	}
+// 	for _, val := range validatorsResp.Result.Validators {
+// 		moniker := "inconnu"
+// 		for _, b := range blocksResp.Data.Items {
+// 			if b.BlockProposer == val.Address {
+// 				moniker = b.BlockProposerLabel
+// 				break
+// 			}
+// 		}
+// 		MonikerMap[val.Address] = moniker
+// 	}
 
-	log.Printf("✅ MonikerMap initialized: %d validators\n", len(MonikerMap))
-}
+//		log.Printf("✅ MonikerMap initialized: %d validators\n", len(MonikerMap))
+//	}
 func Init() {
 	prometheus.MustRegister(ValidatorParticipation)
 	prometheus.MustRegister(BlockWindowStartHeight)
