@@ -157,7 +157,7 @@ func StartValidatorMonitoring(db *sql.DB) {
 
 			//update Moniker map
 			InitMonikerMap()
-			MonikerMap["g1FAKE1234"] = "FakeMoniker" //for test
+			// MonikerMap["g1FAKE1234"] = "FakeMoniker" //for test
 
 			//conmparate
 			MonikerMutex.RLock()
