@@ -141,6 +141,54 @@ func StartValidatorMonitoring(db *sql.DB) {
 			SendDailyStats(db)
 		}
 	}()
+	// init Monimap all 5 min if have a news validator
+	go func() {
+
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("🛑 Panic in moniker update loop: %v", r)
+			}
+		}()
+
+		for {
+			log.Println("Copy du moniker for init moniker")
+			//copy monikermap
+			MonikerMutex.RLock()
+			old := make(map[string]string)
+			for k, v := range MonikerMap {
+				old[k] = v
+			}
+			MonikerMutex.RUnlock()
+
+			//update Moniker map
+			// InitMonikerMap()
+			// MonikerMap["g1FAKE1234"] = "FakeMoniker" //for test
+
+			// //conmparate
+			// MonikerMutex.RLock()
+			// newLength := len(MonikerMap)
+			// oldLength := len(old)
+			// if newLength != oldLength {
+			// 	// search news validator
+			// 	for addr, moniker := range MonikerMap {
+			// 		if _, exists := old[addr]; !exists {
+			// 			// Send Discord Alert
+			// 			msg := fmt.Sprintf("**✅ News Validator %s addr: %s  **", addr, moniker)
+			// 			msgS := fmt.Sprintf("*✅ News Validator %s addr: %s  *", addr, moniker)
+			// 			log.Println(msg)
+			// 			SendDiscordAlertValidator(msg, db)
+			// 			SendSlackAlertValidator(msgS, db)
+
+			// 		}
+			// 	}
+			// }
+
+			// time.Sleep(1 * time.Minute)
+			time.Sleep(10 * time.Second)
+			log.Println("🔁 Moniker loop still alive")
+
+		}
+	}()
 
 	// Start the real-time tracking loop
 	go func() {
@@ -162,37 +210,6 @@ func StartValidatorMonitoring(db *sql.DB) {
 			// Load new blocks (if more than one at a time)
 
 			for h := currentHeight + 1; h <= latest; h++ {
-
-				//Check if have a news validator
-				if h%100 == 0 {
-					log.Println("🔁 Refresh MonikerMap after 100 blocks")
-
-					// Copie snapshot avant mise à jour
-					oldMap := make(map[string]string)
-					MonikerMutex.RLock()
-					for k, v := range MonikerMap {
-						oldMap[k] = v
-					}
-					MonikerMutex.RUnlock()
-
-					// Update
-					InitMonikerMap()
-
-					// Comparaison
-					MonikerMutex.RLock()
-					for addr, moniker := range MonikerMap {
-						if _, exists := oldMap[addr]; !exists {
-							msg := fmt.Sprintf("**✅ News Validator %s addr: %s  **", addr, moniker)
-							msgS := fmt.Sprintf("*✅ News Validator %s addr: %s  *", addr, moniker)
-							log.Println(msg)
-							SendDiscordAlertValidator(msg, db)
-							SendSlackAlertValidator(msgS, db)
-
-						}
-					}
-					MonikerMutex.RUnlock()
-				}
-				// end of initMoniker of x block
 				block, err := client.Block(h)
 				println(block)
 				if err != nil || block.Block.LastCommit == nil {
