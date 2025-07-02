@@ -71,7 +71,7 @@ func GetGenesisMonikers() (map[string]string, error) {
 
 	decoder := json.NewDecoder(resp.Body)
 
-	// Avance jusqu'à la clé "validators"
+	// Go to the "validators" key
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -82,7 +82,7 @@ func GetGenesisMonikers() (map[string]string, error) {
 		}
 	}
 
-	// Vérifie que la prochaine token est bien un tableau [
+	//Check that the next token is indeed an array [
 	tok, err := decoder.Token()
 	if err != nil {
 		return nil, fmt.Errorf("error reading validators array start: %w", err)
@@ -103,7 +103,7 @@ func GetGenesisMonikers() (map[string]string, error) {
 }
 
 func InitMonikerMap() {
-	// Étape 1 — Récupérer les validateurs actifs depuis l'endpoint RPC `/validators`
+	// Step 1 — Retrieve active validators from the RPC endpoint `/validators`
 	url := fmt.Sprintf("%s/validators", strings.TrimRight(Config.RPCEndpoint, "/"))
 	resp, err := http.Get(url)
 	if err != nil {
@@ -130,7 +130,7 @@ func InitMonikerMap() {
 		log.Fatalf("Error decoding validator JSON: %v", err)
 	}
 
-	// Étape 2 — Créer client Gno pour valopers.Render
+	//Step 2 — Create Gno client for valopers.Render
 	rpcClient, err := rpcclient.NewHTTPClient(Config.RPCEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to create RPC client: %v", err)
@@ -147,13 +147,13 @@ func InitMonikerMap() {
 		valoperMap[v.Address] = v.Name
 	}
 
-	// Étape 3 — Génésis monikers
+	// Step #— Génésis monikers
 	genesisMap, err := GetGenesisMonikers()
 	if err != nil {
 		log.Printf("⚠️ Failed to get genesis monikers: %v", err)
 	}
 
-	// Étape 4 — Construction de MonikerMap complet et priorisé
+	// Step 4 — Building a Complete and Prioritized MonikerMap
 	MonikerMutex.Lock()
 	defer MonikerMutex.Unlock()
 	MonikerMap = make(map[string]string)
