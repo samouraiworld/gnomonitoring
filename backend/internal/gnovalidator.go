@@ -61,7 +61,7 @@ var (
 func StartValidatorMonitoring(db *sql.DB) {
 
 	flag.Parse()
-
+	Init()
 	// LoadConfig()
 	InitMonikerMap()
 
