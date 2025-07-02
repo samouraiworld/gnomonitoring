@@ -40,6 +40,7 @@ port: 8888
 3. Start the container:
 
 ```bash
+touch webhooks.db
 docker compose up -d 
 ```
 
