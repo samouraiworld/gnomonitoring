@@ -123,13 +123,13 @@ func StartValidatorMonitoring(db *sql.DB) {
 	log.Printf("Sliding window initialized to block %d.\n", latestHeight)
 	// send report all days
 	go func() {
-		for {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("⚠️ Panic in daily stats goroutine: %v", r)
-				}
-			}()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("⚠️ Panic in daily stats goroutine: %v", r)
+			}
+		}()
 
+		for {
 			now := time.Now()
 			next := time.Date(now.Year(), now.Month(), now.Day(), Config.DailyReportHour, Config.DailyReportMinute, 0, 0, now.Location())
 			if next.Before(now) {
@@ -378,17 +378,23 @@ func SendDailyStats(db *sql.DB) {
 		buffer.WriteString(fmt.Sprintf("  %s Validator : %s addr: (%s) rate : %.2f%%\n", emoji, moniker, val, rate))
 	}
 	msg := buffer.String()
+	// log.Println(msg)
 
-	SendDiscordAlertValidator(msg, db)
-	SendSlackAlertValidator(msg, db)
+	err := SendDiscordAlertValidator(msg, db)
+	if err != nil {
+		log.Printf("[SendDailyStats] Discord alert failed: %v", err)
+	}
+	err = SendSlackAlertValidator(msg, db)
+	if err != nil {
+		log.Printf("[SendDailyStats] Slack alert failed: %v", err)
+	}
 
 }
 
-func SendDiscordAlertValidator(message string, db *sql.DB) {
+func SendDiscordAlertValidator(message string, db *sql.DB) error {
 	hooks, err := ListMonitoringWebhooks(db) // ou cache local
 	if err != nil {
-		log.Printf("Error retrieving hooks: %v", err)
-		return
+		return fmt.Errorf("error retrieving hooks: %w", err)
 	}
 	for _, hook := range hooks {
 		if hook.Type != "discord" {
@@ -404,12 +410,14 @@ func SendDiscordAlertValidator(message string, db *sql.DB) {
 		}
 		resp.Body.Close()
 	}
+	return nil
 }
-func SendSlackAlertValidator(message string, db *sql.DB) {
+func SendSlackAlertValidator(message string, db *sql.DB) error {
 	hooks, err := ListMonitoringWebhooks(db)
 	if err != nil {
 		log.Printf("Error retrieving hooks: %v", err)
-		return
+		return fmt.Errorf("error retrieving hooks: %w", err)
+
 	}
 
 	for _, hook := range hooks {
@@ -427,4 +435,5 @@ func SendSlackAlertValidator(message string, db *sql.DB) {
 		}
 		resp.Body.Close()
 	}
+	return nil
 }

@@ -21,7 +21,7 @@ func InitDB() *sql.DB {
 		last_checked_id INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE TABLE IF NOT EXISTS webhooks_validator (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     user TEXT NOT NULL,
     url TEXT NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('discord', 'slack'))
@@ -118,7 +118,7 @@ func DeleteMonitoringWebhook(id int, db *sql.DB) error {
 }
 
 func ListMonitoringWebhooks(db *sql.DB) ([]WebhookValidator, error) {
-	rows, err := db.Query("SELECT id, user, url, type FROM monitoring_webhooks")
+	rows, err := db.Query("SELECT id, user, url, type FROM webhooks_validator")
 	if err != nil {
 		return nil, err
 	}
