@@ -1,0 +1,29 @@
+services:
+  detect-proposal:
+    build: 
+        context: ./backend
+    restart: on-failure
+    container_name: gnomonitoring-backend
+    volumes:
+      - ./backend/main.go:/root/main.go
+      - ./backend/config.yaml:/root/config.yaml
+      - ./backend/go.mod:/root/go.mod
+      - ./backend/go.sum:/root/go.sum 
+      - ./backend/webhooks.db:/root/webhooks.db
+    ports:
+      - 8888:8888 #metrics
+      - 8989:8989 #backend
+    
+    command: [ "go", "run", "main.go" ]
+  frontend:
+      build:
+        context: ./frontend/gnomonitoring
+        dockerfile: Dockerfile
+      container_name: gnomonitoring_frontend
+      ports:
+        - "9090:3000"
+      volumes:
+        - ./frontend/gnomonitoring/.env.local:/app/.env.local
+      env_file:
+        - ./frontend/gnomonitoring/.env.local
+      restart: unless-stopped
