@@ -19,7 +19,7 @@ services:
       build:
         context: ./frontend/gnomonitoring
         dockerfile: Dockerfile
-      container_name: gnomonitoring_frontend
+      container_name: gnomonitoring-frontend
       ports:
         - "9090:3000"
       volumes:

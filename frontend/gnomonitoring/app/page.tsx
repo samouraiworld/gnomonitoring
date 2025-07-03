@@ -23,18 +23,28 @@ export default function HomePage() {
   const [govdaoWebhooks, setGovdaoWebhooks] = useState<Webhook[]>([])
   const [validatorWebhooks, setValidatorWebhooks] = useState<Webhookvalidator[]>([])
 
+  // useEffect(() => {
+  //   const backend = process.env.BACKEND_URL
+
+  //   fetch(`${backend}/webhooksgovdao`)
+  //     .then(res => res.json())
+  //     .then(data => setGovdaoWebhooks(data))
+  //     .catch(err => console.error('Erreur API GovDao:', err))
+
+  //   fetch(`${backend}/gnovalidator`)
+  //     .then(res => res.json())
+  //     .then(data => setValidatorWebhooks(data))
+  //     .catch(err => console.error('Erreur API Validator:', err))
+  // }, [])
+
   useEffect(() => {
-    const backend = process.env.NEXT_PUBLIC_BACKEND_URL
-
-    fetch(`${backend}/webhooksgovdao`)
+    fetch('/api/get-webhooks')
       .then(res => res.json())
-      .then(data => setGovdaoWebhooks(data))
-      .catch(err => console.error('Erreur API GovDao:', err))
-
-    fetch(`${backend}/gnovalidator`)
-      .then(res => res.json())
-      .then(data => setValidatorWebhooks(data))
-      .catch(err => console.error('Erreur API Validator:', err))
+      .then(data => {
+        setGovdaoWebhooks(data.govdao)
+        setValidatorWebhooks(data.validator)
+      })
+      .catch(err => console.error('Erreur API:', err))
   }, [])
 
   const handleDelete = async (id: number, type: 'govdao' | 'validator') => {
