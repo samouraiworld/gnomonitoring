@@ -109,6 +109,11 @@ func StartWebhookAPI(db *sql.DB) {
 	http.HandleFunc("/gnovalidator", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", Config.AllowOrigin)
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 
 		switch r.Method {
 		case http.MethodPost:
@@ -134,6 +139,7 @@ func StartWebhookAPI(db *sql.DB) {
 				http.Error(w, fmt.Sprintf("List error: %v", err), http.StatusInternalServerError)
 				return
 			}
+			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(hooks)
 
 		case http.MethodDelete:
