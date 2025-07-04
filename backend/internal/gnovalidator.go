@@ -149,6 +149,7 @@ func StartValidatorMonitoring(db *sql.DB) {
 		currentHeight := latestHeight
 		lastProgressHeight := currentHeight
 		lastProgressTime := time.Now()
+		alertSent := false
 
 		for {
 
@@ -174,17 +175,19 @@ func StartValidatorMonitoring(db *sql.DB) {
 
 			//  Stagnation detection
 			if latest == lastProgressHeight {
-				if time.Since(lastProgressTime) > 2*time.Minute {
+				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
 					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d for more than 2 minutes", latest)
 					log.Println(msg)
 					SendDiscordAlertValidator(msg, db)
 					SendSlackAlertValidator(msg, db)
-
+					alertSent = true
 					lastProgressTime = time.Now() // évite le spam
 				}
 			} else {
 				lastProgressHeight = latest
 				lastProgressTime = time.Now()
+				alertSent = true
+
 			}
 
 			if latest <= currentHeight {
