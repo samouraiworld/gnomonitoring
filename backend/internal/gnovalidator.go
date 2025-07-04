@@ -187,6 +187,8 @@ func StartValidatorMonitoring(db *sql.DB) {
 				lastProgressHeight = latest
 				lastProgressTime = time.Now()
 				alertSent = true
+				SendDiscordAlertValidator("✅ **Activity Restored**: Gnoland is back to normal.", db)
+				SendSlackAlertValidator("✅ *Activity Restored*: Gnoland is back to normal.", db)
 
 			}
 
