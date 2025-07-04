@@ -150,6 +150,7 @@ func StartValidatorMonitoring(db *sql.DB) {
 		lastProgressHeight := currentHeight
 		lastProgressTime := time.Now()
 		alertSent := false
+		restoredNotified := false
 
 		for {
 
@@ -180,16 +181,22 @@ func StartValidatorMonitoring(db *sql.DB) {
 					log.Println(msg)
 					SendDiscordAlertValidator(msg, db)
 					SendSlackAlertValidator(msg, db)
+
 					alertSent = true
-					lastProgressTime = time.Now() // évite le spam
+					restoredNotified = false
+					lastProgressTime = time.Now()
 				}
 			} else {
 				lastProgressHeight = latest
 				lastProgressTime = time.Now()
-				alertSent = true
-				SendDiscordAlertValidator("✅ **Activity Restored**: Gnoland is back to normal.", db)
-				SendSlackAlertValidator("✅ *Activity Restored*: Gnoland is back to normal.", db)
 
+				//send alert if gnoland return to normal
+				if alertSent && !restoredNotified {
+					SendDiscordAlertValidator("✅ **Activity Restored**: Gnoland is back to normal.", db)
+					SendSlackAlertValidator("✅ *Activity Restored*: Gnoland is back to normal.", db)
+					restoredNotified = true
+					alertSent = false
+				}
 			}
 
 			if latest <= currentHeight {
