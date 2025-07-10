@@ -8,12 +8,14 @@ import { useRouter } from 'next/navigation'
 
 type Webhook = {
   ID: number
+  USER: string
   URL: string
   Type: string
   LastCheckedID: number
 }
 type Webhookvalidator = {
   ID: number
+  USER: string
   URL: string
   Type: string
 }
@@ -85,6 +87,7 @@ export default function HomePage() {
         <thead>
           <tr className="bg-gray-100">
             <th className="border px-4 py-2">ID</th>
+            <th className="border px-4 py-2">USER</th>
             <th className="border px-4 py-2">Type</th>
             <th className="border px-4 py-2">URL</th>
             <th className="border px-4 py-2">Last Checked</th>
@@ -95,6 +98,7 @@ export default function HomePage() {
           {govdaoWebhooks.map((wh) => (
             <tr key={wh.ID} className="hover:bg-gray-50">
               <td className="border px-4 py-2">{wh.ID}</td>
+              <td className="border px-4 py-2">{wh.USER}</td>
               <td className="border px-4 py-2">{wh.Type}</td>
               <td className="border px-4 py-2 text-xs">{wh.URL}</td>
               <td className="border px-4 py-2">{wh.LastCheckedID}</td>
@@ -116,6 +120,7 @@ export default function HomePage() {
         <thead>
           <tr className="bg-gray-100">
             <th className="border px-4 py-2">ID</th>
+            <th className="border px-4 py-2">USER</th>
             <th className="border px-4 py-2">Type</th>
             <th className="border px-4 py-2">URL</th>
             <th className="border px-4 py-2">Actions</th>
@@ -125,6 +130,7 @@ export default function HomePage() {
           {validatorWebhooks.map((wh) => (
             <tr key={wh.ID} className="hover:bg-gray-50">
               <td className="border px-4 py-2">{wh.ID}</td>
+              <td className="border px-4 py-2">{wh.USER}</td>
               <td className="border px-4 py-2">{wh.Type}</td>
               <td className="border px-4 py-2 text-xs">{wh.URL}</td>
               <td className="border px-4 py-2">
