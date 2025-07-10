@@ -83,7 +83,7 @@ func UpdateLastCheckedID(url string, newID int, db *sql.DB) error {
 }
 
 func ListWebhooks(db *sql.DB) ([]WebhookGovDao, error) {
-	rows, err := db.Query("SELECT id, url, type, last_checked_id FROM webhooks_GovDAO ORDER BY id ASC")
+	rows, err := db.Query("SELECT id,user, url, type, last_checked_id FROM webhooks_GovDAO ORDER BY id ASC")
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func ListWebhooks(db *sql.DB) ([]WebhookGovDao, error) {
 	var list []WebhookGovDao
 	for rows.Next() {
 		var wh WebhookGovDao
-		err := rows.Scan(&wh.ID, &wh.URL, &wh.Type, &wh.LastCheckedID)
+		err := rows.Scan(&wh.ID, &wh.USER, &wh.URL, &wh.Type, &wh.LastCheckedID)
 		if err != nil {
 			return nil, err
 		}
