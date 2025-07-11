@@ -3,33 +3,55 @@
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
-export default function AddWebhook() {
+export default function EditWebhook() {
     const router = useRouter()
     const searchParams = useSearchParams()
 
-    const typeParam = searchParams.get('type') || 'govdao' // valeur par défaut
-    const apiEndpoint = typeParam === 'validator' ? 'gnovalidator' : 'webhooksgovdao'
+    const id = searchParams.get('id')
+    const typeParam = searchParams.get('type') || 'govdao'
 
     const [user, setUser] = useState('')
     const [url, setURL] = useState('')
     const [type, setType] = useState('discord')
     const [message, setMessage] = useState('')
 
+    useEffect(() => {
+        async function fetchWebhook() {
+            const res = await fetch(`/api/edit-webhook?id=${id}&type=${typeParam}`)
+            if (res.ok) {
+                const data = await res.json()
+                setUser(data.USER)
+                setURL(data.URL)
+                setType(data.Type)
+            } else {
+                setMessage('❌ Erreur lors du chargement du webhook.')
+            }
+        }
+
+        if (id) fetchWebhook()
+    }, [id, typeParam])
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
 
-        const res = await fetch('/api/add-webhook', {
-            method: 'POST',
+        const payload = {
+            ID: Number(id),
+            USER: user,
+            URL: url,
+            Type: type,
+            target: typeParam // govdao / validator
+        }
+
+        const res = await fetch('/api/edit-webhook', {
+            method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ user, url, type, target: typeParam }),
+            body: JSON.stringify(payload),
         })
 
         if (res.ok) {
-            setMessage('✅ Webhook ajouté avec succès !')
-            setURL('')
-            setType('discord')
+            setMessage('✅ Webhook modifié avec succès !')
             setTimeout(() => {
                 router.push('/')
             }, 1000)
@@ -39,11 +61,10 @@ export default function AddWebhook() {
         }
     }
 
-
     return (
         <main className="min-h-screen bg-white text-black p-8">
             <h1 className="text-2xl font-bold mb-4">
-                ➕ Ajouter un Webhook {typeParam === 'validator' ? 'Validator' : 'GovDao'}
+                ✏️ Modifier un Webhook {typeParam === 'validator' ? 'Validator' : 'GovDao'}
             </h1>
 
             <form onSubmit={handleSubmit} className="space-y-4 max-w-md">
@@ -84,7 +105,7 @@ export default function AddWebhook() {
                     type="submit"
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
                 >
-                    Ajouter
+                    Modifier
                 </button>
 
                 {message && <p className="mt-2">{message}</p>}
@@ -92,4 +113,3 @@ export default function AddWebhook() {
         </main>
     )
 }
-

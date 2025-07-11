@@ -5,7 +5,7 @@ export async function POST(req: NextRequest) {
     const { user, url, type, target } = body
 
     const apiEndpoint =
-        target === 'validator' ? 'gnovalidator' : 'webhookgovdao'
+        target === 'validator' ? 'gnovalidator' : 'webhooksgovdao'
 
     try {
         const backendURL = process.env.BACKEND_URL

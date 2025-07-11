@@ -25,19 +25,6 @@ export default function HomePage() {
   const [govdaoWebhooks, setGovdaoWebhooks] = useState<Webhook[]>([])
   const [validatorWebhooks, setValidatorWebhooks] = useState<Webhookvalidator[]>([])
 
-  // useEffect(() => {
-  //   const backend = process.env.BACKEND_URL
-
-  //   fetch(`${backend}/webhooksgovdao`)
-  //     .then(res => res.json())
-  //     .then(data => setGovdaoWebhooks(data))
-  //     .catch(err => console.error('Erreur API GovDao:', err))
-
-  //   fetch(`${backend}/gnovalidator`)
-  //     .then(res => res.json())
-  //     .then(data => setValidatorWebhooks(data))
-  //     .catch(err => console.error('Erreur API Validator:', err))
-  // }, [])
 
   useEffect(() => {
     fetch('/api/get-webhooks')
@@ -103,12 +90,21 @@ export default function HomePage() {
               <td className="border px-4 py-2 text-xs">{wh.URL}</td>
               <td className="border px-4 py-2">{wh.LastCheckedID}</td>
               <td className="border px-4 py-2">
-                <button
-                  onClick={() => handleDelete(wh.ID, 'govdao')}
-                  className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-sm"
-                >
-                  Delete
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleDelete(wh.ID, 'govdao')}
+                    className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-sm"
+                  >
+                    Delete
+                  </button>
+
+                  <Link
+                    href={`/edit?type=govdao&id=${wh.ID}`}
+                    className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-sm"
+                  >
+                    EDIT
+                  </Link>
+                </div>
               </td>
             </tr>
           ))}
@@ -134,17 +130,26 @@ export default function HomePage() {
               <td className="border px-4 py-2">{wh.Type}</td>
               <td className="border px-4 py-2 text-xs">{wh.URL}</td>
               <td className="border px-4 py-2">
-                <button
-                  onClick={() => handleDelete(wh.ID, 'validator')}
-                  className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-sm"
-                >
-                  Delete
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleDelete(wh.ID, 'validator')}
+                    className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-sm"
+                  >
+                    Delete
+                  </button>
+
+                  <Link
+                    href={`/edit?type=validator&id=${wh.ID}`}
+                    className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-sm"
+                  >
+                    EDIT
+                  </Link>
+                </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </main>
+    </main >
   )
 }
