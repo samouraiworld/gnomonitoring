@@ -134,3 +134,31 @@ func ListMonitoringWebhooks(db *sql.DB) ([]WebhookValidator, error) {
 	}
 	return result, nil
 }
+func UpdateMonitoringWebhook(db *sql.DB, id int64, newUser, newURL, newType, tablename string) error {
+	query := fmt.Sprintf(
+		"UPDATE %s SET user=?, url=?, type=? WHERE id=?",
+		tablename, // attention : doit être contrôlé
+	)
+	_, err := db.Exec(query, newUser, newURL, newType, id)
+	if err != nil {
+		return fmt.Errorf("failed to update webhook with id %d: %w", id, err)
+	}
+	return nil
+}
+
+func GetWebhookByID(db *sql.DB, id int, table string) (*WebhookValidator, error) {
+	query := fmt.Sprintf("SELECT ID, USER, URL, Type FROM %s WHERE ID = ?", table)
+
+	row := db.QueryRow(query, id)
+
+	var wh WebhookValidator
+	err := row.Scan(&wh.ID, &wh.USER, &wh.URL, &wh.Type)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Pas trouvé
+		}
+		return nil, fmt.Errorf("failed to get webhook with id %d: %w", id, err)
+	}
+
+	return &wh, nil
+}
