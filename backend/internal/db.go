@@ -26,6 +26,15 @@ func InitDB() *sql.DB {
     url TEXT NOT NULL,
     type TEXT NOT NULL CHECK (type IN ('discord', 'slack'))
 );
+CREATE TABLE IF NOT EXISTS daily_participation (
+    date TEXT NOT NULL,
+    block_height INTEGER NOT NULL,
+    moniker TEXT NOT NULL,
+	addr TEXT NOT NULL,
+    participated BOOLEAN NOT NULL,
+    PRIMARY KEY (date, block_height, moniker)
+);
+CREATE INDEX IF NOT EXISTS idx_participation_date ON daily_participation(date);
 	`
 	_, err = db.Exec(createTable)
 	if err != nil {
