@@ -2,7 +2,9 @@ package internal
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -60,4 +62,51 @@ func SendSlackAlert(msg string, webhookURL string) {
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("Slack webhook HTTP %d", resp.StatusCode)
 	}
+}
+
+func SendDiscordAlertValidator(message string, db *sql.DB) error {
+	hooks, err := ListMonitoringWebhooks(db) // ou cache local
+	if err != nil {
+		return fmt.Errorf("error retrieving hooks: %w", err)
+	}
+	for _, hook := range hooks {
+		if hook.Type != "discord" {
+			continue
+		}
+		payload := map[string]string{"content": message}
+		body, _ := json.Marshal(payload)
+
+		resp, err := http.Post(hook.URL, "application/json", bytes.NewBuffer(body))
+		if err != nil {
+			log.Printf("Error sending to %s: %v", hook.URL, err)
+			continue
+		}
+		resp.Body.Close()
+	}
+	return nil
+}
+func SendSlackAlertValidator(message string, db *sql.DB) error {
+	hooks, err := ListMonitoringWebhooks(db)
+	if err != nil {
+		log.Printf("Error retrieving hooks: %v", err)
+		return fmt.Errorf("error retrieving hooks: %w", err)
+
+	}
+
+	for _, hook := range hooks {
+		if hook.Type != "slack" {
+			continue
+		}
+
+		payload := map[string]string{"text": message}
+		body, _ := json.Marshal(payload)
+
+		resp, err := http.Post(hook.URL, "application/json", bytes.NewBuffer(body))
+		if err != nil {
+			log.Printf("Error sending to Slack webhook %s: %v", hook.URL, err)
+			continue
+		}
+		resp.Body.Close()
+	}
+	return nil
 }

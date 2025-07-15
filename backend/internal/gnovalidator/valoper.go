@@ -1,4 +1,4 @@
-package internal
+package gnovalidator
 
 import (
 	"crypto/tls"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
+	"github.com/samouraiworld/gnomonitoring/backend/internal"
 )
 
 type Valoper struct {
@@ -36,24 +37,46 @@ var httpClient = &http.Client{
 }
 
 func GetValopers(client gnoclient.Client) ([]Valoper, error) {
-	resp, err := client.RPCClient.ABCIQuery("vm/qeval", []byte(`gno.land/r/gnoland/valopers.Render("")`))
-	if err != nil {
-		return nil, err
-	} else if resp.Response.Error != nil && resp.Response.Error.Error() != "" {
-		return nil, errors.New(resp.Response.Error.Error())
+	var allValopers []Valoper
+	page := 1
+
+	for {
+		// Construire la commande avec la page courante
+		cmd := fmt.Sprintf(`gno.land/r/gnoland/valopers.Render("?page=%d")`, page)
+
+		resp, err := client.RPCClient.ABCIQuery("vm/qeval", []byte(cmd))
+		if err != nil {
+			return nil, err
+		} else if resp.Response.Error != nil && resp.Response.Error.Error() != "" {
+			return nil, errors.New(resp.Response.Error.Error())
+		}
+
+		data := string(resp.Response.Data)
+
+		// Extraction avec regex
+		re := regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnoland/valopers:([a-z0-9]+)\)`)
+		matches := re.FindAllStringSubmatch(data, -1)
+
+		// Si pas de résultat, on stoppe la boucle
+		if len(matches) == 0 {
+			break
+		}
+
+		// Ajout des valopers de cette page
+		for _, m := range matches {
+			allValopers = append(allValopers, Valoper{
+				Name:    m[1],
+				Address: m[2],
+			})
+		}
+
+		log.Printf("✅ Fetched %d valopers from valopers.Render page %d\n", len(matches), page)
+
+		page++
 	}
 
-	re := regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnoland/valopers:([a-z0-9]+)\)`)
-	matches := re.FindAllStringSubmatch(string(resp.Response.Data), -1)
-
-	valopers := make([]Valoper, 0, len(matches))
-	for _, m := range matches {
-		valopers = append(valopers, Valoper{
-			Name:    m[1],
-			Address: m[2],
-		})
-	}
-	return valopers, nil
+	log.Printf("🎉 Total valopers fetched: %d\n", len(allValopers))
+	return allValopers, nil
 }
 func GetGenesisMonikers() (map[string]string, error) {
 	resp, err := http.Get("https://rpc.test6.testnets.gno.land/genesis")
@@ -104,7 +127,7 @@ func GetGenesisMonikers() (map[string]string, error) {
 
 func InitMonikerMap() {
 	// Step 1 — Retrieve active validators from the RPC endpoint `/validators`
-	url := fmt.Sprintf("%s/validators", strings.TrimRight(Config.RPCEndpoint, "/"))
+	url := fmt.Sprintf("%s/validators", strings.TrimRight(internal.Config.RPCEndpoint, "/"))
 	resp, err := http.Get(url)
 	if err != nil {
 		log.Fatalf("Error retrieving validators: %v", err)
@@ -131,7 +154,7 @@ func InitMonikerMap() {
 	}
 
 	//Step 2 — Create Gno client for valopers.Render
-	rpcClient, err := rpcclient.NewHTTPClient(Config.RPCEndpoint)
+	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to create RPC client: %v", err)
 	}
@@ -169,6 +192,9 @@ func InitMonikerMap() {
 		}
 
 		MonikerMap[addr] = moniker
+	}
+	for addr, moniker := range MonikerMap {
+		log.Printf("🔹 Validator: %s — Moniker: %s", addr, moniker)
 	}
 
 	log.Printf("✅ MonikerMap initialized with %d active validators\n", len(MonikerMap))
