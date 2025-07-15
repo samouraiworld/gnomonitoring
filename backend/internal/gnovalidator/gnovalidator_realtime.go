@@ -123,7 +123,6 @@ func StartValidatorMonitoring(db *sql.DB) {
 	log.Printf("Sliding window initialized to block %d.\n", latestHeight)
 	// send report all days
 	go func() {
-		// SendDailyStats(db) // for test
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("⚠️ Panic in daily stats goroutine: %v", r)
@@ -175,8 +174,8 @@ func StartValidatorMonitoring(db *sql.DB) {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
 					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
 
-					internal.SendDiscordAlertValidator(msg, db)
-					internal.SendSlackAlertValidator(msg, db)
+					// internal.SendDiscordAlertValidator(msg, db)
+					// internal.SendSlackAlertValidator(msg, db)
 
 					lastRPCErrorAlert = time.Now()
 				}
