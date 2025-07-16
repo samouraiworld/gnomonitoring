@@ -17,6 +17,7 @@ func main() {
 	internal.StartWebhookAPI(db)
 
 	go gnovalidator.StartValidatorMonitoring(db)
+	go gnovalidator.StartDailyReport(db)
 
 	ticker := time.NewTicker(time.Duration(internal.Config.IntervallSecond) * time.Second)
 	defer ticker.Stop()

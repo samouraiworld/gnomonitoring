@@ -7,14 +7,33 @@ import (
 	"log"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 )
 
-func Init() {
-	prometheus.MustRegister(ValidatorParticipation)
-	prometheus.MustRegister(BlockWindowStartHeight)
-	prometheus.MustRegister(BlockWindowEndHeight)
+func StartDailyReport(db *sql.DB) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("⚠️ Panic in daily stats goroutine: %v", r)
+			}
+		}()
+
+		for {
+			now := time.Now()
+			next := time.Date(now.Year(), now.Month(), now.Day(), internal.Config.DailyReportHour, internal.Config.DailyReportMinute, 0, 0, now.Location())
+			if next.Before(now) {
+				next = next.Add(24 * time.Hour)
+			}
+			time.Sleep(next.Sub(now))
+
+			log.Println("⏰ Time reached. Sending daily stats...")
+			SendDailyStats(db)
+			err := PruneOldParticipationData(db, 30)
+			if err != nil {
+				log.Printf("Prune error: %v", err)
+			}
+		}
+	}()
 }
 func SendDailyStats(db *sql.DB) {
 	MonikerMutex.RLock()
