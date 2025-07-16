@@ -64,7 +64,7 @@ func SendSlackAlert(msg string, webhookURL string) {
 	}
 }
 
-func SendDiscordAlertValidator(message string, db *sql.DB) error {
+var SendDiscordAlertValidator = func(message string, db *sql.DB) error {
 	hooks, err := ListMonitoringWebhooks(db) // ou cache local
 	if err != nil {
 		return fmt.Errorf("error retrieving hooks: %w", err)
@@ -85,7 +85,9 @@ func SendDiscordAlertValidator(message string, db *sql.DB) error {
 	}
 	return nil
 }
-func SendSlackAlertValidator(message string, db *sql.DB) error {
+
+var SendSlackAlertValidator = func(message string, db *sql.DB) error {
+	//func SendSlackAlertValidator(message string, db *sql.DB) error {
 	hooks, err := ListMonitoringWebhooks(db)
 	if err != nil {
 		log.Printf("Error retrieving hooks: %v", err)

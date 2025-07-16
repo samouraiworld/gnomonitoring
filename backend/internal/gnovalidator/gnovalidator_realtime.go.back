@@ -1,7 +1,6 @@
-package internal
+package gnovalidator
 
 import (
-	"bytes"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -12,8 +11,9 @@ import (
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	// "github.com/samouraiworld/gnomonitoring/backend/internal/Gnovalidator"
 )
 
 // VARIABLE DECLARATION
@@ -34,33 +34,7 @@ var (
 	MonikerMap        = make(map[string]string)
 )
 
-// prometheus var
-var ValidatorParticipation = prometheus.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Name: "gnoland_validator_participation_rate",
-		Help: "Validator participation rate (%) over the sliding window",
-	},
-	[]string{"validator_address", "moniker"},
-)
-
-// prometheus var start and end block analyse
-var (
-	BlockWindowStartHeight = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "gnoland_block_window_start_height",
-			Help: "Start height of the current block window",
-		},
-	)
-	BlockWindowEndHeight = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "gnoland_block_window_end_height",
-			Help: "End height of the current block window",
-		},
-	)
-)
-
 func StartValidatorMonitoring(db *sql.DB) {
-
 	flag.Parse()
 	Init()
 	// LoadConfig()
@@ -76,11 +50,11 @@ func StartValidatorMonitoring(db *sql.DB) {
 		url := "https://discord.com/api/webhooks/1362423744097681458/vslQMyePTF587NZzwD979Q_p8b3xtmlUrKR154liHoGSxTWbILh7Lf4-_Y75W0TFPTV5"
 		message := fmt.Sprintf("⚠️ Validator %s (%s) has a participation rate of %.2f%% over the last %d blocks (from block %d to %d).",
 			moniker, validator, rate, winsize, startHeight, endHeight)
-		SendDiscordAlert(message, url)
+		internal.SendDiscordAlert(message, url)
 		return
 	}
 
-	rpcClient, err := rpcclient.NewHTTPClient(Config.RPCEndpoint)
+	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to connect to RPC: %v", err)
 	}
@@ -94,7 +68,7 @@ func StartValidatorMonitoring(db *sql.DB) {
 		log.Fatalf("Error retrieving last height: %v", err)
 	}
 
-	startHeight := latestHeight - int64(Config.WindowSize) + 1
+	startHeight := latestHeight - int64(internal.Config.WindowSize) + 1
 	if startHeight < 1 {
 		startHeight = 1
 	}
@@ -120,40 +94,13 @@ func StartValidatorMonitoring(db *sql.DB) {
 	}
 
 	log.Printf("Sliding window initialized to block %d.\n", latestHeight)
-	// send report all days
-	go func() {
-		// SendDailyStats(db) // for test
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("⚠️ Panic in daily stats goroutine: %v", r)
-			}
-		}()
-
-		for {
-			now := time.Now()
-			next := time.Date(now.Year(), now.Month(), now.Day(), Config.DailyReportHour, Config.DailyReportMinute, 0, 0, now.Location())
-			if next.Before(now) {
-				next = next.Add(24 * time.Hour)
-			}
-			durationUntilNext := next.Sub(now)
-			log.Printf("Next Discord report in %s", durationUntilNext)
-
-			time.Sleep(durationUntilNext)
-			log.Println("⏰ Time reached. Sending daily stats...")
-			SendDailyStats(db)
-			err := PruneOldParticipationData(db, 30)
-			if err != nil {
-				log.Printf("Prune error: %v", err)
-			}
-		}
-	}()
 
 	// Start the real-time tracking loop
 	go func() {
 		lastStored, err := GetLastStoredHeight(db)
 		if err != nil {
-			log.Printf("⚠️ Erreur lecture dernier bloc: %v", err)
-			lastStored = 0 // recommence de zéro si la BDD est vide
+			log.Printf("⚠️ Database empty get last block: %v", err)
+			lastStored, err = client.LatestBlockHeight() // recommence de zéro si la BDD est vide
 		}
 
 		currentHeight := lastStored + 1
@@ -174,8 +121,8 @@ func StartValidatorMonitoring(db *sql.DB) {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
 					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
 
-					SendDiscordAlertValidator(msg, db)
-					SendSlackAlertValidator(msg, db)
+					// internal.SendDiscordAlertValidator(msg, db)
+					// internal.SendSlackAlertValidator(msg, db)
 
 					lastRPCErrorAlert = time.Now()
 				}
@@ -191,8 +138,8 @@ func StartValidatorMonitoring(db *sql.DB) {
 				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
 					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d for more than 2 minutes", latest)
 					log.Println(msg)
-					SendDiscordAlertValidator(msg, db)
-					SendSlackAlertValidator(msg, db)
+					internal.SendDiscordAlertValidator(msg, db)
+					internal.SendSlackAlertValidator(msg, db)
 
 					alertSent = true
 					restoredNotified = false
@@ -204,8 +151,8 @@ func StartValidatorMonitoring(db *sql.DB) {
 
 				//send alert if gnoland return to normal
 				if alertSent && !restoredNotified {
-					SendDiscordAlertValidator("✅ **Activity Restored**: Gnoland is back to normal.", db)
-					SendSlackAlertValidator("✅ *Activity Restored*: Gnoland is back to normal.", db)
+					internal.SendDiscordAlertValidator("✅ **Activity Restored**: Gnoland is back to normal.", db)
+					internal.SendSlackAlertValidator("✅ *Activity Restored*: Gnoland is back to normal.", db)
 					restoredNotified = true
 					alertSent = false
 				}
@@ -243,8 +190,8 @@ func StartValidatorMonitoring(db *sql.DB) {
 							msg := fmt.Sprintf("**✅ News Validator %s addr: %s  **", addr, moniker)
 							msgS := fmt.Sprintf("*✅ News Validator %s addr: %s  *", addr, moniker)
 							log.Println(msg)
-							SendDiscordAlertValidator(msg, db)
-							SendSlackAlertValidator(msgS, db)
+							internal.SendDiscordAlertValidator(msg, db)
+							internal.SendSlackAlertValidator(msgS, db)
 
 						}
 					}
@@ -281,7 +228,7 @@ func StartValidatorMonitoring(db *sql.DB) {
 					Height:     h,
 					Validators: participating,
 				})
-				if len(BlockWindow) > Config.WindowSize {
+				if len(BlockWindow) > internal.Config.WindowSize {
 					BlockWindow = BlockWindow[1:]
 				}
 
@@ -310,11 +257,11 @@ func StartValidatorMonitoring(db *sql.DB) {
 					log.Printf("Validator %s (%s) : %.2f%% \n", val, moniker, rate)
 					ValidatorParticipation.WithLabelValues(val, moniker).Set(rate)
 					if rate < 100 {
-						if LastAlertSent[val] < h-int64(Config.WindowSize) {
+						if LastAlertSent[val] < h-int64(internal.Config.WindowSize) {
 							message := fmt.Sprintf("⚠️ Validator %s (%s) has a participation rate of %.2f%% over the last %d blocks (from block %d to %d).",
-								moniker, val, rate, Config.WindowSize, start, end)
-							SendDiscordAlertValidator(message, db)
-							SendSlackAlertValidator(message, db)
+								moniker, val, rate, internal.Config.WindowSize, start, end)
+							internal.SendDiscordAlertValidator(message, db)
+							internal.SendSlackAlertValidator(message, db)
 
 							LastAlertSent[val] = h
 						}
@@ -330,140 +277,8 @@ func StartValidatorMonitoring(db *sql.DB) {
 	http.Handle("/metrics", promhttp.Handler())
 	log.Println("Prometheus metrics available on :8888/metrics")
 	//log.Fatal(http.ListenAndServe(":8888", nil))
-	addr := fmt.Sprintf(":%d", Config.MetricsPort)
+	addr := fmt.Sprintf(":%d", internal.Config.MetricsPort)
 	log.Printf("Prometheus metrics available on %s/metrics", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 
-}
-
-func Init() {
-	prometheus.MustRegister(ValidatorParticipation)
-	prometheus.MustRegister(BlockWindowStartHeight)
-	prometheus.MustRegister(BlockWindowEndHeight)
-}
-func SendDailyStats(db *sql.DB) {
-	MonikerMutex.RLock()
-	defer MonikerMutex.RUnlock()
-
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-	rates, minblock, maxblock := CalculateRate(db, yesterday)
-	// rates, minblock, maxblock := CalculateRate(db, "2025-07-14") // for test
-	var buffer bytes.Buffer
-	buffer.WriteString(fmt.Sprintf("📊 *Daily Participation Summary* for %s (Blocks %d → %d):\n\n", yesterday, minblock, maxblock))
-	for addr, rate := range rates {
-		moniker := MonikerMap[addr]
-		if moniker == "" {
-			moniker = "inconnu"
-		}
-
-		emoji := "🟢"
-		if rate < 95.0 {
-			emoji = "🔴"
-		}
-
-		buffer.WriteString(fmt.Sprintf("  %s Validator : %s addr: (%s) rate : %.2f%%\n", emoji, moniker, addr, rate))
-	}
-
-	msg := buffer.String()
-	err := SendDiscordAlertValidator(msg, db)
-	if err != nil {
-		log.Printf("[SendDailyStats] Discord alert failed: %v", err)
-	}
-	err = SendSlackAlertValidator(msg, db)
-	if err != nil {
-		log.Printf("[SendDailyStats] Slack alert failed: %v", err)
-	}
-}
-
-func CalculateRate(db *sql.DB, date string) (map[string]float64, int64, int64) {
-	rates := make(map[string]float64)
-	// Get Min and max block use for calculate rate
-
-	var minHeight, maxHeight int64
-	err := db.QueryRow(`
-		SELECT MIN(block_height), MAX(block_height)
-		FROM daily_participation
-		WHERE date = ?
-	`, date).Scan(&minHeight, &maxHeight)
-	if err != nil {
-		log.Printf("[CalculateRate] Error retrieving block range: %v", err)
-		return rates, 0, 0
-	}
-
-	// get participated block of one days
-	rows, err := db.Query(`
-		SELECT 
-			addr,
-			moniker,
-			COUNT(*) AS total_blocks,
-			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_blocks
-		FROM daily_participation
-		WHERE date = ?
-		GROUP BY addr, moniker
-	`, date)
-
-	if err != nil {
-		log.Printf("[CalculateRate] Error querying participation: %v", err)
-		return rates, minHeight, maxHeight
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var addr, moniker string
-		var total, participated int
-
-		if err := rows.Scan(&addr, &moniker, &total, &participated); err != nil {
-			log.Printf("[CalculateRate] Scan error: %v", err)
-			continue
-		}
-
-		rate := float64(participated) / float64(total) * 100
-		rates[addr] = rate
-
-	}
-
-	return rates, minHeight, maxHeight
-}
-func PruneOldParticipationData(db *sql.DB, keepDays int) error {
-	cutoff := time.Now().AddDate(0, 0, -keepDays).Format("2006-01-02")
-	stmt := `DELETE FROM daily_participation WHERE date < ?`
-
-	res, err := db.Exec(stmt, cutoff)
-	if err != nil {
-		return fmt.Errorf("failed to prune old data: %w", err)
-	}
-	count, _ := res.RowsAffected()
-	log.Printf("🧹 Pruned %d old rows (before %s)", count, cutoff)
-	return nil
-}
-func GetLastStoredHeight(db *sql.DB) (int64, error) {
-	var height int64
-	err := db.QueryRow(`SELECT MAX(block_height) FROM daily_participation`).Scan(&height)
-	if err != nil {
-		return 0, fmt.Errorf("error reading last stored block: %w", err)
-	}
-	return height, nil
-}
-
-func GetLatestBlockHeightWithRetry(client *gnoclient.Client, db *sql.DB, currentHeight int64, lastAlert *time.Time) (int64, error) {
-	latest, err := client.LatestBlockHeight()
-	if err != nil {
-		log.Printf("Recovery error: height: %v", err)
-
-		if time.Since(*lastAlert) > 10*time.Minute {
-			msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
-			msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
-
-			SendDiscordAlertValidator(msg, db)
-			SendSlackAlertValidator(msg, db)
-
-			*lastAlert = time.Now()
-		}
-
-		time.Sleep(10 * time.Second)
-		return 0, err
-	}
-
-	*lastAlert = time.Time{} // reset anti-spam
-	return latest, nil
 }

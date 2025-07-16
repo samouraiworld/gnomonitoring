@@ -2,166 +2,39 @@ package gnovalidator
 
 import (
 	"database/sql"
-	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	// "github.com/samouraiworld/gnomonitoring/backend/internal/Gnovalidator"
 )
 
 // VARIABLE DECLARATION
-var TestAlert = flag.Bool("test-alert", false, "Send alert test for Discord")
 var MonikerMutex sync.RWMutex
-var lastRPCErrorAlert time.Time //anti spam for error RPC
+var lastRPCErrorAlert time.Time                //anti spam for error RPC
+var lastAlertSent = make(map[string]time.Time) // pour anti-spam
 
 type BlockParticipation struct {
 	Height     int64
 	Validators map[string]bool
 }
 
-var (
-	BlockWindow []BlockParticipation
-	//windowSize        = 100
-	ParticipationRate = make(map[string]float64)
-	LastAlertSent     = make(map[string]int64) // to avoid spamming
-	MonikerMap        = make(map[string]string)
-)
+var MonikerMap = make(map[string]string)
 
-// prometheus var
-var ValidatorParticipation = prometheus.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Name: "gnoland_validator_participation_rate",
-		Help: "Validator participation rate (%) over the sliding window",
-	},
-	[]string{"validator_address", "moniker"},
-)
-
-// prometheus var start and end block analyse
-var (
-	BlockWindowStartHeight = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "gnoland_block_window_start_height",
-			Help: "Start height of the current block window",
-		},
-	)
-	BlockWindowEndHeight = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "gnoland_block_window_end_height",
-			Help: "End height of the current block window",
-		},
-	)
-)
-
-func StartValidatorMonitoring(db *sql.DB) {
-
-	flag.Parse()
-	Init()
-	// LoadConfig()
-	InitMonikerMap()
-
-	if *TestAlert {
-		moniker := "g1test123456"
-		validator := "xxxxxxxx"
-		rate := 42.0
-		winsize := 100
-		startHeight := 0
-		endHeight := 99
-		url := "https://discord.com/api/webhooks/1362423744097681458/vslQMyePTF587NZzwD979Q_p8b3xtmlUrKR154liHoGSxTWbILh7Lf4-_Y75W0TFPTV5"
-		message := fmt.Sprintf("⚠️ Validator %s (%s) has a participation rate of %.2f%% over the last %d blocks (from block %d to %d).",
-			moniker, validator, rate, winsize, startHeight, endHeight)
-		internal.SendDiscordAlert(message, url)
-		return
-	}
-
-	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
-	if err != nil {
-		log.Fatalf("Failed to connect to RPC: %v", err)
-	}
-
-	client := gnoclient.Client{RPCClient: rpcClient}
-
-	// Initializing the window with the latest blocks
-
-	latestHeight, err := client.LatestBlockHeight()
-	if err != nil {
-		log.Fatalf("Error retrieving last height: %v", err)
-	}
-
-	startHeight := latestHeight - int64(internal.Config.WindowSize) + 1
-	if startHeight < 1 {
-		startHeight = 1
-	}
-
-	for h := startHeight; h <= latestHeight; h++ {
-		block, err := client.Block(h)
-		if err != nil || block.Block.LastCommit == nil {
-			log.Printf("Error block %d: %v", h, err)
-			continue
-		}
-
-		participating := make(map[string]bool)
-		for _, precommit := range block.Block.LastCommit.Precommits {
-			if precommit != nil {
-				participating[precommit.ValidatorAddress.String()] = true
-			}
-		}
-
-		BlockWindow = append(BlockWindow, BlockParticipation{
-			Height:     h,
-			Validators: participating,
-		})
-	}
-
-	log.Printf("Sliding window initialized to block %d.\n", latestHeight)
-	// send report all days
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("⚠️ Panic in daily stats goroutine: %v", r)
-			}
-		}()
-
-		for {
-			now := time.Now()
-			next := time.Date(now.Year(), now.Month(), now.Day(), internal.Config.DailyReportHour, internal.Config.DailyReportMinute, 0, 0, now.Location())
-			if next.Before(now) {
-				next = next.Add(24 * time.Hour)
-			}
-			durationUntilNext := next.Sub(now)
-			log.Printf("Next Discord report in %s", durationUntilNext)
-
-			time.Sleep(durationUntilNext)
-			log.Println("⏰ Time reached. Sending daily stats...")
-			SendDailyStats(db)
-			err := PruneOldParticipationData(db, 30)
-			if err != nil {
-				log.Printf("Prune error: %v", err)
-			}
-		}
-	}()
-
+func CollectParticipation(db *sql.DB, client gnoclient.Client) {
 	// Start the real-time tracking loop
 	go func() {
 		lastStored, err := GetLastStoredHeight(db)
 		if err != nil {
 			log.Printf("⚠️ Database empty get last block: %v", err)
-			lastStored, err = client.LatestBlockHeight() // recommence de zéro si la BDD est vide
+			lastStored, err = client.LatestBlockHeight() // if db is empty begin with lastblock
 		}
 
 		currentHeight := lastStored + 1
-		//currentHeight := latestHeight
-		lastProgressHeight := currentHeight
-		lastProgressTime := time.Now()
-		alertSent := false //for not spam channel
-		restoredNotified := false
 
 		for {
 			// Get value of the last block
@@ -186,31 +59,6 @@ func StartValidatorMonitoring(db *sql.DB) {
 
 			lastRPCErrorAlert = time.Time{}
 
-			//  Stagnation detection
-			if latest == lastProgressHeight {
-				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
-					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d for more than 2 minutes", latest)
-					log.Println(msg)
-					internal.SendDiscordAlertValidator(msg, db)
-					internal.SendSlackAlertValidator(msg, db)
-
-					alertSent = true
-					restoredNotified = false
-					lastProgressTime = time.Now()
-				}
-			} else {
-				lastProgressHeight = latest
-				lastProgressTime = time.Now()
-
-				//send alert if gnoland return to normal
-				if alertSent && !restoredNotified {
-					internal.SendDiscordAlertValidator("✅ **Activity Restored**: Gnoland is back to normal.", db)
-					internal.SendSlackAlertValidator("✅ *Activity Restored*: Gnoland is back to normal.", db)
-					restoredNotified = true
-					alertSent = false
-				}
-			}
-
 			if latest <= currentHeight {
 				time.Sleep(3 * time.Second)
 				continue
@@ -221,40 +69,7 @@ func StartValidatorMonitoring(db *sql.DB) {
 
 			for h := currentHeight + 1; h <= latest; h++ {
 
-				//Check if have a news validator
-				if h%100 == 0 {
-					log.Println("🔁 Refresh MonikerMap after 100 blocks")
-
-					// Copy snapshot before update
-					oldMap := make(map[string]string)
-					MonikerMutex.RLock()
-					for k, v := range MonikerMap {
-						oldMap[k] = v
-					}
-					MonikerMutex.RUnlock()
-
-					// Update
-					InitMonikerMap()
-
-					// Comparaison of news and old moniker map for detected a news validator
-					MonikerMutex.RLock()
-					for addr, moniker := range MonikerMap {
-						if _, exists := oldMap[addr]; !exists {
-							msg := fmt.Sprintf("**✅ News Validator %s addr: %s  **", addr, moniker)
-							msgS := fmt.Sprintf("*✅ News Validator %s addr: %s  *", addr, moniker)
-							log.Println(msg)
-							internal.SendDiscordAlertValidator(msg, db)
-							internal.SendSlackAlertValidator(msgS, db)
-
-						}
-					}
-					MonikerMutex.RUnlock()
-				}
-
-				// end of initMoniker of x block
-
 				block, err := client.Block(h)
-				println(block)
 				if err != nil || block.Block.LastCommit == nil {
 					log.Printf("Erreur bloc %d: %v", h, err)
 					continue
@@ -266,72 +81,136 @@ func StartValidatorMonitoring(db *sql.DB) {
 						participating[precommit.ValidatorAddress.String()] = true
 					}
 				}
-				// Insère la participation pour chaque validateur dans la base de données
-				today := time.Now().Format("2006-01-02")
-				for valAddr, moniker := range MonikerMap {
-					_, participated := participating[valAddr]
-					stmt := `INSERT OR REPLACE INTO daily_participation(date, block_height, moniker, addr, participated) VALUES (?, ?, ?, ?, ?)`
-					_, err := db.Exec(stmt, today, h, moniker, valAddr, participated)
-					if err != nil {
-						log.Printf("Error saving participation for %s: %v", valAddr, err)
-					}
+				// Inserts the participation for each validator into the database
+
+				err = SaveParticipation(db, h, participating, MonikerMap)
+				if err != nil {
+					log.Printf("❌ Failed to save participation at height %d: %v", h, err)
 				}
 
-				BlockWindow = append(BlockWindow, BlockParticipation{
-					Height:     h,
-					Validators: participating,
-				})
-				if len(BlockWindow) > internal.Config.WindowSize {
-					BlockWindow = BlockWindow[1:]
-				}
-
-				log.Printf("Block %d added to window", h)
-
-				//Calculation of participation rates
-				validatorCounts := make(map[string]int)
-				for _, bp := range BlockWindow {
-					for val := range bp.Validators {
-						validatorCounts[val]++
-					}
-				}
-
-				start := BlockWindow[0].Height
-				end := BlockWindow[len(BlockWindow)-1].Height
-
-				// for prometheus
-				BlockWindowStartHeight.Set(float64(start))
-				BlockWindowEndHeight.Set(float64(end))
-
-				for val, moniker := range MonikerMap {
-					count := validatorCounts[val]
-					rate := float64(count) / float64(len(BlockWindow)) * 100
-					ParticipationRate[val] = rate
-
-					log.Printf("Validator %s (%s) : %.2f%% \n", val, moniker, rate)
-					ValidatorParticipation.WithLabelValues(val, moniker).Set(rate)
-					if rate < 100 {
-						if LastAlertSent[val] < h-int64(internal.Config.WindowSize) {
-							message := fmt.Sprintf("⚠️ Validator %s (%s) has a participation rate of %.2f%% over the last %d blocks (from block %d to %d).",
-								moniker, val, rate, internal.Config.WindowSize, start, end)
-							internal.SendDiscordAlertValidator(message, db)
-							internal.SendSlackAlertValidator(message, db)
-
-							LastAlertSent[val] = h
-						}
-					}
-				}
 			}
 
 			currentHeight = latest
 		}
 	}()
 
-	// Exposure Prometheus
-	http.Handle("/metrics", promhttp.Handler())
-	log.Println("Prometheus metrics available on :8888/metrics")
-	//log.Fatal(http.ListenAndServe(":8888", nil))
-	addr := fmt.Sprintf(":%d", internal.Config.MetricsPort)
-	log.Printf("Prometheus metrics available on %s/metrics", addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
+}
+func WatchNewValidators(db *sql.DB, refreshInterval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(refreshInterval)
+		defer ticker.Stop()
 
+		for range ticker.C {
+			log.Println("🔁 Refresh MonikerMap...")
+
+			//Copy old map
+			oldMap := make(map[string]string)
+			MonikerMutex.RLock()
+			for k, v := range MonikerMap {
+				oldMap[k] = v
+			}
+			MonikerMutex.RUnlock()
+
+			// Refresh MonikerMap
+			InitMonikerMap()
+
+			// Compare with the old Monikermap
+			MonikerMutex.RLock()
+			for addr, moniker := range MonikerMap {
+				if _, exists := oldMap[addr]; !exists {
+					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
+					log.Println(msg)
+					internal.SendDiscordAlertValidator(msg, db)
+					internal.SendSlackAlertValidator(msg, db)
+				}
+			}
+			MonikerMutex.RUnlock()
+		}
+	}()
+}
+
+func WatchValidatorAlerts(db *sql.DB, checkInterval time.Duration) {
+	go func() {
+		for {
+			today := time.Now().Format("2006-01-02")
+			rows, err := db.Query(`
+				SELECT addr, moniker, COUNT(*) 
+				FROM daily_participation 
+				WHERE date = ? AND participated = 0 
+				GROUP BY addr, moniker
+			`, today)
+			if err != nil {
+				log.Printf("❌ Error querying missed participation: %v", err)
+				time.Sleep(checkInterval)
+				continue
+			}
+			defer rows.Close()
+
+			for rows.Next() {
+				var addr, moniker string
+				var missed int
+				if err := rows.Scan(&addr, &moniker, &missed); err != nil {
+					log.Printf("❌ Error scanning participation row: %v", err)
+					continue
+				}
+
+				//Do not send more than one alert every 30 minutes per validator
+				if last, ok := lastAlertSent[addr]; ok && time.Since(last) < 30*time.Minute {
+					continue
+				}
+
+				var level, emoji, prefix string
+				if missed >= 3 {
+					level = "CRITICAL"
+					emoji = "🚨"
+					prefix = "**"
+				} else if missed == 1 {
+					level = "WARNING"
+					emoji = "⚠️"
+					prefix = ""
+				} else {
+					continue
+				}
+
+				msg := fmt.Sprintf("%s %s%s %s missed %d blocks today%s", emoji, prefix, level, moniker, missed, prefix)
+				log.Println(msg)
+				internal.SendDiscordAlertValidator(msg, db)
+				internal.SendSlackAlertValidator(msg, db)
+				lastAlertSent[addr] = time.Now()
+			}
+
+			time.Sleep(checkInterval)
+		}
+	}()
+}
+
+// SaveParticipation records the participation of validators for a given block
+
+func SaveParticipation(db *sql.DB, blockHeight int64, participating map[string]bool, monikerMap map[string]string) error {
+	today := time.Now().Format("2006-01-02")
+
+	for valAddr, moniker := range monikerMap {
+		_, participated := participating[valAddr]
+		stmt := `INSERT OR REPLACE INTO daily_participation(date, block_height, moniker, addr, participated) VALUES (?, ?, ?, ?, ?)`
+		_, err := db.Exec(stmt, today, blockHeight, moniker, valAddr, participated)
+		if err != nil {
+			log.Printf("❌ Error saving participation for %s: %v", valAddr, err)
+			return err // on retourne dès la première erreur rencontrée
+		}
+		log.Printf("✅ Saved participation for %s (%s) at height %d: %v", valAddr, moniker, blockHeight, participated)
+	}
+	return nil
+}
+
+func StartValidatorMonitoring(db *sql.DB) {
+	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to connect to RPC: %v", err)
+	}
+	client := gnoclient.Client{RPCClient: rpcClient}
+
+	InitMonikerMap() // init validator Map
+	WatchNewValidators(db, 5*time.Minute)
+	CollectParticipation(db, client)         // collect participant
+	WatchValidatorAlerts(db, 10*time.Second) // DB-based of alerts
 }
