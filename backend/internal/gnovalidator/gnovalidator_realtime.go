@@ -120,8 +120,8 @@ func WatchNewValidators(db *sql.DB, refreshInterval time.Duration) {
 				if _, exists := oldMap[addr]; !exists {
 					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
 					log.Println(msg)
-					internal.SendDiscordAlertValidator(msg, db)
-					internal.SendSlackAlertValidator(msg, db)
+					internal.SendAllValidatorAlerts(msg, db)
+					// internal.SendSlackAlertValidator(msg, db)
 				}
 			}
 			MonikerMutex.RUnlock()
@@ -174,8 +174,8 @@ func WatchValidatorAlerts(db *sql.DB, checkInterval time.Duration) {
 
 				msg := fmt.Sprintf("%s %s%s %s missed %d blocks today%s", emoji, prefix, level, moniker, missed, prefix)
 				log.Println(msg)
-				internal.SendDiscordAlertValidator(msg, db)
-				internal.SendSlackAlertValidator(msg, db)
+				internal.SendAllValidatorAlerts(msg, db)
+				// internal.SendSlackAlertValidator(msg, db)
 				lastAlertSent[addr] = time.Now()
 			}
 

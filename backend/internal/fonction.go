@@ -64,11 +64,46 @@ func SendSlackAlert(msg string, webhookURL string) {
 	}
 }
 
-var SendDiscordAlertValidator = func(message string, db *sql.DB) error {
-	hooks, err := ListMonitoringWebhooks(db) // ou cache local
+// var SendDiscordAlertValidator = func(message string, db *sql.DB) error {
+
+// 	hooks, err := ListMonitoringWebhooks(db, user_id) // ou cache local
+// 	if err != nil {
+// 		return fmt.Errorf("error retrieving hooks: %w", err)
+// 	}
+// 	for _, hook := range hooks {
+// 		if hook.Type != "discord" {
+// 			continue
+// 		}
+// 		payload := map[string]string{"content": message}
+// 		body, _ := json.Marshal(payload)
+
+//			resp, err := http.Post(hook.URL, "application/json", bytes.NewBuffer(body))
+//			if err != nil {
+//				log.Printf("Error sending to %s: %v", hook.URL, err)
+//				continue
+//			}
+//			resp.Body.Close()
+//		}
+//		return nil
+//	}
+func SendDiscordAlertValidator(userID string, message string, db *sql.DB) error {
+	hooks, err := ListMonitoringWebhooks(db, userID)
 	if err != nil {
 		return fmt.Errorf("error retrieving hooks: %w", err)
 	}
+
+	contacts, err := ListAlertContacts(db, userID)
+	if err != nil {
+		log.Printf("Failed to fetch contacts for user %s: %v", userID, err)
+	}
+
+	// Ajouter les mentions au message
+	for _, c := range contacts {
+		if c.MENTIONTAG != "" {
+			message += "\n" + c.MENTIONTAG
+		}
+	}
+
 	for _, hook := range hooks {
 		if hook.Type != "discord" {
 			continue
@@ -83,12 +118,13 @@ var SendDiscordAlertValidator = func(message string, db *sql.DB) error {
 		}
 		resp.Body.Close()
 	}
+
 	return nil
 }
 
-var SendSlackAlertValidator = func(message string, db *sql.DB) error {
+var SendSlackAlertValidator = func(user_id, message string, db *sql.DB) error {
 	//func SendSlackAlertValidator(message string, db *sql.DB) error {
-	hooks, err := ListMonitoringWebhooks(db)
+	hooks, err := ListMonitoringWebhooks(db, user_id)
 	if err != nil {
 		log.Printf("Error retrieving hooks: %v", err)
 		return fmt.Errorf("error retrieving hooks: %w", err)
@@ -111,4 +147,36 @@ var SendSlackAlertValidator = func(message string, db *sql.DB) error {
 		resp.Body.Close()
 	}
 	return nil
+}
+
+func SendAllValidatorAlerts(message string, db *sql.DB) error {
+	userIDs, err := GetAllUserIDsWithMonitoringWebhooks(db)
+	if err != nil {
+		return fmt.Errorf("failed to get user_ids: %w", err)
+	}
+
+	for _, userID := range userIDs {
+		err := SendDiscordAlertValidator(userID, message, db)
+		if err != nil {
+			log.Printf("Failed to send alert to user %s: %v", userID, err)
+		}
+	}
+	return nil
+}
+func GetAllUserIDsWithMonitoringWebhooks(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT DISTINCT user_id FROM webhooks_validator`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
