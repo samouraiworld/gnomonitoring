@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
 )
 
@@ -50,7 +51,7 @@ func TestPruneOldParticipationData(t *testing.T) {
 	_, _ = db.Exec(stmt, oldDate, 1, "Old", "val1", true)
 	_, _ = db.Exec(stmt, recentDate, 2, "Recent", "val2", true)
 
-	err := gnovalidator.PruneOldParticipationData(db, 30)
+	err := internal.PruneOldParticipationData(db, 30)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
