@@ -28,7 +28,7 @@ func StartDailyReport(db *sql.DB) {
 
 			log.Println("⏰ Time reached. Sending daily stats...")
 			SendDailyStats(db)
-			err := PruneOldParticipationData(db, 30)
+			err := internal.PruneOldParticipationData(db, 30)
 			if err != nil {
 				log.Printf("Prune error: %v", err)
 			}
@@ -59,14 +59,14 @@ func SendDailyStats(db *sql.DB) {
 	}
 
 	msg := buffer.String()
-	err := internal.SendDiscordAlertValidator(msg, db)
+	err := internal.SendAllValidatorAlerts(msg, db)
 	if err != nil {
 		log.Printf("[SendDailyStats] Discord alert failed: %v", err)
 	}
-	err = internal.SendSlackAlertValidator(msg, db)
-	if err != nil {
-		log.Printf("[SendDailyStats] Slack alert failed: %v", err)
-	}
+	// err = internal.SendSlackAlertValidator(user_id, msg, db)
+	// if err != nil {
+	// 	log.Printf("[SendDailyStats] Slack alert failed: %v", err)
+	// }
 }
 
 func CalculateRate(db *sql.DB, date string) (map[string]float64, int64, int64) {
@@ -119,18 +119,6 @@ func CalculateRate(db *sql.DB, date string) (map[string]float64, int64, int64) {
 	return rates, minHeight, maxHeight
 }
 
-func PruneOldParticipationData(db *sql.DB, keepDays int) error {
-	cutoff := time.Now().AddDate(0, 0, -keepDays).Format("2006-01-02")
-	stmt := `DELETE FROM daily_participation WHERE date < ?`
-
-	res, err := db.Exec(stmt, cutoff)
-	if err != nil {
-		return fmt.Errorf("failed to prune old data: %w", err)
-	}
-	count, _ := res.RowsAffected()
-	log.Printf("🧹 Pruned %d old rows (before %s)", count, cutoff)
-	return nil
-}
 func GetLastStoredHeight(db *sql.DB) (int64, error) {
 	var height int64
 	err := db.QueryRow(`SELECT MAX(block_height) FROM daily_participation`).Scan(&height)

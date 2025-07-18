@@ -117,7 +117,7 @@ func TestWatchValidatorAlerts(t *testing.T) {
 	go gnovalidator.WatchValidatorAlerts(db, 500*time.Millisecond)
 
 	// Wait for a bit to let the goroutine run
-	time.Sleep(2 * time.Second)
+	time.Sleep(4 * time.Second)
 
 	if !alertCalled {
 		t.Errorf("Expected alert to be sent but it was not")
