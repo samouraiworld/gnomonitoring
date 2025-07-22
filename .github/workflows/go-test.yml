@@ -26,3 +26,6 @@ jobs:
 
       - name: Run tests for gnovalidator
         run: cd backend && go test -v ./internal/gnovalidator/
+
+      - name: Run tests for internal
+        run: cd backend && go test -v ./internal/
