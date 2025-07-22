@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v2"
 )
@@ -39,15 +40,23 @@ func LoadConfig() {
 
 	log.Printf("Config loaded: %+v", Config)
 }
-func SendDiscordAlert(msg string, webhookURL string) {
-
+func SendDiscordAlert(msg string, webhookURL string) error {
 	payload := map[string]string{"content": msg}
 	body, _ := json.Marshal(payload)
 
-	http.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("error sending Discord alert: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Discord webhook HTTP status: %d", resp.StatusCode)
+	}
+	return nil
 }
 
-func SendSlackAlert(msg string, webhookURL string) {
+func SendSlackAlert(msg string, webhookURL string) error {
 
 	payload := map[string]string{"text": msg}
 	body, _ := json.Marshal(payload)
@@ -55,60 +64,107 @@ func SendSlackAlert(msg string, webhookURL string) {
 	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("Erreur envoi Slack : %v", err)
-		return
+		return nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("Slack webhook HTTP %d", resp.StatusCode)
 	}
-}
-
-var SendDiscordAlertValidator = func(message string, db *sql.DB) error {
-	hooks, err := ListMonitoringWebhooks(db) // ou cache local
-	if err != nil {
-		return fmt.Errorf("error retrieving hooks: %w", err)
-	}
-	for _, hook := range hooks {
-		if hook.Type != "discord" {
-			continue
-		}
-		payload := map[string]string{"content": message}
-		body, _ := json.Marshal(payload)
-
-		resp, err := http.Post(hook.URL, "application/json", bytes.NewBuffer(body))
-		if err != nil {
-			log.Printf("Error sending to %s: %v", hook.URL, err)
-			continue
-		}
-		resp.Body.Close()
-	}
 	return nil
 }
 
-var SendSlackAlertValidator = func(message string, db *sql.DB) error {
-	//func SendSlackAlertValidator(message string, db *sql.DB) error {
-	hooks, err := ListMonitoringWebhooks(db)
+func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) error {
+	// 1. Récupérer tous les webhooks_validator avec user_id
+	query := `
+		SELECT user_id, url, type 
+		FROM webhooks_validator;
+	`
+
+	rows, err := db.Query(query)
 	if err != nil {
-		log.Printf("Error retrieving hooks: %v", err)
-		return fmt.Errorf("error retrieving hooks: %w", err)
-
+		return fmt.Errorf("failed to query webhooks: %w", err)
 	}
+	defer rows.Close()
 
-	for _, hook := range hooks {
-		if hook.Type != "slack" {
+	for rows.Next() {
+		var userID, url, typ string
+		if err := rows.Scan(&userID, &url, &typ); err != nil {
+			return fmt.Errorf("failed to scan webhook row: %w", err)
+		}
+		// 3. Vérifier si une alerte a déjà été envoyée récemment (ex: 30 min)
+		var lastSent time.Time
+		err = db.QueryRow(`
+			SELECT sent_at FROM alert_log 
+			WHERE user_id = ? AND addr = ? AND level = ?`, userID, addr, level).Scan(&lastSent)
+
+		if err == nil && time.Since(lastSent) < 30*time.Minute {
+			log.Printf("⏱️ Skipping alert for %s (%s): recently sent", moniker, userID)
 			continue
 		}
 
-		payload := map[string]string{"text": message}
-		body, _ := json.Marshal(payload)
+		fullMsg := message
 
-		resp, err := http.Post(hook.URL, "application/json", bytes.NewBuffer(body))
+		switch level {
+		case "** CRITICAL **":
+			// Ajouter les mentions si le niveau est critique
+
+			mentionQuery := `
+		SELECT namecontact, mention_tag 
+		FROM alert_contacts 
+		WHERE user_id = ? AND moniker = ?;
+	`
+			mentionRows, err := db.Query(mentionQuery, userID, moniker)
+			if err != nil {
+				return fmt.Errorf("failed to query alert_contacts: %w", err)
+			}
+			defer mentionRows.Close()
+
+			var mentions string
+			for mentionRows.Next() {
+				var name, tag sql.NullString
+				if err := mentionRows.Scan(&name, &tag); err != nil {
+					return fmt.Errorf("failed to scan contact mention: %w", err)
+				}
+				if tag.Valid {
+					mentions += tag.String + " "
+				} else {
+					mentions += "@" + name.String + " "
+				}
+			}
+
+			if mentions != "" {
+				fullMsg += "\n" + mentions
+			}
+
+		case "warning", "info":
+			// Ne rien ajouter au message
+			// Tu peux éventuellement logger si besoin
+		default:
+			log.Printf("Unknown alert level: %s", level)
+		}
+
+		// 3. Envoyer via la bonne méthode
+		switch typ {
+		case "discord":
+			err = SendDiscordAlert(fullMsg, url)
+		case "slack":
+			err = SendSlackAlert(fullMsg, url)
+		default:
+			continue
+		}
+		// 5. Insérer ou mettre à jour alert_log
+		_, err = db.Exec(`
+			INSERT INTO alert_log (user_id, addr, moniker, level, sent_at)
+VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+ON CONFLICT(user_id, addr, level) DO UPDATE SET sent_at = excluded.sent_at;
+		`, userID, addr, moniker, level)
 		if err != nil {
-			log.Printf("Error sending to Slack webhook %s: %v", hook.URL, err)
-			continue
+			log.Printf("failed to insert alert to %v (%s): %v", url, typ, err)
+			return fmt.Errorf("failed to insert alert to %v (%s): %w", url, typ, err)
+
 		}
-		resp.Body.Close()
 	}
+
 	return nil
 }

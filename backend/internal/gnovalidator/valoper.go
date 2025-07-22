@@ -78,8 +78,10 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 	log.Printf("🎉 Total valopers fetched: %d\n", len(allValopers))
 	return allValopers, nil
 }
-func GetGenesisMonikers() (map[string]string, error) {
-	resp, err := http.Get("https://rpc.test6.testnets.gno.land/genesis")
+func GetGenesisMonikers(rpcURL string) (map[string]string, error) {
+	url := fmt.Sprintf("%s/genesis", strings.TrimRight(rpcURL, "/"))
+
+	resp, err := http.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch genesis: %w", err)
 	}
@@ -171,7 +173,7 @@ func InitMonikerMap() {
 	}
 
 	// Step #— Génésis monikers
-	genesisMap, err := GetGenesisMonikers()
+	genesisMap, err := GetGenesisMonikers(internal.Config.RPCEndpoint)
 	if err != nil {
 		log.Printf("⚠️ Failed to get genesis monikers: %v", err)
 	}

@@ -10,13 +10,11 @@ import (
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
-	// "github.com/samouraiworld/gnomonitoring/backend/internal/Gnovalidator"
 )
 
 // VARIABLE DECLARATION
 var MonikerMutex sync.RWMutex
-var lastRPCErrorAlert time.Time                //anti spam for error RPC
-var lastAlertSent = make(map[string]time.Time) // pour anti-spam
+var lastRPCErrorAlert time.Time //anti spam for error RPC
 
 type BlockParticipation struct {
 	Height     int64
@@ -46,9 +44,6 @@ func CollectParticipation(db *sql.DB, client gnoclient.Client) {
 				if time.Since(lastRPCErrorAlert) > 10*time.Minute {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
 					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
-
-					// internal.SendDiscordAlertValidator(msg, db)
-					// internal.SendSlackAlertValidator(msg, db)
 
 					lastRPCErrorAlert = time.Now()
 				}
@@ -120,8 +115,7 @@ func WatchNewValidators(db *sql.DB, refreshInterval time.Duration) {
 				if _, exists := oldMap[addr]; !exists {
 					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
 					log.Println(msg)
-					internal.SendDiscordAlertValidator(msg, db)
-					internal.SendSlackAlertValidator(msg, db)
+					internal.SendAllValidatorAlerts(msg, "info", addr, moniker, db)
 				}
 			}
 			MonikerMutex.RUnlock()
@@ -154,29 +148,24 @@ func WatchValidatorAlerts(db *sql.DB, checkInterval time.Duration) {
 					continue
 				}
 
-				//Do not send more than one alert every 30 minutes per validator
-				if last, ok := lastAlertSent[addr]; ok && time.Since(last) < 30*time.Minute {
-					continue
-				}
-
 				var level, emoji, prefix string
 				if missed >= 3 {
 					level = "CRITICAL"
 					emoji = "🚨"
 					prefix = "**"
+
 				} else if missed == 1 {
 					level = "WARNING"
 					emoji = "⚠️"
 					prefix = ""
+
 				} else {
 					continue
 				}
 
-				msg := fmt.Sprintf("%s %s%s %s missed %d blocks today%s", emoji, prefix, level, moniker, missed, prefix)
+				msg := fmt.Sprintf("%s %s %s %s \n addr:%s \n moniker: %s \n missed %d blocks today", emoji, prefix, level, prefix, addr, moniker, missed)
 				log.Println(msg)
-				internal.SendDiscordAlertValidator(msg, db)
-				internal.SendSlackAlertValidator(msg, db)
-				lastAlertSent[addr] = time.Now()
+				internal.SendAllValidatorAlerts(msg, level, addr, moniker, db)
 			}
 
 			time.Sleep(checkInterval)
@@ -212,5 +201,5 @@ func StartValidatorMonitoring(db *sql.DB) {
 	InitMonikerMap() // init validator Map
 	WatchNewValidators(db, 5*time.Minute)
 	CollectParticipation(db, client)         // collect participant
-	WatchValidatorAlerts(db, 10*time.Second) // DB-based of alerts
+	WatchValidatorAlerts(db, 20*time.Second) // DB-based of alerts
 }
