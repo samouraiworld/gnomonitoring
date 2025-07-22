@@ -25,7 +25,7 @@ func InitDB() *sql.DB {
 	if err != nil {
 		log.Fatalf("Table creation error: %v", err)
 	}
-	_, err = db.Exec("PRAGMA journal_mode = WAL;")
+	_, err = db.Exec("PRAGMA journal_mode = WAL;") // Multi write
 	if err != nil {
 		log.Fatalf("Failed to enable WAL mode: %v", err)
 	}
@@ -34,11 +34,11 @@ func InitDB() *sql.DB {
 }
 
 type Users struct {
-	USER_ID string
-	NAME    string
-	EMAIL   string
-	DAYLYRH int
-	DAYLYRM int
+	USER_ID string `json:"user_id"`
+	NAME    string `json:"name"`
+	EMAIL   string `json:"email"`
+	DAYLYRH int    `json:"daily_report_hour"`
+	DAYLYRM int    `json:"daily_report_minute"`
 }
 type AlertContact struct {
 	ID         int
@@ -62,7 +62,7 @@ type WebhookValidator struct {
 	Type string
 }
 
-// Insert wehbook govdao
+// ==================================== GovDao ======================================
 func InsertWebhook(user_id string, url string, wtype string, db *sql.DB) error {
 	if wtype != "discord" && wtype != "slack" {
 		return fmt.Errorf("Invalid type. Use discord or slack")
@@ -118,7 +118,7 @@ func DeleteWebhook(id int, user_id string, db *sql.DB) error {
 	return err
 }
 
-// fonction webhooks_validator
+// ==========================webhooks_validator ===============================================
 
 func InsertMonitoringWebhook(user_id, url, typ string, db *sql.DB) error {
 	_, err := db.Exec("INSERT INTO webhooks_validator (user_id, url, type) VALUES (?, ?, ?)", user_id, url, typ)
@@ -148,7 +148,7 @@ func ListMonitoringWebhooks(db *sql.DB, user_id string) ([]WebhookValidator, err
 	return result, nil
 }
 
-// ===============================fonction update y Get for gnovalidator y Govdao
+// =============================== gnovalidator y Govdao ======================================
 func UpdateMonitoringWebhook(db *sql.DB, id int, user_id, newURL, newType, tablename string) error {
 	query := fmt.Sprintf(
 		"UPDATE %s SET url=?, type=? WHERE user_id=? AND id = ?",
@@ -178,7 +178,7 @@ func GetWebhookByID(db *sql.DB, user_id string, table string) (*WebhookValidator
 	return &wh, nil
 }
 
-//============================== fonction for table users
+//============================== USERS ===================================================
 
 func InsertUser(user_id, email, name string, db *sql.DB) error {
 	_, err := db.Exec("INSERT INTO users (user_id, email, nameuser) VALUES (?, ?, ?)", user_id, email, name)
@@ -210,32 +210,22 @@ func UpdateUser(db *sql.DB, name, email, user_id string) error {
 	return nil
 }
 func GetUserById(db *sql.DB, userID string) (*Users, error) {
-	row := db.QueryRow("SELECT nameuser, email, daily_report_hour, daily_report_minute FROM users WHERE user_id = ?", userID)
+	row := db.QueryRow("SELECT user_id,nameuser, email, daily_report_hour, daily_report_minute FROM users WHERE user_id = ?", userID)
 
 	var usr Users
 	var hour, minute sql.NullInt64
-	err := row.Scan(&usr.NAME, &usr.EMAIL, &hour, &minute)
+	err := row.Scan(&usr.USER_ID, &usr.NAME, &usr.EMAIL, &hour, &minute)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get user with id %s: %w", userID, err)
 	}
-	// Appliquer valeurs par défaut si NULL
-	// usr.DAYLYRH = 9
-	// if hour.Valid {
-	// 	usr.DAYLYRH = int(hour.Int64)
-	// }
-
-	// usr.DAYLYRM = 0
-	// if minute.Valid {
-	// 	usr.DAYLYRM = int(minute.Int64)
-	// }
 
 	return &usr, nil
 }
 
-// ============================== fonction for alert_contact
+// ============================== Alert_contact =============================================
 func InsertAlertContact(db *sql.DB, user_id, moniker, namecontact, mention_tag string) error {
 	stmt, err := db.Prepare(`
 		INSERT INTO alert_contacts (user_id, moniker, namecontact, mention_tag)
@@ -284,7 +274,7 @@ func DeleteAlertContact(db *sql.DB, id int) error {
 	return err
 }
 
-// call in the fonction StartDailyReport of gnovalidator_report.go
+// ==================================== Purge ==========================================
 func PruneOldParticipationData(db *sql.DB, keepDays int) error {
 	cutoff := time.Now().AddDate(0, 0, -keepDays).Format("2006-01-02")
 	stmt := `DELETE FROM daily_participation WHERE date < ?`

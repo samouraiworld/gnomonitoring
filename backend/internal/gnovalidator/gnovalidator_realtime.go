@@ -10,7 +10,6 @@ import (
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
-	// "github.com/samouraiworld/gnomonitoring/backend/internal/Gnovalidator"
 )
 
 // VARIABLE DECLARATION
