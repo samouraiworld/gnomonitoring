@@ -41,7 +41,27 @@
         participated BOOLEAN NOT NULL,
         PRIMARY KEY (date, block_height, moniker)
 	);
+	CREATE TABLE IF NOT EXISTS alert_log (
+    user_id TEXT NOT NULL,
+    addr TEXT NOT NULL,
+    moniker TEXT NOT NULL,
+    level TEXT NOT NULL,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, addr, level)
+);
 	
 	CREATE INDEX IF NOT EXISTS idx_participation_date ON daily_participation(date);
     CREATE INDEX IF NOT EXISTS idx_webhooks_validator_user ON webhooks_validator(user_id);
     CREATE INDEX IF NOT EXISTS idx_webhooks_govdao_user ON webhooks_govdao(user_id);
+
+
+
+	/*UPDATE daily_participation
+SET participated = 0
+WHERE rowid IN (
+    SELECT rowid
+    FROM daily_participation
+    WHERE moniker = 'samourai-dev-team-1'
+    ORDER BY date DESC, block_height DESC
+    LIMIT 3
+);

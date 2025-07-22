@@ -59,7 +59,7 @@ func SendDailyStats(db *sql.DB) {
 	}
 
 	msg := buffer.String()
-	err := internal.SendAllValidatorAlerts(msg, db)
+	err := internal.SendAllValidatorAlerts(msg, "info", "", "", db)
 	if err != nil {
 		log.Printf("[SendDailyStats] Discord alert failed: %v", err)
 	}
