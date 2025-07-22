@@ -45,6 +45,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	}
 	err = InsertWebhook(webhook.USER, webhook.URL, webhook.Type, db)
 	if err != nil {
+		log.Println(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -84,6 +85,7 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	}
 	err = UpdateMonitoringWebhook(db, webhook.ID, webhook.USER, webhook.URL, webhook.Type, "webhooks_govdao")
 	if err != nil {
+		log.Println(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
