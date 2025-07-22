@@ -25,6 +25,10 @@ func InitDB() *sql.DB {
 	if err != nil {
 		log.Fatalf("Table creation error: %v", err)
 	}
+	_, err = db.Exec("PRAGMA journal_mode = WAL;")
+	if err != nil {
+		log.Fatalf("Failed to enable WAL mode: %v", err)
+	}
 
 	return db
 }
@@ -52,11 +56,10 @@ type WebhookGovDao struct {
 	LastCheckedID int
 }
 type WebhookValidator struct {
-	ID            int
-	USER          string
-	URL           string
-	Type          string
-	LastCheckedID int
+	ID   int
+	USER string
+	URL  string
+	Type string
 }
 
 // Insert wehbook govdao
@@ -145,11 +148,11 @@ func ListMonitoringWebhooks(db *sql.DB, user_id string) ([]WebhookValidator, err
 	return result, nil
 }
 
-// fonction update y Get for gnovalidator y Govdao
+// ===============================fonction update y Get for gnovalidator y Govdao
 func UpdateMonitoringWebhook(db *sql.DB, id int, user_id, newURL, newType, tablename string) error {
 	query := fmt.Sprintf(
 		"UPDATE %s SET url=?, type=? WHERE user_id=? AND id = ?",
-		tablename, // attention : doit être contrôlé
+		tablename,
 	)
 	_, err := db.Exec(query, newURL, newType, user_id, id)
 	if err != nil {
@@ -169,13 +172,13 @@ func GetWebhookByID(db *sql.DB, user_id string, table string) (*WebhookValidator
 		if err == sql.ErrNoRows {
 			return nil, nil // Pas trouvé
 		}
-		return nil, fmt.Errorf("failed to get webhook with id %d: %w", user_id, err)
+		return nil, fmt.Errorf("failed to get webhook with id %s: %w", user_id, err)
 	}
 
 	return &wh, nil
 }
 
-// fonction for table users
+//============================== fonction for table users
 
 func InsertUser(user_id, email, name string, db *sql.DB) error {
 	_, err := db.Exec("INSERT INTO users (user_id, email, nameuser) VALUES (?, ?, ?)", user_id, email, name)
@@ -198,9 +201,9 @@ func UpateHeureReport(db *sql.DB, H, M int, user_id string) error {
 	return nil
 }
 
-func UpdateUser(db *sql.DB, name, user_id string) error {
+func UpdateUser(db *sql.DB, name, email, user_id string) error {
 
-	_, err := db.Exec("UPDATE users SET nameuser=? WHERE user_id=?", name, user_id)
+	_, err := db.Exec("UPDATE users SET nameuser=?, email = ? WHERE user_id=?", name, email, user_id)
 	if err != nil {
 		return fmt.Errorf("failed to update user with user_id %s: %w", user_id, err)
 	}
@@ -210,18 +213,46 @@ func GetUserById(db *sql.DB, userID string) (*Users, error) {
 	row := db.QueryRow("SELECT nameuser, email, daily_report_hour, daily_report_minute FROM users WHERE user_id = ?", userID)
 
 	var usr Users
-	err := row.Scan(&usr.NAME, &usr.EMAIL, &usr.DAYLYRH, &usr.DAYLYRM)
+	var hour, minute sql.NullInt64
+	err := row.Scan(&usr.NAME, &usr.EMAIL, &hour, &minute)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get user with id %s: %w", userID, err)
 	}
+	// Appliquer valeurs par défaut si NULL
+	// usr.DAYLYRH = 9
+	// if hour.Valid {
+	// 	usr.DAYLYRH = int(hour.Int64)
+	// }
+
+	// usr.DAYLYRM = 0
+	// if minute.Valid {
+	// 	usr.DAYLYRM = int(minute.Int64)
+	// }
 
 	return &usr, nil
 }
 
-// fonction for alert_contact
+// ============================== fonction for alert_contact
+func InsertAlertContact(db *sql.DB, user_id, moniker, namecontact, mention_tag string) error {
+	stmt, err := db.Prepare(`
+		INSERT INTO alert_contacts (user_id, moniker, namecontact, mention_tag)
+		VALUES (?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare insert statement: %w", err)
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(user_id, moniker, namecontact, mention_tag)
+	if err != nil {
+		return fmt.Errorf("failed to execute insert: %w", err)
+	}
+
+	return nil
+}
 
 func ListAlertContacts(db *sql.DB, userID string) ([]AlertContact, error) {
 	rows, err := db.Query(`

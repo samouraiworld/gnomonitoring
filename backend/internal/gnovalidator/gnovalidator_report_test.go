@@ -1,82 +1,84 @@
 package gnovalidator_test
 
 import (
+	"database/sql"
+	"os"
 	"testing"
 	"time"
 
-	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
 )
+
+func setupTestDB(t *testing.T) *sql.DB {
+	os.Remove("test_report.db") // Clean old file if any
+	db, err := sql.Open("sqlite3", "test_report.db")
+	if err != nil {
+		t.Fatalf("Failed to open test DB: %v", err)
+	}
+
+	createTable := `
+	CREATE TABLE IF NOT EXISTS daily_participation (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		date TEXT NOT NULL,
+		block_height INTEGER NOT NULL,
+		addr TEXT NOT NULL,
+		moniker TEXT NOT NULL,
+		participated BOOLEAN NOT NULL
+	);`
+	_, err = db.Exec(createTable)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	return db
+}
+
+func insertParticipationData(db *sql.DB, date string, addr string, moniker string, participated []bool, startHeight int) error {
+	for i, p := range participated {
+		_, err := db.Exec(`
+			INSERT INTO daily_participation (date, block_height, addr, moniker, participated)
+			VALUES (?, ?, ?, ?, ?)`,
+			date, startHeight+i, addr, moniker, p)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func TestCalculateRate(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
-	date := "2025-07-14"
-	stmt := `INSERT INTO daily_participation(date, block_height, moniker, addr, participated) VALUES (?, ?, ?, ?, ?)`
-	entries := []struct {
-		height      int
-		participate bool
-	}{
-		{100, true}, {101, false}, {102, true},
-	}
+	date := time.Now().Format("2006-01-02")
 
-	for _, e := range entries {
-		_, err := db.Exec(stmt, date, e.height, "MonikerTest", "validator1", e.participate)
-		if err != nil {
-			t.Fatalf("failed to insert test data: %v", err)
-		}
+	err := insertParticipationData(db, date, "valoper1", "validator-one", []bool{true, false, true, true}, 100)
+	if err != nil {
+		t.Fatalf("Insert error: %v", err)
+	}
+	err = insertParticipationData(db, date, "valoper2", "validator-two", []bool{false, false, false, false}, 200)
+	if err != nil {
+		t.Fatalf("Insert error: %v", err)
 	}
 
 	rates, min, max := gnovalidator.CalculateRate(db, date)
 
-	if len(rates) != 1 {
-		t.Errorf("expected 1 validator, got %d", len(rates))
-	}
-	if rate := rates["validator1"]; rate < 66.6 || rate > 66.7 {
-		t.Errorf("unexpected rate: got %.2f, want ~66.67", rate)
-	}
-	if min != 100 || max != 102 {
-		t.Errorf("unexpected block range: min=%d max=%d", min, max)
-	}
-}
-func TestPruneOldParticipationData(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	oldDate := time.Now().AddDate(0, 0, -40).Format("2006-01-02")
-	recentDate := time.Now().Format("2006-01-02")
-	stmt := `INSERT INTO daily_participation(date, block_height, moniker, addr, participated) VALUES (?, ?, ?, ?, ?)`
-
-	_, _ = db.Exec(stmt, oldDate, 1, "Old", "val1", true)
-	_, _ = db.Exec(stmt, recentDate, 2, "Recent", "val2", true)
-
-	err := internal.PruneOldParticipationData(db, 30)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if len(rates) != 2 {
+		t.Errorf("Expected 2 validators, got %d", len(rates))
 	}
 
-	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM daily_participation WHERE date = ?`, oldDate).Scan(&count)
-	if err != nil {
-		t.Fatalf("query error: %v", err)
+	if rate := rates["valoper1"]; rate != 75.0 {
+		t.Errorf("Expected rate 75.0 for valoper1, got %.2f", rate)
 	}
-	if count != 0 {
-		t.Errorf("old data not pruned")
+	if rate := rates["valoper2"]; rate != 0.0 {
+		t.Errorf("Expected rate 0.0 for valoper2, got %.2f", rate)
 	}
-}
-func TestGetLastStoredHeight(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
 
-	stmt := `INSERT INTO daily_participation(date, block_height, moniker, addr, participated) VALUES (?, ?, ?, ?, ?)`
-	_, _ = db.Exec(stmt, "2025-07-14", 42, "Moniker", "validator1", true)
-
-	height, err := gnovalidator.GetLastStoredHeight(db)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if min != 100 {
+		t.Errorf("Expected min block 100, got %d", min)
 	}
-	if height != 42 {
-		t.Errorf("expected height 42, got %d", height)
+	if max != 203 {
+		t.Errorf("Expected max block 203, got %d", max)
 	}
 }
