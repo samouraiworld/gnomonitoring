@@ -22,6 +22,7 @@ type config struct {
 	DailyReportHour   int    `yaml:"daily_report_hour"`
 	DailyReportMinute int    `yaml:"daily_report_minute"`
 	MetricsPort       int    `yaml:"metrics_port"`
+	Gnoweb            string `yaml:"gnoweb"`
 }
 
 var Config config
