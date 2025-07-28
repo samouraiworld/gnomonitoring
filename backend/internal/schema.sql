@@ -18,6 +18,7 @@
 	CREATE TABLE IF NOT EXISTS webhooks_govdao (
         created_at DEFAULT CURRENT_TIMESTAMP,
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		description TEXT,
 		user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
 		url TEXT NOT NULL,
 		type TEXT NOT NULL CHECK(type IN ('discord', 'slack')),
@@ -27,7 +28,8 @@
 	
 	CREATE TABLE IF NOT EXISTS webhooks_validator (
         created_at DEFAULT CURRENT_TIMESTAMP,
-    	id INTEGER PRIMARY KEY AUTOINCREMENT,
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		description TEXT,
     	user_id TEXT  NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     	url TEXT NOT NULL,
     	type TEXT NOT NULL CHECK(type IN ('discord', 'slack'))
@@ -46,8 +48,9 @@
     addr TEXT NOT NULL,
     moniker TEXT NOT NULL,
     level TEXT NOT NULL,
+	url TEXT,
     sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, addr, level)
+    PRIMARY KEY (user_id, addr, level,url)
 );
 	
 	CREATE INDEX IF NOT EXISTS idx_participation_date ON daily_participation(date);
