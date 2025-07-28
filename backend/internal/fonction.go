@@ -22,6 +22,7 @@ type config struct {
 	DailyReportHour   int    `yaml:"daily_report_hour"`
 	DailyReportMinute int    `yaml:"daily_report_minute"`
 	MetricsPort       int    `yaml:"metrics_port"`
+	Gnoweb            string `yaml:"gnoweb"`
 }
 
 var Config config
@@ -75,7 +76,7 @@ func SendSlackAlert(msg string, webhookURL string) error {
 }
 
 func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) error {
-	// 1. Récupérer tous les webhooks_validator avec user_id
+	// 1. Récupérer tous les webhooks_validator (plusieurs par user possible)
 	query := `
 		SELECT user_id, url, type 
 		FROM webhooks_validator;
@@ -92,28 +93,27 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) er
 		if err := rows.Scan(&userID, &url, &typ); err != nil {
 			return fmt.Errorf("failed to scan webhook row: %w", err)
 		}
-		// 3. Vérifier si une alerte a déjà été envoyée récemment (ex: 30 min)
+
+		// 2. Vérifier si cette combinaison (user_id + addr + level + url) a déjà été envoyée récemment
 		var lastSent time.Time
 		err = db.QueryRow(`
 			SELECT sent_at FROM alert_log 
-			WHERE user_id = ? AND addr = ? AND level = ?`, userID, addr, level).Scan(&lastSent)
+			WHERE user_id = ? AND addr = ? AND level = ? AND url = ?`, userID, addr, level, url).Scan(&lastSent)
 
-		if err == nil && time.Since(lastSent) < 30*time.Minute {
-			log.Printf("⏱️ Skipping alert for %s (%s): recently sent", moniker, userID)
+		if err == nil && time.Since(lastSent) < 500*time.Minute {
+			log.Printf("⏱️ Skipping alert for %s (%s, %s): recently sent", moniker, userID, url)
 			continue
 		}
 
 		fullMsg := message
 
-		switch level {
-		case "** CRITICAL **":
-			// Ajouter les mentions si le niveau est critique
-
+		// 3. Ajouter mentions si CRITICAL
+		if level == "** CRITICAL **" {
 			mentionQuery := `
-		SELECT namecontact, mention_tag 
-		FROM alert_contacts 
-		WHERE user_id = ? AND moniker = ?;
-	`
+				SELECT namecontact, mention_tag 
+				FROM alert_contacts 
+				WHERE user_id = ? AND moniker = ?;
+			`
 			mentionRows, err := db.Query(mentionQuery, userID, moniker)
 			if err != nil {
 				return fmt.Errorf("failed to query alert_contacts: %w", err)
@@ -136,15 +136,9 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) er
 			if mentions != "" {
 				fullMsg += "\n" + mentions
 			}
-
-		case "warning", "info":
-			// Ne rien ajouter au message
-			// Tu peux éventuellement logger si besoin
-		default:
-			log.Printf("Unknown alert level: %s", level)
 		}
 
-		// 3. Envoyer via la bonne méthode
+		// 4. Envoyer selon le type
 		switch typ {
 		case "discord":
 			err = SendDiscordAlert(fullMsg, url)
@@ -153,16 +147,21 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) er
 		default:
 			continue
 		}
-		// 5. Insérer ou mettre à jour alert_log
-		_, err = db.Exec(`
-			INSERT INTO alert_log (user_id, addr, moniker, level, sent_at)
-VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-ON CONFLICT(user_id, addr, level) DO UPDATE SET sent_at = excluded.sent_at;
-		`, userID, addr, moniker, level)
-		if err != nil {
-			log.Printf("failed to insert alert to %v (%s): %v", url, typ, err)
-			return fmt.Errorf("failed to insert alert to %v (%s): %w", url, typ, err)
 
+		if err != nil {
+			log.Printf("❌ Failed to send alert to %s (%s): %v", url, typ, err)
+			continue
+		}
+
+		// 5. Insérer ou mettre à jour alert_log avec URL incluse
+		_, err = db.Exec(`
+			INSERT INTO alert_log (user_id, addr, moniker, level, url, sent_at)
+			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(user_id, addr, level, url) DO UPDATE SET sent_at = excluded.sent_at;
+		`, userID, addr, moniker, level, url)
+		if err != nil {
+			log.Printf("failed to insert alert_log for %v (%s): %v", url, typ, err)
+			return fmt.Errorf("failed to insert alert log for %v (%s): %w", url, typ, err)
 		}
 	}
 
