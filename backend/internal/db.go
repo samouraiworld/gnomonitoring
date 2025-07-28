@@ -50,30 +50,32 @@ type AlertContact struct {
 
 type WebhookGovDao struct {
 	ID            int
+	DESCRIPTION   string
 	USER          string
 	URL           string
 	Type          string
 	LastCheckedID int
 }
 type WebhookValidator struct {
-	ID   int
-	USER string
-	URL  string
-	Type string
+	ID          int
+	DESCRIPTION string
+	USER        string
+	URL         string
+	Type        string
 }
 
 // ==================================== GovDao ======================================
-func InsertWebhook(user_id string, url string, wtype string, db *sql.DB) error {
+func InsertWebhook(user_id string, url string, description, wtype string, db *sql.DB) error {
 	if wtype != "discord" && wtype != "slack" {
 		return fmt.Errorf("Invalid type. Use discord or slack")
 	}
 
-	_, err := db.Exec("INSERT OR IGNORE INTO webhooks_govdao (user_id, url, type, last_checked_id) VALUES (?, ?, ?, 0)", user_id, url, wtype)
+	_, err := db.Exec("INSERT OR IGNORE INTO webhooks_govdao (user_id, url,description, type, last_checked_id) VALUES (?, ?,?, ?, 0)", user_id, url, description, wtype)
 	return err
 }
 
 func Loadwebhooks(db *sql.DB) ([]WebhookGovDao, error) {
-	rows, err := db.Query("SELECT id, user_id, url, type, last_checked_id FROM webhooks_govdao")
+	rows, err := db.Query("SELECT id, description, user_id, url, type, last_checked_id FROM webhooks_govdao")
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +84,7 @@ func Loadwebhooks(db *sql.DB) ([]WebhookGovDao, error) {
 	var webhooks []WebhookGovDao
 	for rows.Next() {
 		var w WebhookGovDao
-		if err := rows.Scan(&w.ID, &w.USER, &w.URL, &w.Type, &w.LastCheckedID); err != nil {
+		if err := rows.Scan(&w.ID, &w.DESCRIPTION, &w.USER, &w.URL, &w.Type, &w.LastCheckedID); err != nil {
 			return nil, err
 		}
 		webhooks = append(webhooks, w)
@@ -96,7 +98,7 @@ func UpdateLastCheckedID(url string, newID int, db *sql.DB) error {
 }
 
 func ListWebhooks(db *sql.DB, user_id string) ([]WebhookGovDao, error) {
-	rows, err := db.Query("SELECT id,user_id, url, type, last_checked_id FROM webhooks_govdao WHERE user_id = ?ORDER BY id ASC", user_id)
+	rows, err := db.Query("SELECT id, description, user_id, url, type, last_checked_id FROM webhooks_govdao WHERE user_id = ?ORDER BY id ASC", user_id)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +107,7 @@ func ListWebhooks(db *sql.DB, user_id string) ([]WebhookGovDao, error) {
 	var list []WebhookGovDao
 	for rows.Next() {
 		var wh WebhookGovDao
-		err := rows.Scan(&wh.ID, &wh.USER, &wh.URL, &wh.Type, &wh.LastCheckedID)
+		err := rows.Scan(&wh.ID, &wh.DESCRIPTION, &wh.USER, &wh.URL, &wh.Type, &wh.LastCheckedID)
 		if err != nil {
 			return nil, err
 		}
@@ -120,8 +122,8 @@ func DeleteWebhook(id int, user_id string, db *sql.DB) error {
 
 // ==========================webhooks_validator ===============================================
 
-func InsertMonitoringWebhook(user_id, url, typ string, db *sql.DB) error {
-	_, err := db.Exec("INSERT INTO webhooks_validator (user_id, url, type) VALUES (?, ?, ?)", user_id, url, typ)
+func InsertMonitoringWebhook(user_id, url, description, typ string, db *sql.DB) error {
+	_, err := db.Exec("INSERT INTO webhooks_validator (user_id,description, url, type) VALUES (?, ?, ?,?)", user_id, description, url, typ)
 	return err
 }
 
@@ -131,7 +133,7 @@ func DeleteMonitoringWebhook(id int, user_id string, db *sql.DB) error {
 }
 
 func ListMonitoringWebhooks(db *sql.DB, user_id string) ([]WebhookValidator, error) {
-	rows, err := db.Query("SELECT id, user_id, url, type FROM webhooks_validator WHERE user_id= ?", user_id)
+	rows, err := db.Query("SELECT id, description, user_id, url, type FROM webhooks_validator WHERE user_id= ?", user_id)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +142,7 @@ func ListMonitoringWebhooks(db *sql.DB, user_id string) ([]WebhookValidator, err
 	var result []WebhookValidator
 	for rows.Next() {
 		var hook WebhookValidator
-		if err := rows.Scan(&hook.ID, &hook.USER, &hook.URL, &hook.Type); err != nil {
+		if err := rows.Scan(&hook.ID, &hook.DESCRIPTION, &hook.USER, &hook.URL, &hook.Type); err != nil {
 			return nil, err
 		}
 		result = append(result, hook)
@@ -149,12 +151,12 @@ func ListMonitoringWebhooks(db *sql.DB, user_id string) ([]WebhookValidator, err
 }
 
 // =============================== gnovalidator y Govdao ======================================
-func UpdateMonitoringWebhook(db *sql.DB, id int, user_id, newURL, newType, tablename string) error {
+func UpdateMonitoringWebhook(db *sql.DB, id int, user_id, description, newURL, newType, tablename string) error {
 	query := fmt.Sprintf(
-		"UPDATE %s SET url=?, type=? WHERE user_id=? AND id = ?",
+		"UPDATE %s SET url=?,description=?, type=? WHERE user_id=? AND id = ?",
 		tablename,
 	)
-	_, err := db.Exec(query, newURL, newType, user_id, id)
+	_, err := db.Exec(query, newURL, description, newType, user_id, id)
 	if err != nil {
 		return fmt.Errorf("failed to update webhook with id %d: %w", id, err)
 	}
@@ -162,12 +164,12 @@ func UpdateMonitoringWebhook(db *sql.DB, id int, user_id, newURL, newType, table
 }
 
 func GetWebhookByID(db *sql.DB, user_id string, table string) (*WebhookValidator, error) {
-	query := fmt.Sprintf("SELECT USER, URL, Type FROM %s WHERE user_id = ?", table)
+	query := fmt.Sprintf("SELECT USER, description,	 URL, Type FROM %s WHERE user_id = ?", table)
 
 	row := db.QueryRow(query, user_id)
 
 	var wh WebhookValidator
-	err := row.Scan(&wh.USER, &wh.URL, &wh.Type)
+	err := row.Scan(&wh.USER, &wh.DESCRIPTION, &wh.URL, &wh.Type)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // Pas trouvé

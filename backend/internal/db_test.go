@@ -73,7 +73,7 @@ func TestInsertWebhookAndList(t *testing.T) {
 	db := setupInMemoryDB(t)
 	defer db.Close()
 
-	err := internal.InsertWebhook("user123", "https://discord.com/hook", "discord", db)
+	err := internal.InsertWebhook("user123", "https://discord.com/hook", "test discord webhook", "discord", db)
 	if err != nil {
 		t.Fatalf("InsertWebhook failed: %v", err)
 	}

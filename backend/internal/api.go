@@ -37,19 +37,46 @@ func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 
 func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	enableCORS(w)
+
 	var webhook WebhookGovDao
 	err := json.NewDecoder(r.Body).Decode(&webhook)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = InsertWebhook(webhook.USER, webhook.URL, webhook.Type, db)
+
+	// ✅ Vérifier les champs obligatoires
+	if webhook.USER == "" || webhook.URL == "" || webhook.Type == "" || webhook.DESCRIPTION == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// ✅ Vérifier si le webhook existe déjà
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM webhooks_govdao  WHERE user_id = ? AND url = ? AND type = ?)`
+	err = db.QueryRow(query, webhook.USER, webhook.URL, webhook.Type).Scan(&exists)
 	if err != nil {
-		log.Println(err)
+		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if exists {
+		// ✅ Webhook déjà présent → retourne 409
+		w.WriteHeader(http.StatusConflict)
+		w.Write([]byte("Webhook already exists"))
+		return
+	}
+
+	// ✅ Si pas existant, on insère
+	err = InsertWebhook(webhook.USER, webhook.URL, webhook.DESCRIPTION, webhook.Type, db)
+	if err != nil {
+		log.Println("Insert error:", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte("Webhook created successfully"))
 }
 
 func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
@@ -83,7 +110,7 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = UpdateMonitoringWebhook(db, webhook.ID, webhook.USER, webhook.URL, webhook.Type, "webhooks_govdao")
+	err = UpdateMonitoringWebhook(db, webhook.ID, webhook.USER, webhook.DESCRIPTION, webhook.URL, webhook.Type, "webhooks_govdao")
 	if err != nil {
 		log.Println(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -111,18 +138,45 @@ func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *s
 
 func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	enableCORS(w)
+
 	var webhook WebhookValidator
 	err := json.NewDecoder(r.Body).Decode(&webhook)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = InsertMonitoringWebhook(webhook.USER, webhook.URL, webhook.Type, db)
+
+	// ✅ Vérification des champs obligatoires
+	if webhook.USER == "" || webhook.URL == "" || webhook.Type == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	// ✅ Vérifier si le webhook existe déjà
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM webhooks_validator WHERE user_id = ? AND url = ? AND type = ?)`
+	err = db.QueryRow(query, webhook.USER, webhook.URL, webhook.Type).Scan(&exists)
+	if err != nil {
+		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if exists {
+		// ✅ Webhook déjà présent → retourne 409
+		w.WriteHeader(http.StatusConflict)
+		w.Write([]byte("Webhook already exists"))
+		return
+	}
+
+	// ✅ Si pas existant, on insère
+	err = InsertMonitoringWebhook(webhook.USER, webhook.URL, webhook.DESCRIPTION, webhook.Type, db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte("Webhook created successfully"))
 }
 
 func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
@@ -156,7 +210,7 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = UpdateMonitoringWebhook(db, webhook.ID, webhook.USER, webhook.URL, webhook.Type, "webhooks_validator")
+	err = UpdateMonitoringWebhook(db, webhook.ID, webhook.USER, webhook.DESCRIPTION, webhook.URL, webhook.Type, "webhooks_validator")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -164,21 +218,39 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	w.WriteHeader(http.StatusOK)
 }
 
-// =======================USER==========================================
+// =======================USER==========================================func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	enableCORS(w)
+
 	var users Users
 	err := json.NewDecoder(r.Body).Decode(&users)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	// Vérifie si l'utilisateur existe déjà
+	var exists bool
+	query := "SELECT EXISTS(SELECT 1 FROM users WHERE user_id = ?)"
+	err = db.QueryRow(query, users.USER_ID).Scan(&exists)
+	if err != nil {
+		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if exists {
+		http.Error(w, "User already exists", http.StatusConflict) // 409
+		return
+	}
+
+	// Insertion
 	err = InsertUser(users.USER_ID, users.EMAIL, users.NAME, db)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Insert error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
+
+	w.WriteHeader(http.StatusCreated) // 201
 }
 
 func DeleteUserHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {

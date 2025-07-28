@@ -3,6 +3,7 @@ package internal
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -11,33 +12,63 @@ import (
 )
 
 func StartWebhookWatcher(w WebhookGovDao, db *sql.DB) {
+	log.Println("Begin Start GovDao")
 	ticker := time.NewTicker(time.Duration(Config.IntervallSecond) * time.Second)
 	defer ticker.Stop()
+	log.Printf("user %s url:%s", w.USER, w.URL)
+	for range ticker.C {
+		nextID := w.LastCheckedID + 1
+		exists, title, moniker := ProposalExists(nextID)
+		log.Printf("check GovDao num %d\n", nextID)
 
-	for {
-		select {
-		case <-ticker.C:
-			nextID := w.LastCheckedID + 1
-			exists, title, moniker := ProposalExists(nextID)
-			// log.Printf("check GovDao num %d\n", nextID)
-			if exists {
-				msg := fmt.Sprintf("--- \n 🗳️ ** New Proposal N° %d: %s ** - %s \n 🔗source: https://test6.testnets.gno.land/r/gov/dao:%d  ", nextID, title, moniker, nextID)
-				msgSlack := fmt.Sprintf("--- \n 🗳️*New Proposal N° %d: %s* - %s_\n🔗source: https://test6.testnets.gno.land/r/gov/dao:%d  ", nextID, title, moniker, nextID)
-				switch w.Type {
-				case "discord":
-					SendDiscordAlert(msg, w.URL)
-				case "slack":
-					SendSlackAlert(msgSlack, w.URL)
-				}
+		if exists {
+			msg := fmt.Sprintf("--- \n 🗳️ ** New Proposal N° %d: %s ** - %s \n 🔗source: %s/r/gov/dao:%d",
+				nextID, title, moniker, Config.Gnoweb, nextID)
 
-				UpdateLastCheckedID(w.URL, nextID, db)
-				w.LastCheckedID = nextID
+			msgSlack := fmt.Sprintf("--- \n 🗳️*New Proposal N° %d: %s* - %s_\n🔗source: %s/r/gov/dao:%d",
+				nextID, title, moniker, Config.Gnoweb, nextID)
+
+			switch w.Type {
+			case "discord":
+				log.Println("Send GovDao alert")
+				SendDiscordAlert(msg, w.URL)
+			case "slack":
+				SendSlackAlert(msgSlack, w.URL)
 			}
+
+			UpdateLastCheckedID(w.URL, nextID, db)
+			w.LastCheckedID = nextID
 		}
 	}
+
+	// for {
+	// 	select {
+	// 	case <-ticker.C:
+	// 		nextID := w.LastCheckedID + 1
+	// 		exists, title, moniker := ProposalExists(nextID)
+	// 		log.Printf("check GovDao num %d\n", nextID)
+	// 		if exists {
+	// 			msg := fmt.Sprintf("--- \n 🗳️ ** New Proposal N° %d: %s ** - %s \n 🔗source: %s/r/gov/dao:%d", nextID, title, moniker, Config.Gnoweb, nextID)
+
+	// 			msgSlack := fmt.Sprintf("--- \n 🗳️*New Proposal N° %d: %s* - %s_\n🔗source: %s/r/gov/dao:%d", nextID, title, moniker, Config.Gnoweb, nextID)
+	// 			// msg := fmt.Sprintf("--- \n 🗳️ ** New Proposal N° %d: %s ** - %s \n 🔗source: https://test7.testnets.gno.land/r/gov/dao:%d  ", nextID, title, moniker, nextID)
+	// 			// msgSlack := fmt.Sprintf("--- \n 🗳️*New Proposal N° %d: %s* - %s_\n🔗source: https://test7.testnets.gno.land/r/gov/dao:%d  ", nextID, title, moniker, nextID)
+	// 			switch w.Type {
+	// 			case "discord":
+	// 				log.Println("Send GovDao alert")
+	// 				SendDiscordAlert(msg, w.URL)
+	// 			case "slack":
+	// 				SendSlackAlert(msgSlack, w.URL)
+	// 			}
+
+	// 			UpdateLastCheckedID(w.URL, nextID, db)
+	// 			w.LastCheckedID = nextID
+	// 		}
+	// 	}
+	// }
 }
 func ProposalExists(i int) (bool, string, string) {
-	url := fmt.Sprintf("https://test6.testnets.gno.land/r/gov/dao:%d", i)
+	url := fmt.Sprintf("%s/r/gov/dao:%d", Config.Gnoweb, i)
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Erreur HTTP : %v\n", err)

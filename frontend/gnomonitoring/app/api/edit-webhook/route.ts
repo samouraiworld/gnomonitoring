@@ -1,57 +1,50 @@
-// app/api/edit-webhook/route.ts
-import { NextResponse } from 'next/server'
-
-export async function GET(req: Request) {
-    const backend = process.env.BACKEND_URL
-    const { searchParams } = new URL(req.url)
-
-    const id = searchParams.get('id')
-    const type = searchParams.get('type')
-
-    if (!id || !type) {
-        return new Response('Missing id or type', { status: 400 })
-    }
-
-    const endpoint =
-        type === 'validator'
-            ? `${backend}/gnovalidator?id=${id}`
-            : `${backend}/webhooksgovdao?id=${id}`
-
-    const res = await fetch(endpoint)
-    if (!res.ok) {
-        const text = await res.text()
-        return new Response(text, { status: res.status })
-    }
-
-    const data = await res.json()
-    return NextResponse.json(data)
-}
+import { auth } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
 export async function PUT(req: Request) {
-    const body = await req.json()
-
-    const backend = process.env.BACKEND_URL
-
-    const { target } = body
-    if (!target || !["validator", "govdao"].includes(target)) {
-        return new Response("Type invalide", { status: 400 })
+    const { userId } = await auth();
+    if (!userId) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const endpoint =
-        target === "validator"
-            ? `${process.env.BACKEND_URL}/gnovalidator`
-            : `${process.env.BACKEND_URL}/webhooksgovdao`
+    try {
+        const body = await req.json();
+        const { id, description, url, type, target } = body;
 
-    const res = await fetch(endpoint, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-    })
+        if (!id || !url || !type || !target) {
+            return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
+        }
 
-    if (!res.ok) {
-        const txt = await res.text()
-        return new Response(txt, { status: res.status })
+        // Déterminer l'endpoint en fonction du type
+        const endpoint =
+            target === "govdao"
+                ? `${process.env.BACKEND_URL}/webhooks/govdao`
+                : `${process.env.BACKEND_URL}/webhooks/validator`;
+
+        // Requête PUT vers ton backend Go
+        const response = await fetch(endpoint, {
+            method: "PUT",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                ID: id,
+                DESCRIPTION: description,
+                USER: userId,
+                URL: url,
+                Type: type,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Erreur backend Go:", errorText);
+            return NextResponse.json({ error: "Failed to update webhook" }, { status: 500 });
+        }
+
+        return NextResponse.json({ status: "ok" });
+    } catch (err) {
+        console.error("Erreur API edit-webhook:", err);
+        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
-
-    return NextResponse.json({ success: true })
 }

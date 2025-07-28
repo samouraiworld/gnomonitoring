@@ -12,7 +12,7 @@ var db *sql.DB
 
 func main() {
 	internal.LoadConfig()
-	db = internal.InitDB()
+	db = internal.InitDB() // Init db
 
 	go gnovalidator.StartValidatorMonitoring(db)
 	go gnovalidator.StartDailyReport(db)
