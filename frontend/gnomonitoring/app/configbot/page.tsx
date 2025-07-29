@@ -295,6 +295,33 @@ export default function ConfigBotPage() {
             alert("Erreur réseau lors de la suppression");
         }
     }
+    const handleSaveHour = async () => {
+        if (!user?.id) return;
+
+        try {
+            const res = await fetch("/api/update-report-hour", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    hour: parseInt(dailyHour),
+                    minute: parseInt(dailyMinute),
+                    user_id: user.id,
+                }),
+            });
+
+            if (!res.ok) {
+                const text = await res.text();
+                console.error("❌ Erreur API :", text);
+                alert("Erreur lors de l'enregistrement de l'heure.");
+            } else {
+                alert("✅ Heure enregistrée !");
+            }
+        } catch (err) {
+            console.error("❌ Erreur réseau :", err);
+            alert("Erreur réseau.");
+        }
+    };
+
 
     if (!isLoaded || !user) return <p>Chargement...</p>;
     return (
@@ -325,6 +352,12 @@ export default function ConfigBotPage() {
                         className="px-2 w-16"
                     />
                 </div>
+                <button
+                    onClick={handleSaveHour}
+                    className="bg-blue-600 text-white px-4 py-1 rounded"
+                >
+                    Save
+                </button>
             </section>
 
             {/* Webhooks GovDAO */}
