@@ -5,14 +5,14 @@ import { useEffect, useState } from "react";
 type Webhook = { ID?: number; DESCRIPTION: string; URL: string; Type: string };
 type WebhookType = "gov" | "val";
 type WebhookField = keyof Webhook;
-
+type ContactAlert = { ID?: number; MONIKER: string; NAME: string; MENTIONTAG: string };
 export default function ConfigBotPage() {
     const { user, isLoaded } = useUser();
     const [dailyHour, setDailyHour] = useState("09");
     const [dailyMinute, setDailyMinute] = useState("00");
     const [govWebhooks, setGovWebhooks] = useState<Webhook[]>([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
     const [valWebhooks, setValWebhooks] = useState<Webhook[]>([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
-    const [contacts, setContacts] = useState([{ moniker: "", name: "", tag: "" }]);
+    const [contacts, setContacts] = useState<ContactAlert[]>([{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]);
 
     const loadConfig = async () => {
         if (!user) return; // ✅ Sécurité
@@ -25,9 +25,7 @@ export default function ConfigBotPage() {
 
             setGovWebhooks(data.govWebhooks?.length > 0 ? data.govWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
             setValWebhooks(data.valWebhooks?.length > 0 ? data.valWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
-
-
-            setContacts(data.contacts?.length ? data.contacts : [{ moniker: "", name: "", tag: "" }]);
+            setContacts(data.contacts?.length > 0 ? data.contacts : [{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]);
         } catch (err) {
             console.error("❌ Erreur lors du chargement de la configuration:", err);
         }
@@ -124,7 +122,7 @@ export default function ConfigBotPage() {
                 },
                 body: JSON.stringify({
                     user: user?.id,
-                    id: webhook.ID, // ⚠ Assure-toi que tu récupères `id` depuis l'API
+                    id: webhook.ID,
                     url: webhook.URL,
                     type: webhook.Type,
                     description: webhook.DESCRIPTION,
@@ -188,10 +186,74 @@ export default function ConfigBotPage() {
             alert("Erreur réseau lors de la suppression");
         }
     }
+    const handleCreateContact = async (index: number) => {
+        const contact = contacts[index];
+        if (!contact.MONIKER || !contact.NAME || !contact.MENTIONTAG) {
+            alert("⚠️ Tous les champs doivent être remplis.");
+            return;
+        }
+
+        try {
+            const res = await fetch("/api/add-contact-alert", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    user_id: user?.id,
+                    moniker: contact.MONIKER,
+                    namecontact: contact.NAME,
+                    mention_tag: contact.MENTIONTAG,
+                }),
+            });
+
+            if (!res.ok) {
+                const errorText = await res.text();
+                console.error("❌ Erreur API :", errorText);
+                alert("Erreur lors de l’enregistrement du contact.");
+            } else {
+                alert("✅ Contact enregistré !");
+                await loadConfig(); // Recharge les contacts avec l’ID en BDD
+            }
+        } catch (error) {
+            console.error("❌ Erreur réseau :", error);
+            alert("Erreur réseau.");
+        }
+    };
+
+    const handleUpdateContact = async (index: number) => {
+        const contact = contacts[index];
+        if (!contact.ID) {
+            alert("⚠️ Ce contact n’a pas encore été enregistré.");
+            return;
+        }
+
+        try {
+            const res = await fetch("/api/edit-contact-alert", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    ID: contact.ID,
+                    Moniker: contact.MONIKER,
+                    NameContact: contact.NAME,
+                    Mention_Tag: contact.MENTIONTAG,
+                }),
+            });
+
+            if (!res.ok) {
+                const errorText = await res.text();
+                console.error("❌ Erreur API Update:", errorText);
+                alert("Erreur lors de la mise à jour du contact.");
+            } else {
+                alert("✅ Contact mis à jour !");
+            }
+        } catch (error) {
+            console.error("❌ Erreur réseau :", error);
+            alert("Erreur réseau.");
+        }
+    };
 
 
     const handleAddContact = () => {
-        setContacts([...contacts, { moniker: "", name: "", tag: "" }]);
+        setContacts([...contacts, { MONIKER: "", NAME: "", MENTIONTAG: "" }]);
     };
 
     const handleContactChange = (i: number, field: string, value: string) => {
@@ -200,21 +262,67 @@ export default function ConfigBotPage() {
         setContacts(updated);
     };
 
-    const handleDeleteContact = (i: number) => {
-        const updated = [...contacts];
-        updated.splice(i, 1);
-        setContacts(updated);
+    async function handleDeleteContact(id?: number) {
+        if (!id || !user?.id) {
+            alert("⚠️ Impossible de supprimer : ID ou user_id manquant");
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/delete-contact-alert`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    id,
+                }),
+            });
+
+            if (!res.ok) {
+                const errorText = await res.text();
+                console.error("❌ Erreur API:", errorText);
+                alert("Erreur lors de la suppression");
+                return;
+            }
+
+            // ✅ Recharge la liste
+            await loadConfig();
+
+
+
+            alert("✅ contact alert supprimé avec succès !");
+        } catch (error) {
+            console.error("❌ Erreur réseau:", error);
+            alert("Erreur réseau lors de la suppression");
+        }
+    }
+    const handleSaveHour = async () => {
+        if (!user?.id) return;
+
+        try {
+            const res = await fetch("/api/update-report-hour", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    hour: parseInt(dailyHour),
+                    minute: parseInt(dailyMinute),
+                    user_id: user.id,
+                }),
+            });
+
+            if (!res.ok) {
+                const text = await res.text();
+                console.error("❌ Erreur API :", text);
+                alert("Erreur lors de l'enregistrement de l'heure.");
+            } else {
+                alert("✅ Heure enregistrée !");
+            }
+        } catch (err) {
+            console.error("❌ Erreur réseau :", err);
+            alert("Erreur réseau.");
+        }
     };
 
-    const handleUpdateContact = async (i: number) => {
-        const contact = contacts[i];
-        await fetch("/api/update-contact", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: user?.id, ...contact }),
-        });
-        alert("Contact mis à jour");
-    };
+
     if (!isLoaded || !user) return <p>Chargement...</p>;
     return (
         <div className="max-w-12xl mx-auto p-4 space-y-6">
@@ -244,6 +352,12 @@ export default function ConfigBotPage() {
                         className="px-2 w-16"
                     />
                 </div>
+                <button
+                    onClick={handleSaveHour}
+                    className="bg-blue-600 text-white px-4 py-1 rounded"
+                >
+                    Save
+                </button>
             </section>
 
             {/* Webhooks GovDAO */}
@@ -414,25 +528,31 @@ export default function ConfigBotPage() {
                         <input
                             type="text"
                             placeholder="Moniker"
-                            value={c.moniker}
-                            onChange={(e) => handleContactChange(i, "moniker", e.target.value)}
+                            value={c.MONIKER}
+                            onChange={(e) => handleContactChange(i, "MONIKER", e.target.value)}
                             className="border p-2 w-1/4 text-center"
                         />
                         <input
                             type="text"
                             placeholder="Nom du contact"
-                            value={c.name}
-                            onChange={(e) => handleContactChange(i, "name", e.target.value)}
+                            value={c.NAME}
+                            onChange={(e) => handleContactChange(i, "NAME", e.target.value)}
                             className="border p-2 w-1/4 text-center"
                         />
                         <input
                             type="text"
                             placeholder="Tag de mention"
-                            value={c.tag}
-                            onChange={(e) => handleContactChange(i, "tag", e.target.value)}
+                            value={c.MENTIONTAG}
+                            onChange={(e) => handleContactChange(i, "MENTIONTAG", e.target.value)}
                             className="border p-2 w-1/4 text-center"
                         />
                         <div className="flex gap-1">
+                            <button
+                                onClick={() => handleCreateContact(i)}
+                                className="bg-green-600 text-white px-2 rounded text-center"
+                            >
+                                Save
+                            </button>
                             <button
                                 onClick={() => handleUpdateContact(i)}
                                 className="bg-green-600 text-white px-2 rounded text-center"
@@ -440,7 +560,7 @@ export default function ConfigBotPage() {
                                 Update
                             </button>
                             <button
-                                onClick={() => handleDeleteContact(i)}
+                                onClick={() => handleDeleteContact(c.ID)}
                                 className="bg-red-600 text-white px-2 rounded text-center"
                             >
                                 Delete
