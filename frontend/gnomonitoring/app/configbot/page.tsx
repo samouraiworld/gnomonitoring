@@ -14,28 +14,32 @@ export default function ConfigBotPage() {
     const [valWebhooks, setValWebhooks] = useState<Webhook[]>([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
     const [contacts, setContacts] = useState([{ moniker: "", name: "", tag: "" }]);
 
+    const loadConfig = async () => {
+        if (!user) return; // ✅ Sécurité
+        try {
+            const res = await fetch(`/api/get-webhooks?user_id=${user.id}`);
+            if (!res.ok) throw new Error("Erreur lors du chargement");
+
+            const data = await res.json();
+            console.log("✅ Data reçue du backend :", data);
+
+            setGovWebhooks(data.govWebhooks?.length > 0 ? data.govWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
+            setValWebhooks(data.valWebhooks?.length > 0 ? data.valWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
+
+
+            setContacts(data.contacts?.length ? data.contacts : [{ moniker: "", name: "", tag: "" }]);
+        } catch (err) {
+            console.error("❌ Erreur lors du chargement de la configuration:", err);
+        }
+    };
     // Chargement initial des données
     useEffect(() => {
         if (!isLoaded || !user) return;
 
-        const loadConfig = async () => {
-            try {
-                const res = await fetch(`/api/get-webhooks?user_id=${user.id}`);
-                if (!res.ok) throw new Error("Erreur lors du chargement");
-
-                const data = await res.json();
-                console.log("✅ Data reçue du backend :", data);
-
-                setGovWebhooks(data.govWebhooks?.length ? data.govWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
-                setValWebhooks(data.valWebhooks?.length ? data.valWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
-                setContacts(data.contacts?.length ? data.contacts : [{ moniker: "", name: "", tag: "" }]);
-            } catch (err) {
-                console.error("❌ Erreur lors du chargement de la configuration:", err);
-            }
-        };
 
         loadConfig();
     }, [isLoaded, user]);
+
 
     const handleWebhookChange = (type: WebhookType, index: number, field: WebhookField, value: string) => {
         const updater = type === "gov" ? setGovWebhooks : setValWebhooks;
@@ -53,6 +57,8 @@ export default function ConfigBotPage() {
         } else {
             setValWebhooks([...valWebhooks, { ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
         }
+        return
+
     };
 
     // ✅ Sauvegarde côté backend quand on clique sur "Save"
@@ -90,16 +96,15 @@ export default function ConfigBotPage() {
             } else {
                 const data = await res.json(); // supposons { id: 123 }
                 alert("✅ Webhook enregistré avec succès !");
+                await loadConfig();
 
                 // ✅ Mettre à jour l'ID dans le state (important pour Delete)
                 if (type === "gov") {
                     const updated = [...govWebhooks];
-                    updated[index].ID = data.id;
-                    setGovWebhooks(updated);
+                    updated[index] = { ...updated[index], ID: data.id }; // ✅ Force la copie                    setGovWebhooks(updated);
                 } else {
                     const updated = [...valWebhooks];
-                    updated[index].ID = data.id;
-                    setValWebhooks(updated);
+                    updated[index] = { ...updated[index], ID: data.id }; // ✅ Force la copie                    setValWebhooks(updated);
                 }
             }
         } catch (error) {
@@ -138,6 +143,7 @@ export default function ConfigBotPage() {
             console.error("❌ Erreur réseau :", error);
             alert("Erreur réseau lors de l’appel API.");
         }
+        ;
     };
 
 
@@ -149,7 +155,7 @@ export default function ConfigBotPage() {
 
         try {
             const res = await fetch(`/api/delete-webhook`, {
-                method: "POST", // car ta route Next.js utilise POST
+                method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     id,
@@ -165,17 +171,24 @@ export default function ConfigBotPage() {
                 return;
             }
 
-            // ✅ Mise à jour du state local
-            if (type === "gov") {
-                setGovWebhooks(govWebhooks.filter(w => w.ID !== id));
-            } else {
-                setValWebhooks(valWebhooks.filter(w => w.ID !== id));
+            // ✅ Recharge la liste
+            await loadConfig();
+
+            // ✅ Si liste vide, on garde une ligne par défaut
+            if (type === "gov" && govWebhooks.length <= 1) {
+                setGovWebhooks([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
             }
+            if (type === "val" && valWebhooks.length <= 1) {
+                setValWebhooks([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
+            }
+
+            alert("✅ Webhook supprimé avec succès !");
         } catch (error) {
             console.error("❌ Erreur réseau:", error);
             alert("Erreur réseau lors de la suppression");
         }
     }
+
 
     const handleAddContact = () => {
         setContacts([...contacts, { moniker: "", name: "", tag: "" }]);
@@ -202,7 +215,7 @@ export default function ConfigBotPage() {
         });
         alert("Contact mis à jour");
     };
-
+    if (!isLoaded || !user) return <p>Chargement...</p>;
     return (
         <div className="max-w-12xl mx-auto p-4 space-y-6">
             <h1 className="text-2xl font-bold">Configurer les alertes GnoMonitoring</h1>
