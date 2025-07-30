@@ -76,7 +76,7 @@ func SendSlackAlert(msg string, webhookURL string) error {
 }
 
 func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) error {
-	// 1. Récupérer tous les webhooks_validator (plusieurs par user possible)
+	// 1. get all webhooks_validator
 	query := `
 		SELECT user_id, url, type 
 		FROM webhooks_validator;
@@ -94,7 +94,7 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) er
 			return fmt.Errorf("failed to scan webhook row: %w", err)
 		}
 
-		// 2. Vérifier si cette combinaison (user_id + addr + level + url) a déjà été envoyée récemment
+		// 2. Check if we should send this alert. On (user_id + addr + level + url)
 		var lastSent time.Time
 		err = db.QueryRow(`
 			SELECT sent_at FROM alert_log 
@@ -107,7 +107,7 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) er
 
 		fullMsg := message
 
-		// 3. Ajouter mentions si CRITICAL
+		// 3. Add mention tag if level is critical
 		if level == "** CRITICAL **" {
 			mentionQuery := `
 				SELECT namecontact, mention_tag 
@@ -138,7 +138,7 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) er
 			}
 		}
 
-		// 4. Envoyer selon le type
+		// 4. Send if discord or slack
 		switch typ {
 		case "discord":
 			err = SendDiscordAlert(fullMsg, url)
@@ -153,7 +153,7 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) er
 			continue
 		}
 
-		// 5. Insérer ou mettre à jour alert_log avec URL incluse
+		// 5. Insert in the lert_log with URL
 		_, err = db.Exec(`
 			INSERT INTO alert_log (user_id, addr, moniker, level, url, sent_at)
 			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -163,6 +163,46 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) er
 			log.Printf("failed to insert alert_log for %v (%s): %v", url, typ, err)
 			return fmt.Errorf("failed to insert alert log for %v (%s): %w", url, typ, err)
 		}
+	}
+
+	return nil
+}
+func SendUserReportAlert(userID, msg string, db *sql.DB) error {
+	query := `
+		SELECT url, type 
+		FROM webhooks_validator
+		WHERE user_id = ?;
+	`
+
+	rows, err := db.Query(query, userID)
+	if err != nil {
+		return fmt.Errorf("failed to query webhooks: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var url, typ string
+		if err := rows.Scan(&url, &typ); err != nil {
+			return fmt.Errorf("failed to scan webhook row: %w", err)
+		}
+
+		switch typ {
+		case "discord":
+			if err := SendDiscordAlert(msg, url); err != nil {
+				return fmt.Errorf("failed to send Discord alert: %w", err)
+			}
+		case "slack":
+			if err := SendSlackAlert(msg, url); err != nil {
+				return fmt.Errorf("failed to send Slack alert: %w", err)
+			}
+		default:
+			// Type inconnu → ignore
+			continue
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating over rows: %w", err)
 	}
 
 	return nil

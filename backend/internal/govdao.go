@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 )
 
-func StartWebhookWatcher(w WebhookGovDao, db *sql.DB) {
+func StartWebhookWatcher(w database.WebhookGovDao, db *sql.DB) {
 	log.Println("Begin Start GovDao")
 	ticker := time.NewTicker(time.Duration(Config.IntervallSecond) * time.Second)
 	defer ticker.Stop()
@@ -36,7 +37,7 @@ func StartWebhookWatcher(w WebhookGovDao, db *sql.DB) {
 				SendSlackAlert(msgSlack, w.URL)
 			}
 
-			UpdateLastCheckedID(w.URL, nextID, db)
+			database.UpdateLastCheckedID(w.URL, nextID, db)
 			w.LastCheckedID = nextID
 		}
 	}

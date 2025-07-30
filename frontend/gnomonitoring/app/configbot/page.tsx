@@ -6,19 +6,21 @@ type Webhook = { ID?: number; DESCRIPTION: string; URL: string; Type: string };
 type WebhookType = "gov" | "val";
 type WebhookField = keyof Webhook;
 type ContactAlert = { ID?: number; MONIKER: string; NAME: string; MENTIONTAG: string };
+
 export default function ConfigBotPage() {
     const { user, isLoaded } = useUser();
-    const [dailyHour, setDailyHour] = useState("09");
-    const [dailyMinute, setDailyMinute] = useState("00");
+    const [dailyHour, setDailyHour] = useState<number>(0);
+    const [dailyMinute, setDailyMinute] = useState<number>(0);
     const [govWebhooks, setGovWebhooks] = useState<Webhook[]>([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
     const [valWebhooks, setValWebhooks] = useState<Webhook[]>([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
     const [contacts, setContacts] = useState<ContactAlert[]>([{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]);
 
     const loadConfig = async () => {
-        if (!user) return; // ✅ Sécurité
+
+        if (!user) return; // ✅ Secxurety
         try {
             const res = await fetch(`/api/get-webhooks?user_id=${user.id}`);
-            if (!res.ok) throw new Error("Erreur lors du chargement");
+            if (!res.ok) throw new Error("Error during the loading of the config");
 
             const data = await res.json();
             console.log("✅ Data reçue du backend :", data);
@@ -26,11 +28,17 @@ export default function ConfigBotPage() {
             setGovWebhooks(data.govWebhooks?.length > 0 ? data.govWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
             setValWebhooks(data.valWebhooks?.length > 0 ? data.valWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
             setContacts(data.contacts?.length > 0 ? data.contacts : [{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]);
+
+            // ✅ UPdate hour if disponible 
+            if (data.hour?.daily_report_hour !== undefined && data.hour?.daily_report_minute !== undefined) {
+                setDailyHour(data.hour.daily_report_hour);
+                setDailyMinute(data.hour.daily_report_minute);
+            }
         } catch (err) {
-            console.error("❌ Erreur lors du chargement de la configuration:", err);
+            console.error("❌ Error during the loading of the config:", err);
         }
     };
-    // Chargement initial des données
+    // Load ini of data 
     useEffect(() => {
         if (!isLoaded || !user) return;
 
@@ -48,7 +56,7 @@ export default function ConfigBotPage() {
         updater(updated);
     };
 
-    // ✅ Ajout d'un nouveau webhook (bouton Add)
+    // ✅ add a wehbook (button Add)
     const handleAddWebhook = (type: WebhookType) => {
         if (type === "gov") {
             setGovWebhooks([...govWebhooks, { ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
@@ -59,7 +67,7 @@ export default function ConfigBotPage() {
 
     };
 
-    // ✅ Sauvegarde côté backend quand on clique sur "Save"
+    // ✅ Save webhook info in the backend"Save"
     const handleSaveNewWebhook = async (type: WebhookType, index: number) => {
         const webhook = type === "gov" ? govWebhooks[index] : valWebhooks[index];
         const target = type === "gov" ? "govdao" : "validator";
@@ -303,8 +311,8 @@ export default function ConfigBotPage() {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    hour: parseInt(dailyHour),
-                    minute: parseInt(dailyMinute),
+                    hour: dailyHour,
+                    minute: dailyMinute,
                     user_id: user.id,
                 }),
             });
@@ -339,7 +347,7 @@ export default function ConfigBotPage() {
                         value={dailyHour}
                         min={0}
                         max={23}
-                        onChange={(e) => setDailyHour(e.target.value)}
+                        onChange={(e) => setDailyHour(Number(e.target.value))}
                         className="px-2 w-16"
                     />
                     <span>:</span>
@@ -348,7 +356,7 @@ export default function ConfigBotPage() {
                         value={dailyMinute}
                         min={0}
                         max={59}
-                        onChange={(e) => setDailyMinute(e.target.value)}
+                        onChange={(e) => setDailyMinute(Number(e.target.value))}
                         className="px-2 w-16"
                     />
                 </div>
