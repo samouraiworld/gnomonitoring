@@ -11,17 +11,18 @@ export async function GET(req: NextRequest) {
     const backendURL = process.env.BACKEND_URL;
 
     try {
-        // Appel pour GovDAO
-        const govRes = await fetch(`${backendURL}/webhooks/govdao?user_id=${user_id}`);
-        const valRes = await fetch(`${backendURL}/webhooks/validator?user_id=${user_id}`);
-        const contactsRes = await fetch(`${backendURL}/alert-contacts?user_id=${user_id}`);
-        // const configRes = await fetch(`${backendURL}/config?user_id=${user_id}`); // si tu as un point de config heure/rapport
 
-        const [govData, valData, contactsData] = await Promise.all([ //, contactsData, configData
+        const [govRes, valRes, contactsRes, hourRes] = await Promise.all([
+            fetch(`${backendURL}/webhooks/govdao?user_id=${user_id}`),
+            fetch(`${backendURL}/webhooks/validator?user_id=${user_id}`),
+            fetch(`${backendURL}/alert-contacts?user_id=${user_id}`),
+            fetch(`${backendURL}/usersH?user_id=${user_id}`),
+        ]);
+        const [govData, valData, contactsData, hourData] = await Promise.all([ //, contactsData, configData
             govRes.json(),
             valRes.json(),
             contactsRes.json(),
-            // configRes.json()
+            hourRes.json(),
         ]);
 
 
@@ -29,6 +30,7 @@ export async function GET(req: NextRequest) {
             govWebhooks: govData,
             valWebhooks: valData,
             contacts: contactsData,
+            hour: hourData,
             // config: configData, // optionnel
         });
     } catch (err: any) {
