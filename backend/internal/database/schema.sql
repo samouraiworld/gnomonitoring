@@ -30,7 +30,7 @@
 		user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
 		url TEXT NOT NULL,
 		type TEXT NOT NULL CHECK(type IN ('discord', 'slack')),
-		last_checked_id INTEGER NOT NULL DEFAULT 0
+		last_checked_id INTEGER NOT NULL DEFAULT -1
 	);
 
 	
@@ -60,6 +60,12 @@
     sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, addr, level,url)
 );
+CREATE TABLE IF NOT EXISTS govdao_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_proposal_id INTEGER NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 	
 	CREATE INDEX IF NOT EXISTS idx_participation_date ON daily_participation(date);
     CREATE INDEX IF NOT EXISTS idx_webhooks_validator_user ON webhooks_validator(user_id);
