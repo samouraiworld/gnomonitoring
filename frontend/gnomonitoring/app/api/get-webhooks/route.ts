@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
             fetch(`${backendURL}/alert-contacts?user_id=${user_id}`),
             fetch(`${backendURL}/usersH?user_id=${user_id}`),
         ]);
-        const [govData, valData, contactsData, hourData] = await Promise.all([ //, contactsData, configData
+        const [govData, valData, contactsData, hourData] = await Promise.all([
             govRes.json(),
             valRes.json(),
             contactsRes.json(),
@@ -31,7 +31,6 @@ export async function GET(req: NextRequest) {
             valWebhooks: valData,
             contacts: contactsData,
             hour: hourData,
-            // config: configData, // optionnel
         });
     } catch (err: any) {
         return new NextResponse(err.message || "Erreur serveur", { status: 500 });

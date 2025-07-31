@@ -25,7 +25,6 @@ export async function POST() {
             name: user.first_name + " " + user.last_name,
         };
 
-        // Appel à ton backend Go (interne côté serveur donc invisible client)
         const response = await fetch(`${process.env.BACKEND_URL}/users`, {
             method: "POST",
             headers: {
