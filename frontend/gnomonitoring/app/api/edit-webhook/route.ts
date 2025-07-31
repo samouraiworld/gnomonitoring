@@ -17,13 +17,11 @@ export async function PUT(req: Request) {
             return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
         }
 
-        // Déterminer l'endpoint en fonction du type
         const endpoint =
             target === "govdao"
                 ? `${process.env.BACKEND_URL}/webhooks/govdao`
                 : `${process.env.BACKEND_URL}/webhooks/validator`;
 
-        // Requête PUT vers ton backend Go
         const response = await fetch(endpoint, {
             method: "PUT",
             headers: {

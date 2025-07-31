@@ -4,9 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 export async function PUT(req: NextRequest) {
     const body = await req.json();
     const { hour, minute, user_id } = body;
-    // Just for test 
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    // ===============================
 
     if (hour === undefined || minute === undefined || !user_id) {
         return new NextResponse("Paramètres manquants", { status: 400 });
