@@ -14,7 +14,10 @@ export function ConfigBot() {
     const [govWebhooks, setGovWebhooks] = useState<Webhook[]>([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
     const [valWebhooks, setValWebhooks] = useState<Webhook[]>([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
     const [contacts, setContacts] = useState<ContactAlert[]>([{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]);
-
+    const sections: { title: string; type: WebhookType; webhooks: Webhook[] }[] = [
+        { title: "Webhooks GovDAO", type: "gov", webhooks: govWebhooks },
+        { title: "Webhooks Validator", type: "val", webhooks: valWebhooks },
+    ];
     const loadConfig = async () => {
 
         if (!user) return; // ✅ Secxurety
@@ -360,6 +363,8 @@ export function ConfigBot() {
         handleAddContact,
         handleContactChange,
         handleSaveHour,
+        sections,
+
 
         // et toutes les autres fonctions exposées comme props (save, update, delete)
     };
