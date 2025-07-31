@@ -70,9 +70,16 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		w.Write([]byte("Webhook already exists"))
 		return
 	}
+	// for send ultimate Govdao
+	lastid, err := database.GetLastGovDaoProposalID(db)
+	if err != nil {
+		http.Error(w, "erro get lastID GovDao: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	lastid = lastid - 1
 
 	// ✅ Si pas existant, on insère
-	err = database.InsertWebhook(webhook.USER, webhook.URL, webhook.DESCRIPTION, webhook.Type, db)
+	err = database.InsertWebhook(webhook.USER, webhook.URL, webhook.DESCRIPTION, webhook.Type, lastid, db)
 	if err != nil {
 		log.Println("Insert error:", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

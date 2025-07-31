@@ -8,31 +8,6 @@ import (
 	"time"
 )
 
-func InitDB() *sql.DB {
-	db, err := sql.Open("sqlite3", "./webhooks.db")
-	if err != nil {
-		log.Fatalf("DB opening error: %v", err)
-	}
-	dir, _ := os.Getwd()
-	log.Println("Working dir:", dir)
-
-	schema, err := os.ReadFile("./internal/database/schema.sql") // ou "./migrations/schema.sql"
-	if err != nil {
-		log.Fatalf("Error reading schema.sql: %v", err)
-	}
-
-	_, err = db.Exec(string(schema))
-	if err != nil {
-		log.Fatalf("Table creation error: %v", err)
-	}
-	_, err = db.Exec("PRAGMA journal_mode = WAL;") // Multi write
-	if err != nil {
-		log.Fatalf("Failed to enable WAL mode: %v", err)
-	}
-
-	return db
-}
-
 type Users struct {
 	USER_ID string `json:"user_id"`
 	NAME    string `json:"name"`
@@ -66,13 +41,54 @@ type HourReport struct {
 	DAYLYRM int `json:"daily_report_minute"`
 }
 
+func InitDB() *sql.DB {
+	db, err := sql.Open("sqlite3", "./webhooks.db")
+	if err != nil {
+		log.Fatalf("DB opening error: %v", err)
+	}
+	dir, _ := os.Getwd()
+	log.Println("Working dir:", dir)
+
+	schema, err := os.ReadFile("./internal/database/schema.sql") // ou "./migrations/schema.sql"
+	if err != nil {
+		log.Fatalf("Error reading schema.sql: %v", err)
+	}
+
+	_, err = db.Exec(string(schema))
+	if err != nil {
+		log.Fatalf("Table creation error: %v", err)
+	}
+	_, err = db.Exec("PRAGMA journal_mode = WAL;") // Multi write
+	if err != nil {
+		log.Fatalf("Failed to enable WAL mode: %v", err)
+	}
+	InitGovDaoState(db)
+
+	return db
+}
+
+// ===================================State GovDao=====================================
+func InitGovDaoState(db *sql.DB) error {
+	_, err := db.Exec(`INSERT OR IGNORE INTO govdao_state (id, last_proposal_id) VALUES (1, -1)`)
+	return err
+}
+func GetLastGovDaoProposalID(db *sql.DB) (int, error) {
+	var id int
+	err := db.QueryRow(`SELECT last_proposal_id FROM govdao_state WHERE id = 1`).Scan(&id)
+	return id, err
+}
+func UpdateLastGovDaoProposalID(db *sql.DB, newID int) error {
+	_, err := db.Exec(`UPDATE govdao_state SET last_proposal_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1`, newID)
+	return err
+}
+
 // ==================================== GovDao ======================================
-func InsertWebhook(user_id string, url string, description, wtype string, db *sql.DB) error {
+func InsertWebhook(user_id string, url string, description, wtype string, lastid int, db *sql.DB) error {
 	if wtype != "discord" && wtype != "slack" {
 		return fmt.Errorf("Invalid type. Use discord or slack")
 	}
 
-	_, err := db.Exec("INSERT OR IGNORE INTO webhooks_govdao (user_id, url,description, type, last_checked_id) VALUES (?, ?,?, ?, 0)", user_id, url, description, wtype)
+	_, err := db.Exec("INSERT OR IGNORE INTO webhooks_govdao (user_id, url,description, type, last_checked_id) VALUES (?, ?,?, ?, ?)", user_id, url, description, wtype, lastid)
 	return err
 }
 

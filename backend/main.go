@@ -8,6 +8,7 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/api"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/govdao"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
 )
 
@@ -20,10 +21,7 @@ func main() {
 	go gnovalidator.StartValidatorMonitoring(db)
 	go scheduler.InitScheduler(db) // for dailyreport
 
-	webhooks, _ := database.Loadwebhooks(db)
-	for _, wh := range webhooks {
-		go internal.StartWebhookWatcher(wh, db) // for govdao
-	}
+	go govdao.StartGovDaoManager(db)
 
 	gnovalidator.Init() // registre les métriques
 	gnovalidator.StartMetricsUpdater(db)
