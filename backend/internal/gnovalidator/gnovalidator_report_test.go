@@ -2,15 +2,17 @@ package gnovalidator_test
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
+	"gorm.io/gorm"
 )
 
-func setupTestDB(t *testing.T) *sql.DB {
+func setupTestDB(t *testing.T) *gorm.DB {
 	os.Remove("test_report.db") // Clean old file if any
 	db, err := sql.Open("sqlite3", "test_report.db")
 	if err != nil {
@@ -34,16 +36,29 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func insertParticipationData(db *sql.DB, date string, addr string, moniker string, participated []bool, startHeight int) error {
+func insertParticipationData(db *gorm.DB, date string, addr string, moniker string, participated []bool, startHeight int) error {
+	tx := db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
+	stmt := `
+		INSERT INTO daily_participation (date, block_height, addr, moniker, participated)
+		VALUES (?, ?, ?, ?, ?)
+	`
+
 	for i, p := range participated {
-		_, err := db.Exec(`
-			INSERT INTO daily_participation (date, block_height, addr, moniker, participated)
-			VALUES (?, ?, ?, ?, ?)`,
-			date, startHeight+i, addr, moniker, p)
-		if err != nil {
-			return err
+		blockHeight := startHeight + i
+		if err := tx.Exec(stmt, date, blockHeight, addr, moniker, p).Error; err != nil {
+			tx.Rollback()
+			return fmt.Errorf("failed at height %d: %w", blockHeight, err)
 		}
 	}
+
+	if err := tx.Commit().Error; err != nil {
+		return err
+	}
+
 	return nil
 }
 

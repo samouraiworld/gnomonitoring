@@ -1,7 +1,6 @@
 package api
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +10,7 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
+	"gorm.io/gorm"
 )
 
 func getUserIDFromRequest(r *http.Request) (string, error) {
@@ -23,7 +23,7 @@ func getUserIDFromRequest(r *http.Request) (string, error) {
 
 // ========== GOVDAO ==========
 
-func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	userID, err := getUserIDFromRequest(r)
 	if err != nil {
@@ -39,26 +39,30 @@ func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	json.NewEncoder(w).Encode(webhooks)
 }
 
-func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 
-	var webhook database.WebhookGovDao
+	var webhook database.WebhookGovDAO
 	err := json.NewDecoder(r.Body).Decode(&webhook)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// ✅ Vérifier les champs obligatoires
-	if webhook.USER == "" || webhook.URL == "" || webhook.Type == "" || webhook.DESCRIPTION == "" {
+	// ✅ Check rrequire FieldVérifier les champs obligatoires
+	if webhook.UserID == "" || webhook.URL == "" || webhook.Type == "" || webhook.Description == "" {
+
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
 	// ✅ Vérifier si le webhook existe déjà
 	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM webhooks_govdao  WHERE user_id = ? AND url = ? AND type = ?)`
-	err = db.QueryRow(query, webhook.USER, webhook.URL, webhook.Type).Scan(&exists)
+	err = db.Model(&database.WebhookGovDAO{}).
+		Select("count(*) > 0").
+		Where("user_id = ? AND url = ? AND type = ?", webhook.UserID, webhook.URL, webhook.Type).
+		Find(&exists).Error
+
 	if err != nil {
 		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -79,7 +83,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	lastid = lastid - 1
 
 	// ✅ Si pas existant, on insère
-	err = database.InsertWebhook(webhook.USER, webhook.URL, webhook.DESCRIPTION, webhook.Type, lastid, db)
+	err = database.InsertWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, db)
 	if err != nil {
 		log.Println("Insert error:", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -90,7 +94,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	w.Write([]byte("Webhook created successfully"))
 }
 
-func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	idStr := r.URL.Query().Get("id")
 	userID, err := getUserIDFromRequest(r)
@@ -113,15 +117,15 @@ func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
-	var webhook database.WebhookGovDao
+func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	var webhook database.WebhookGovDAO
 	EnableCORS(w)
 	err := json.NewDecoder(r.Body).Decode(&webhook)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.USER, webhook.DESCRIPTION, webhook.URL, webhook.Type, "webhooks_govdao")
+	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, "webhook_gov_daos")
 	if err != nil {
 		log.Println(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -132,7 +136,7 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 
 // ========== VALIDATOR ==========
 
-func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	userID, err := getUserIDFromRequest(r)
 	if err != nil {
@@ -147,7 +151,7 @@ func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *s
 	json.NewEncoder(w).Encode(webhooks)
 }
 
-func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 
 	var webhook database.WebhookValidator
@@ -157,30 +161,32 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		return
 	}
 
-	// ✅ Vérification des champs obligatoires
-	if webhook.USER == "" || webhook.URL == "" || webhook.Type == "" {
+	// ✅ Check Required fileds
+	if webhook.UserID == "" || webhook.URL == "" || webhook.Type == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	// ✅ Vérifier si le webhook existe déjà
+	// ✅ Check if webhook exist
 	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM webhooks_validator WHERE user_id = ? AND url = ? AND type = ?)`
-	err = db.QueryRow(query, webhook.USER, webhook.URL, webhook.Type).Scan(&exists)
+	err = db.Model(&database.WebhookValidator{}).
+		Select("count(*) > 0").
+		Where("user_id = ? AND url = ? AND type = ?", webhook.UserID, webhook.URL, webhook.Type).
+		Find(&exists).Error
+
 	if err != nil {
 		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 	if exists {
-		// ✅ Webhook déjà présent → retourne 409
+		// ✅ Webhook  present → retourne 409
 		w.WriteHeader(http.StatusConflict)
 		w.Write([]byte("Webhook already exists"))
 		return
 	}
 
-	// ✅ Si pas existant, on insère
-	err = database.InsertMonitoringWebhook(webhook.USER, webhook.URL, webhook.DESCRIPTION, webhook.Type, db)
+	// ✅ If not exist insert
+	err = database.InsertMonitoringWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -190,7 +196,7 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	w.Write([]byte("Webhook created successfully"))
 }
 
-func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	idStr := r.URL.Query().Get("id")
 	userID, err := getUserIDFromRequest(r)
@@ -213,7 +219,7 @@ func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	w.WriteHeader(http.StatusOK)
 }
 
-func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	var webhook database.WebhookValidator
 	err := json.NewDecoder(r.Body).Decode(&webhook)
@@ -221,7 +227,7 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.USER, webhook.DESCRIPTION, webhook.URL, webhook.Type, "webhooks_validator")
+	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, "webhook_validators")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -229,21 +235,24 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	w.WriteHeader(http.StatusOK)
 }
 
-// =======================USER==========================================func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
-func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+// =======================USER==========================================func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 
-	var users database.Users
+	var users database.User
 	err := json.NewDecoder(r.Body).Decode(&users)
 	if err != nil {
 		http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Vérifie si l'utilisateur existe déjà
+	// check if user exist
 	var exists bool
-	query := "SELECT EXISTS(SELECT 1 FROM users WHERE user_id = ?)"
-	err = db.QueryRow(query, users.USER_ID).Scan(&exists)
+	err = db.Model(&database.User{}).
+		Select("count(*) > 0").
+		Where("user_id = ?", users.UserID).
+		Find(&exists).Error
+
 	if err != nil {
 		http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -255,7 +264,7 @@ func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	}
 
 	// Insertion
-	err = database.InsertUser(users.USER_ID, users.EMAIL, users.NAME, db)
+	err = database.InsertUser(users.UserID, users.Email, users.Name, db)
 	if err != nil {
 		http.Error(w, "Insert error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -264,7 +273,7 @@ func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	w.WriteHeader(http.StatusCreated) // 201
 }
 
-func DeleteUserHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func DeleteUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -285,7 +294,7 @@ func DeleteUserHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func GetUserHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func GetUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -310,7 +319,7 @@ func GetUserHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 
 	json.NewEncoder(w).Encode(user)
 }
-func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 
 	// Vérifie que la méthode est bien PUT
@@ -349,7 +358,7 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 }
 
 // =====================Hour Report ================================
-func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -376,7 +385,7 @@ func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *sql.DB)
 	scheduler.Schedulerinstance.ReloadForUser(payload.UserID, db)
 	w.WriteHeader(http.StatusOK)
 }
-func GetReportHourHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func GetReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -397,7 +406,7 @@ func GetReportHourHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 
 // ======================Alert Contact ================================
 
-func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -431,7 +440,7 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *sql.D
 	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
-func GetAlertContactsHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func GetAlertContactsHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -452,7 +461,7 @@ func GetAlertContactsHandler(w http.ResponseWriter, r *http.Request, db *sql.DB)
 
 	json.NewEncoder(w).Encode(contacts)
 }
-func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -480,7 +489,7 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *sql.D
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Alert contact updated"))
 }
-func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -517,7 +526,7 @@ func EnableCORS(w http.ResponseWriter) {
 }
 
 // ======================== Start API =====================================
-func StartWebhookAPI(db *sql.DB) {
+func StartWebhookAPI(db *gorm.DB) {
 	// Webhooks GOVDAO
 	http.HandleFunc("/webhooks/govdao", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
