@@ -2,7 +2,7 @@
 import { useUser } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 
-type Webhook = { ID?: number; DESCRIPTION: string; URL: string; Type: string };
+type Webhook = { ID?: number; Description: string; URL: string; Type: string };
 type WebhookType = "gov" | "val";
 type WebhookField = keyof Webhook;
 type ContactAlert = { ID?: number; MONIKER: string; NAME: string; MENTIONTAG: string };
@@ -11,8 +11,9 @@ export function ConfigBot() {
     const { user, isLoaded } = useUser();
     const [dailyHour, setDailyHour] = useState<number>(0);
     const [dailyMinute, setDailyMinute] = useState<number>(0);
-    const [govWebhooks, setGovWebhooks] = useState<Webhook[]>([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
-    const [valWebhooks, setValWebhooks] = useState<Webhook[]>([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
+    type Webhook = { ID?: number; Description: string; URL: string; Type: string };
+    const [govWebhooks, setGovWebhooks] = useState<Webhook[]>([{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
+    const [valWebhooks, setValWebhooks] = useState<Webhook[]>([{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
     const [contacts, setContacts] = useState<ContactAlert[]>([{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]);
     const sections: { title: string; type: WebhookType; webhooks: Webhook[] }[] = [
         { title: "Webhooks GovDAO", type: "gov", webhooks: govWebhooks },
@@ -28,10 +29,19 @@ export function ConfigBot() {
             const data = await res.json();
             console.log("✅ Data reçue du backend :", data);
 
-            setGovWebhooks(data.govWebhooks?.length > 0 ? data.govWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
-            setValWebhooks(data.valWebhooks?.length > 0 ? data.valWebhooks : [{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
-            setContacts(data.contacts?.length > 0 ? data.contacts : [{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]);
-
+            setGovWebhooks(data.govWebhooks?.length > 0 ? data.govWebhooks : [{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
+            setValWebhooks(data.valWebhooks?.length > 0 ? data.valWebhooks : [{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
+            // setContacts(data.contacts?.length > 0 ? data.contacts : [{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]);
+            setContacts(
+                data.contacts?.length > 0
+                    ? data.contacts.map((c: any) => ({
+                        ID: c.ID,
+                        MONIKER: c.Moniker,
+                        NAME: c.NameContact,
+                        MENTIONTAG: c.MentionTag,
+                    }))
+                    : [{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]
+            );
             // ✅ UPdate hour if disponible 
             if (data.hour?.daily_report_hour !== undefined && data.hour?.daily_report_minute !== undefined) {
                 setDailyHour(data.hour.daily_report_hour);
@@ -62,9 +72,9 @@ export function ConfigBot() {
     // ✅ add a wehbook (button Add)
     const handleAddWebhook = (type: WebhookType) => {
         if (type === "gov") {
-            setGovWebhooks([...govWebhooks, { ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
+            setGovWebhooks([...govWebhooks, { ID: undefined, Description: "", URL: "", Type: "discord" }]);
         } else {
-            setValWebhooks([...valWebhooks, { ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
+            setValWebhooks([...valWebhooks, { ID: undefined, Description: "", URL: "", Type: "discord" }]);
         }
         return
 
@@ -76,19 +86,19 @@ export function ConfigBot() {
         const target = type === "gov" ? "govdao" : "validator";
 
         if (!webhook.URL.trim()) {
-            alert("⚠️ L'URL ne peut pas être vide !");
+            alert("⚠️ L'url ne peut pas être vide !");
             return;
         }
-
+        console.log("Description webhhok" + webhook.Description)
         try {
             const res = await fetch("/api/add-webhook", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    user: user?.id,
-                    description: webhook.DESCRIPTION,
-                    url: webhook.URL,
-                    type: webhook.Type,
+                    UserID: user?.id,
+                    Description: webhook.Description,
+                    URL: webhook.URL,
+                    Type: webhook.Type,
                     target,
                 }),
             });
@@ -132,11 +142,11 @@ export function ConfigBot() {
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                    user: user?.id,
-                    id: webhook.ID,
-                    url: webhook.URL,
-                    type: webhook.Type,
-                    description: webhook.DESCRIPTION,
+                    UserID: user?.id,
+                    ID: webhook.ID,
+                    URL: webhook.URL,
+                    Type: webhook.Type,
+                    Description: webhook.Description,
                     target,
                 }),
             });
@@ -185,10 +195,10 @@ export function ConfigBot() {
 
             // ✅ Si liste vide, on garde une ligne par défaut
             if (type === "gov" && govWebhooks.length <= 1) {
-                setGovWebhooks([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
+                setGovWebhooks([{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
             }
             if (type === "val" && valWebhooks.length <= 1) {
-                setValWebhooks([{ ID: undefined, DESCRIPTION: "", URL: "", Type: "discord" }]);
+                setValWebhooks([{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
             }
 
             alert("✅ Webhook supprimé avec succès !");

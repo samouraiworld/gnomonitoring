@@ -79,8 +79,8 @@ export default function ConfigBotPage() {
                     {webhooks.map((w, i) => (
                         <div key={i} className="flex flex-col md:flex-row gap-2 md:items-center">
 
-                            <input type="text" placeholder="Description" value={w.DESCRIPTION ?? ""}
-                                onChange={(e) => handleWebhookChange(type, i, "DESCRIPTION", e.target.value)}
+                            <input type="text" placeholder="Description" value={w.Description ?? ""}
+                                onChange={(e) => handleWebhookChange(type, i, "Description", e.target.value)}
                                 className="border p-2 rounded w-full md:w-1/4 dark:bg-neutral-800 dark:border-neutral-600" />
 
 
