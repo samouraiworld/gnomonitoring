@@ -80,7 +80,7 @@ type AddrMoniker struct {
 
 // CReate index
 func InitDB() (*gorm.DB, error) {
-	db, err := gorm.Open(sqlite.Open("./webhooks.db"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("./db/webhooks.db"), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("DB opening error: %v", err)
 	}
