@@ -16,6 +16,8 @@ import (
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"gorm.io/gorm"
 )
 
 type Valoper struct {
@@ -127,20 +129,7 @@ func GetGenesisMonikers(rpcURL string) (map[string]string, error) {
 	return monikers, nil
 }
 
-func InitMonikerMap() {
-	// Step 1 — Retrieve active validators from the RPC endpoint `/validators`
-	url := fmt.Sprintf("%s/validators", strings.TrimRight(internal.Config.RPCEndpoint, "/"))
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Fatalf("Error retrieving validators: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Error reading validator response: %v", err)
-	}
-
+func InitMonikerMap(db *gorm.DB) {
 	type Validator struct {
 		Address string `json:"address"`
 	}
@@ -149,10 +138,37 @@ func InitMonikerMap() {
 			Validators []Validator `json:"validators"`
 		} `json:"result"`
 	}
+	// Step 1 — Retrieve active validators from the RPC endpoint `/validators`
+	url := fmt.Sprintf("%s/validators", strings.TrimRight(internal.Config.RPCEndpoint, "/"))
+	var resp *http.Response
+	err := doWithRetry(3, 2*time.Second, func() error {
+		var e error
+		resp, e = http.Get(url)
+		return e
+	})
+	if err != nil {
+		log.Printf("❌ Failed to retrieve validators after retries: %v", err)
+		return
+	}
+	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("Error reading validator response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("❌ Invalid HTTP status %d from /validators: %s", resp.StatusCode, string(body))
+		return
+	}
+
+	if !json.Valid(body) {
+		log.Printf("❌ Invalid JSON received from /validators:\n%s", string(body))
+		return
+	}
 	var validatorsResp ValidatorsResponse
 	if err := json.Unmarshal(body, &validatorsResp); err != nil {
-		log.Fatalf("Error decoding validator JSON: %v", err)
+		log.Printf("❌ Error decoding validator JSON: %v\nRaw body: %s", err, string(body))
+		return
 	}
 
 	//Step 2 — Create Gno client for valopers.Render
@@ -177,6 +193,11 @@ func InitMonikerMap() {
 	if err != nil {
 		log.Printf("⚠️ Failed to get genesis monikers: %v", err)
 	}
+	// Step 3 — Monikers from DB
+	dbMap, err := database.GetMoniker(db)
+	if err != nil {
+		log.Printf("⚠️ Failed to get monikers from DB: %v", err)
+	}
 
 	// Step 4 — Building a Complete and Prioritized MonikerMap
 	MonikerMutex.Lock()
@@ -185,9 +206,10 @@ func InitMonikerMap() {
 
 	for _, val := range validatorsResp.Result.Validators {
 		addr := val.Address
-		moniker := "inconnu"
-
-		if m, ok := valoperMap[addr]; ok {
+		moniker := "unknown"
+		if m, ok := dbMap[addr]; ok {
+			moniker = m
+		} else if m, ok := valoperMap[addr]; ok {
 			moniker = m
 		} else if m, ok := genesisMap[addr]; ok {
 			moniker = m
@@ -200,4 +222,17 @@ func InitMonikerMap() {
 	}
 
 	log.Printf("✅ MonikerMap initialized with %d active validators\n", len(MonikerMap))
+}
+func doWithRetry(attempts int, sleep time.Duration, fn func() error) error {
+	var err error
+	for i := 0; i < attempts; i++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		log.Printf("🔁 Retry %d/%d after error: %v", i+1, attempts, err)
+		time.Sleep(sleep)
+		sleep *= 2 // backoff
+	}
+	return fmt.Errorf("all retries failed: %w", err)
 }

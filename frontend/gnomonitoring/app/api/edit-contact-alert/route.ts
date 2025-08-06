@@ -11,9 +11,9 @@ export async function PUT(req: Request) {
 
     try {
         const body = await req.json();
-        const { ID, Moniker, NameContact, Mention_Tag } = body;
+        const { ID, Moniker, NameContact, Mention_Tag, Id_Webhook } = body;
 
-        if (!ID || !Moniker || !NameContact || !Mention_Tag) {
+        if (!ID || !Moniker || !NameContact || !Mention_Tag || !Id_Webhook) {
             return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
         }
 
@@ -30,6 +30,7 @@ export async function PUT(req: Request) {
                 Moniker: Moniker,
                 NameContact: NameContact,
                 Mention_Tag: Mention_Tag,
+                Id_Webhook: Id_Webhook,
 
             }),
         });

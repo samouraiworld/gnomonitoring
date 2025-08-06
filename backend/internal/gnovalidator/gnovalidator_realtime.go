@@ -1,7 +1,6 @@
 package gnovalidator
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 	"sync"
@@ -10,11 +9,18 @@ import (
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"gorm.io/gorm"
 )
 
 // VARIABLE DECLARATION
 var MonikerMutex sync.RWMutex
 var lastRPCErrorAlert time.Time //anti spam for error RPC
+var (
+	lastProgressHeight int64 = -1
+	lastProgressTime         = time.Now()
+	alertSent          bool
+	restoredNotified   bool
+)
 
 type BlockParticipation struct {
 	Height     int64
@@ -23,33 +29,64 @@ type BlockParticipation struct {
 
 var MonikerMap = make(map[string]string)
 
-func CollectParticipation(db *sql.DB, client gnoclient.Client) {
-	// Start the real-time tracking loop
+func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
+
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("🔥 Panic recovered in CollectParticipation: %v", r)
+			}
+		}()
+
 		lastStored, err := GetLastStoredHeight(db)
-		if err != nil {
+
+		println("return lastStored:", lastStored)
+		if lastStored == 0 {
 			log.Printf("⚠️ Database empty get last block: %v", err)
-			lastStored, err = client.LatestBlockHeight() // if db is empty begin with lastblock
+			lastStored, err = client.LatestBlockHeight()
+			if err != nil {
+				log.Printf("❌ Failed to get latest block height: %v", err)
+				return
+			}
 		}
 
 		currentHeight := lastStored + 1
-
+		println(currentHeight)
 		for {
-			// Get value of the last block
-			latest, err := client.LatestBlockHeight()
 
+			latest, err := client.LatestBlockHeight()
 			if err != nil {
-				log.Printf("Recovery error: height: %v", err)
+				log.Printf("Erreur lors de la récupération du dernier bloc : %v", err)
 
 				if time.Since(lastRPCErrorAlert) > 10*time.Minute {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
 					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
-
+					log.Println(msg)
 					lastRPCErrorAlert = time.Now()
 				}
-				//feat / add resolve Recovery Block height
 				time.Sleep(10 * time.Second)
 				continue
+			}
+			// Détection de stagnation
+			if lastProgressHeight != -1 && latest == lastProgressHeight {
+				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
+					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d since %s (%s ago)", latest, lastProgressTime.Format(time.RFC822), time.Since(lastProgressTime).Truncate(time.Second))
+					log.Println(msg)
+					internal.SendAllValidatorAlerts(msg, "", "", "", 0, 0, db)
+
+					alertSent = true
+					restoredNotified = false
+					lastProgressTime = time.Now()
+				}
+			} else {
+				lastProgressHeight = latest
+				lastProgressTime = time.Now()
+
+				if alertSent && !restoredNotified {
+					internal.SendAllValidatorAlerts("✅ **Activity Restored**: Gnoland is back to normal.", "", "", "", 0, 0, db)
+					restoredNotified = true
+					alertSent = false
+				}
 			}
 
 			lastRPCErrorAlert = time.Time{}
@@ -59,13 +96,11 @@ func CollectParticipation(db *sql.DB, client gnoclient.Client) {
 				continue
 			}
 
-			log.Println("last block ", latest)
-			// Load new blocks (if more than one at a time)
+			// log.Println("last block ", latest)
 
 			for h := currentHeight + 1; h <= latest; h++ {
-
 				block, err := client.Block(h)
-				if err != nil || block.Block.LastCommit == nil {
+				if err != nil || block == nil || block.Block == nil || block.Block.LastCommit == nil {
 					log.Printf("Erreur bloc %d: %v", h, err)
 					continue
 				}
@@ -76,21 +111,19 @@ func CollectParticipation(db *sql.DB, client gnoclient.Client) {
 						participating[precommit.ValidatorAddress.String()] = true
 					}
 				}
-				// Inserts the participation for each validator into the database
 
 				err = SaveParticipation(db, h, participating, MonikerMap)
 				if err != nil {
 					log.Printf("❌ Failed to save participation at height %d: %v", h, err)
 				}
-
 			}
 
 			currentHeight = latest
 		}
 	}()
-
 }
-func WatchNewValidators(db *sql.DB, refreshInterval time.Duration) {
+
+func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(refreshInterval)
 		defer ticker.Stop()
@@ -107,7 +140,7 @@ func WatchNewValidators(db *sql.DB, refreshInterval time.Duration) {
 			MonikerMutex.RUnlock()
 
 			// Refresh MonikerMap
-			InitMonikerMap()
+			InitMonikerMap(db)
 
 			// Compare with the old Monikermap
 			MonikerMutex.RLock()
@@ -115,7 +148,7 @@ func WatchNewValidators(db *sql.DB, refreshInterval time.Duration) {
 				if _, exists := oldMap[addr]; !exists {
 					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
 					log.Println(msg)
-					internal.SendAllValidatorAlerts(msg, "info", addr, moniker, db)
+					internal.SendAllValidatorAlerts(msg, "info", addr, moniker, 0, 0, db)
 				}
 			}
 			MonikerMutex.RUnlock()
@@ -123,82 +156,102 @@ func WatchNewValidators(db *sql.DB, refreshInterval time.Duration) {
 	}()
 }
 
-func WatchValidatorAlerts(db *sql.DB, checkInterval time.Duration) {
+func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 	go func() {
 		for {
 			today := time.Now().Format("2006-01-02")
-			rows, err := db.Query(`
-				SELECT addr, moniker, COUNT(*) 
-				FROM daily_participation 
-				WHERE date = ? AND participated = 0 
-				GROUP BY addr, moniker
-			`, today)
+
+			rows, err := db.Raw(`
+				SELECT addr,moniker,start_height,end_height,missed FROM daily_missing_series WHERE date = ?
+			`, today).Rows()
 			if err != nil {
-				log.Printf("❌ Error querying missed participation: %v", err)
+				log.Printf("❌ Error executing query: %v", err)
 				time.Sleep(checkInterval)
 				continue
 			}
-			defer rows.Close()
 
 			for rows.Next() {
 				var addr, moniker string
-				var missed int
-				if err := rows.Scan(&addr, &moniker, &missed); err != nil {
-					log.Printf("❌ Error scanning participation row: %v", err)
+				var missed, start_height, end_height int
+
+				if err := rows.Scan(&addr, &moniker, &start_height, &end_height, &missed); err != nil {
+					log.Printf("❌ Error scanning row: %v", err)
 					continue
 				}
 
 				var level, emoji, prefix string
-				if missed >= 3 {
+				switch {
+				case missed >= 3:
 					level = "CRITICAL"
 					emoji = "🚨"
 					prefix = "**"
-
-				} else if missed == 1 {
+				case missed == 1:
 					level = "WARNING"
 					emoji = "⚠️"
 					prefix = ""
-
-				} else {
+				default:
 					continue
 				}
 
-				msg := fmt.Sprintf("%s %s %s %s \n addr:%s \n moniker: %s \n missed %d blocks today", emoji, prefix, level, prefix, addr, moniker, missed)
-				log.Println(msg)
-				internal.SendAllValidatorAlerts(msg, level, addr, moniker, db)
+				msg := fmt.Sprintf(
+					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+				)
+				log.Println("MESSAGE:", msg)
+
+				internal.SendAllValidatorAlerts(msg, level, addr, moniker, start_height, end_height, db)
 			}
+
+			rows.Close() // On ferme explicitement ici, pas avec defer
 
 			time.Sleep(checkInterval)
 		}
 	}()
 }
 
-// SaveParticipation records the participation of validators for a given block
-
-func SaveParticipation(db *sql.DB, blockHeight int64, participating map[string]bool, monikerMap map[string]string) error {
+func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]bool, monikerMap map[string]string) error {
 	today := time.Now().Format("2006-01-02")
 
+	tx := db.Begin()
+	if tx.Error != nil {
+		log.Printf("❌ Error starting transaction: %v", tx.Error)
+		return tx.Error
+	}
+
+	stmt := `
+		INSERT OR REPLACE INTO daily_participations
+		(date, block_height, moniker, addr, participated)
+		VALUES (?, ?, ?, ?, ?)
+	`
+
 	for valAddr, moniker := range monikerMap {
-		_, participated := participating[valAddr]
-		stmt := `INSERT OR REPLACE INTO daily_participation(date, block_height, moniker, addr, participated) VALUES (?, ?, ?, ?, ?)`
-		_, err := db.Exec(stmt, today, blockHeight, moniker, valAddr, participated)
-		if err != nil {
+		participated := participating[valAddr] // false si non trouvé
+
+		if err := tx.Exec(stmt, today, blockHeight, moniker, valAddr, participated).Error; err != nil {
 			log.Printf("❌ Error saving participation for %s: %v", valAddr, err)
-			return err // on retourne dès la première erreur rencontrée
+			tx.Rollback()
+			return err
 		}
+
 		log.Printf("✅ Saved participation for %s (%s) at height %d: %v", valAddr, moniker, blockHeight, participated)
 	}
+
+	if err := tx.Commit().Error; err != nil {
+		log.Printf("❌ Commit error: %v", err)
+		return err
+	}
+
 	return nil
 }
 
-func StartValidatorMonitoring(db *sql.DB) {
+func StartValidatorMonitoring(db *gorm.DB) {
 	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to connect to RPC: %v", err)
 	}
 	client := gnoclient.Client{RPCClient: rpcClient}
 
-	InitMonikerMap() // init validator Map
+	InitMonikerMap(db) // init validator Map
 	WatchNewValidators(db, 5*time.Minute)
 	CollectParticipation(db, client)         // collect participant
 	WatchValidatorAlerts(db, 20*time.Second) // DB-based of alerts

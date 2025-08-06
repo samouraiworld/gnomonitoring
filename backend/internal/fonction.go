@@ -2,15 +2,17 @@ package internal
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gopkg.in/yaml.v2"
+	"gorm.io/gorm"
 )
 
 type config struct {
@@ -74,136 +76,210 @@ func SendSlackAlert(msg string, webhookURL string) error {
 	}
 	return nil
 }
-
-func SendAllValidatorAlerts(message, level, addr, moniker string, db *sql.DB) error {
-	// 1. get all webhooks_validator
-	query := `
-		SELECT user_id, url, type 
-		FROM webhooks_validator;
-	`
-
-	rows, err := db.Query(query)
-	if err != nil {
-		return fmt.Errorf("failed to query webhooks: %w", err)
+func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, end_height int, db *gorm.DB) error {
+	type Webhook struct {
+		UserID string
+		URL    string
+		Type   string
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var userID, url, typ string
-		if err := rows.Scan(&userID, &url, &typ); err != nil {
-			return fmt.Errorf("failed to scan webhook row: %w", err)
-		}
+	var webhooks []Webhook
+	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
+		return fmt.Errorf("failed to fetch webhooks: %w", err)
+	}
 
-		// 2. Check if we should send this alert. On (user_id + addr + level + url)
-		var lastSent time.Time
-		err = db.QueryRow(`
-			SELECT sent_at FROM alert_log 
-			WHERE user_id = ? AND addr = ? AND level = ? AND url = ?`, userID, addr, level, url).Scan(&lastSent)
+	for _, wh := range webhooks {
+		// 2. Check if alert was recently sent
+		var count int64
+		err := db.Raw(`
+		SELECT COUNT(*) FROM alert_logs 
+		WHERE user_id = ? AND addr = ? AND level = ? AND url = ?
+		AND start_height= ? AND end_height = ? 
+		AND skipped = 1	
+		`, wh.UserID, addr, level, wh.URL, start_height, end_height).Scan(&count).Error
 
-		if err == nil && time.Since(lastSent) < 500*time.Minute {
-			log.Printf("⏱️ Skipping alert for %s (%s, %s): recently sent", moniker, userID, url)
+		if err != nil {
+			log.Printf("❌ DB error checking alert_logs: %v", err)
 			continue
 		}
 
-		fullMsg := message
+		if count > 0 {
+			log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker, wh.UserID, wh.URL)
+			continue
+		}
+		//check si dans la table daily participate pour une addr la colonne particpate = 1 et la valeur et block_heigt > end height
+		// alors envoyer l alerte sinon non
+		var countparticipated int
+		err = db.Raw(`
+			SELECT sum(participated) FROM daily_participations
+			WHERE addr = ? AND block_height= (?-1)
+			`, addr, start_height).Scan(&countparticipated).Error
+		if err != nil {
+			log.Printf("❌ DB error checking count participated: %v", err)
+			continue
+		}
+		log.Println("countparticipated", countparticipated)
+		if countparticipated == 0 {
+			log.Printf("⏱️ Skipping alert for %s (%s, %s): limit reached", moniker, wh.UserID, wh.URL)
+			database.InsertAlertlog(db, wh.UserID, addr, moniker, level, wh.URL, start_height, end_height, false, time.Now())
 
-		// 3. Add mention tag if level is critical
-		if level == "** CRITICAL **" {
-			mentionQuery := `
-				SELECT namecontact, mention_tag 
-				FROM alert_contacts 
-				WHERE user_id = ? AND moniker = ?;
-			`
-			mentionRows, err := db.Query(mentionQuery, userID, moniker)
-			if err != nil {
-				return fmt.Errorf("failed to query alert_contacts: %w", err)
-			}
-			defer mentionRows.Close()
-
-			var mentions string
-			for mentionRows.Next() {
-				var name, tag sql.NullString
-				if err := mentionRows.Scan(&name, &tag); err != nil {
-					return fmt.Errorf("failed to scan contact mention: %w", err)
-				}
-				if tag.Valid {
-					mentions += tag.String + " "
-				} else {
-					mentions += "@" + name.String + " "
-				}
-			}
-
-			if mentions != "" {
-				fullMsg += "\n" + mentions
-			}
+			continue
 		}
 
-		// 4. Send if discord or slack
-		switch typ {
+		//================== Build msg ===============
+
+		fullMsg := message
+
+		// 3. Mention if CRITICAL
+		if level == "CRITICAL" {
+			type tag struct {
+				MentionTag string
+			}
+			var res []tag
+
+			err := db.Model(&database.AlertContact{}).
+				Select("mention_tag").
+				Where("user_id = ? AND moniker = ?", wh.UserID, moniker).
+				Find(&res).Error
+
+			if err != nil {
+				return fmt.Errorf("failed to fetch mentions: %w", err)
+			}
+			for _, r := range res {
+
+				fmt.Println(r.MentionTag)
+				fullMsg += "\n" + "<@" + r.MentionTag + ">"
+			}
+			println("full Message", fullMsg)
+
+		}
+
+		// 4. Envoi
+		var sendErr error
+		switch wh.Type {
 		case "discord":
-			err = SendDiscordAlert(fullMsg, url)
+			sendErr = SendDiscordAlert(fullMsg, wh.URL)
 		case "slack":
-			err = SendSlackAlert(fullMsg, url)
+			sendErr = SendSlackAlert(fullMsg, wh.URL)
 		default:
 			continue
 		}
 
-		if err != nil {
-			log.Printf("❌ Failed to send alert to %s (%s): %v", url, typ, err)
+		if sendErr != nil {
+			log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
 			continue
 		}
+		database.InsertAlertlog(db, wh.UserID, addr, moniker, level, wh.URL, start_height, end_height, true, time.Now())
 
-		// 5. Insert in the lert_log with URL
-		_, err = db.Exec(`
-			INSERT INTO alert_log (user_id, addr, moniker, level, url, sent_at)
-			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-			ON CONFLICT(user_id, addr, level, url) DO UPDATE SET sent_at = excluded.sent_at;
-		`, userID, addr, moniker, level, url)
 		if err != nil {
-			log.Printf("failed to insert alert_log for %v (%s): %v", url, typ, err)
-			return fmt.Errorf("failed to insert alert log for %v (%s): %w", url, typ, err)
+			log.Printf("⚠️ Failed to insert alert log for %s (%s): %v", wh.URL, wh.Type, err)
 		}
 	}
 
 	return nil
 }
-func SendUserReportAlert(userID, msg string, db *sql.DB) error {
-	query := `
-		SELECT url, type 
-		FROM webhooks_validator
-		WHERE user_id = ?;
-	`
 
-	rows, err := db.Query(query, userID)
-	if err != nil {
-		return fmt.Errorf("failed to query webhooks: %w", err)
+func SendUserReportAlert(userID, msg string, db *gorm.DB) error {
+	type Webhook struct {
+		URL  string
+		Type string
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var url, typ string
-		if err := rows.Scan(&url, &typ); err != nil {
-			return fmt.Errorf("failed to scan webhook row: %w", err)
-		}
+	var webhooks []Webhook
+	if err := db.Model(&database.WebhookValidator{}).
+		Select("url", "type").
+		Where("user_id = ?", userID).
+		Find(&webhooks).Error; err != nil {
+		return fmt.Errorf("failed to fetch webhooks for user %s: %w", userID, err)
+	}
 
-		switch typ {
+	for _, wh := range webhooks {
+		switch wh.Type {
 		case "discord":
-			if err := SendDiscordAlert(msg, url); err != nil {
+			if err := SendDiscordAlert(msg, wh.URL); err != nil {
 				return fmt.Errorf("failed to send Discord alert: %w", err)
 			}
 		case "slack":
-			if err := SendSlackAlert(msg, url); err != nil {
+			if err := SendSlackAlert(msg, wh.URL); err != nil {
 				return fmt.Errorf("failed to send Slack alert: %w", err)
 			}
 		default:
-			// Type inconnu → ignore
-			continue
+			log.Printf("⚠️ Unknown webhook type for user %s: %s", userID, wh.Type)
 		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating over rows: %w", err)
+	return nil
+}
+
+func SendResolveAlerts(db *gorm.DB) {
+	log.Println("******************start go routine resolve**********************")
+
+	type LastAlert struct {
+		UserID      string
+		Addr        string
+		URL         string
+		Moniker     string
+		StartHeight int
+		EndHeight   int
 	}
 
-	return nil
+	var alerts []LastAlert
+
+	err := db.Raw(`
+		SELECT user_id, addr, url, moniker, end_height,start_height
+		FROM alert_logs
+		WHERE level IN ('CRITICAL', 'WARNING')
+		
+	`).Scan(&alerts).Error
+	if err != nil {
+		log.Printf("❌ Error fetching last alerts: %v", err)
+		return
+	}
+
+	for _, a := range alerts {
+		// Check if resolve at send
+		var count int64
+		err := db.Raw(`
+		SELECT COUNT(*) FROM alert_logs 
+		WHERE user_id = ? AND addr = ?  AND url = ? and level = "RESOLVED"
+		AND start_height= ? AND end_height = ? 	
+		`, a.UserID, a.Addr, a.URL, a.StartHeight, a.EndHeight).Scan(&count).Error
+
+		if err != nil {
+			log.Printf("❌ DB error checking alert_logs: %v", err)
+			continue
+		}
+
+		if count > 0 {
+			log.Printf("⏱️ Skipping resolve alert for %s (%s, %s): already sent", a.Moniker, a.UserID, a.URL)
+			continue
+		}
+
+		// check if participation is true after end_heigt+1
+		var countparticipated int
+		err = db.Raw(`
+			SELECT sum(participated) FROM daily_participations
+			WHERE addr = ? AND block_height= (?+1)
+			`, a.Addr, a.EndHeight).Scan(&countparticipated).Error
+		if err != nil {
+			log.Printf("❌ DB error checking count participated: %v", err)
+			continue
+		}
+		log.Println("countparticipated", countparticipated)
+		if countparticipated == 0 {
+			log.Printf("Not resolve error")
+			continue
+		}
+
+		// Envoi du RESOLVED
+		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s)", a.Moniker, a.Addr)
+		if strings.Contains(a.URL, "discord.com") {
+			SendDiscordAlert(resolveMsg, a.URL)
+		} else if strings.Contains(a.URL, "slack.com") {
+			SendSlackAlert(resolveMsg, a.URL)
+		}
+		database.InsertAlertlog(db, a.UserID, a.Addr, a.Moniker, "RESOLVED", a.URL, a.StartHeight, a.EndHeight, false, time.Now())
+		log.Printf("✅ Sent resolve alert for %s", a.Addr)
+	}
+
 }

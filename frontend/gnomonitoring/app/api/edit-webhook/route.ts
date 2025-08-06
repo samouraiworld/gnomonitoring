@@ -11,9 +11,9 @@ export async function PUT(req: Request) {
 
     try {
         const body = await req.json();
-        const { id, description, url, type, target } = body;
+        const { ID, Description, URL, Type, target } = body;
 
-        if (!id || !url || !type || !target) {
+        if (!ID || !URL || !Type || !target) {
             return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
         }
 
@@ -28,11 +28,11 @@ export async function PUT(req: Request) {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                ID: id,
-                DESCRIPTION: description,
-                USER: userId,
-                URL: url,
-                Type: type,
+                ID: ID,
+                Description: Description,
+                UserID: userId,
+                URL: URL,
+                Type: Type,
             }),
         });
 
