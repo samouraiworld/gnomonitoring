@@ -9,7 +9,7 @@ services:
       - ./backend/config_docker.yaml:/root/config.yaml
       - ./backend/go.mod:/root/go.mod
       - ./backend/go.sum:/root/go.sum 
-      - ./backend/webhooks.db:/root/webhooks.db
+      - ./backend/db/:/root/webhooks.db
     ports:
       - 8888:8888 #metrics
       - 8989:8989 #backend
