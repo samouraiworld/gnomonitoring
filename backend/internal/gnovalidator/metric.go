@@ -1,113 +1,95 @@
 package gnovalidator
 
-import "database/sql"
+import (
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"gorm.io/gorm"
+)
 
-func CalculateValidatorRates(db *sql.DB) ([]ValidatorStat, error) {
-	query := `
-		SELECT 
-			addr,
-			moniker,
-			COUNT(*) AS total_blocks,
-			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_blocks
-		FROM daily_participation
-		
-		GROUP BY addr, moniker
-	`
-	rows, err := db.Query(query)
+func CalculateValidatorRates(db *gorm.DB) ([]ValidatorStat, error) {
+	var results []struct {
+		Addr               string
+		Moniker            string
+		TotalBlocks        int64
+		ParticipatedBlocks int64
+	}
+
+	err := db.Model(&database.DailyParticipation{}).
+		Select("addr, moniker, COUNT(*) as total_blocks, SUM(CASE WHEN participated THEN 1 ELSE 0 END) as participated_blocks").
+		Group("addr, moniker").
+		Scan(&results).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var stats []ValidatorStat
-	for rows.Next() {
-		var stat ValidatorStat
-		var totalBlocks, participatedBlocks int
-
-		if err := rows.Scan(&stat.Address, &stat.Moniker, &totalBlocks, &participatedBlocks); err != nil {
-			return nil, err
+	for _, r := range results {
+		rate := 0.0
+		if r.TotalBlocks > 0 {
+			rate = float64(r.ParticipatedBlocks) / float64(r.TotalBlocks) * 100
 		}
-
-		if totalBlocks > 0 {
-			stat.Rate = float64(participatedBlocks) / float64(totalBlocks) * 100
-		} else {
-			stat.Rate = 0
-		}
-
-		stats = append(stats, stat)
+		stats = append(stats, ValidatorStat{
+			Address: r.Addr,
+			Moniker: r.Moniker,
+			Rate:    rate,
+		})
 	}
 
-	return stats, rows.Err()
-}
-func CalculateMissedBlocks(db *sql.DB) ([]MissedBlockStat, error) {
-	query := `
-		SELECT addr,
-		       moniker,
-			   SUM(CASE WHEN participated = false THEN 1 ELSE 0 END) AS missed
-		FROM daily_participation
-		GROUP BY addr, moniker
-	`
-
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var stats []MissedBlockStat
-	for rows.Next() {
-		var stat MissedBlockStat
-		if err := rows.Scan(&stat.Address, &stat.Moniker, &stat.Missed); err != nil {
-			return nil, err
-		}
-		stats = append(stats, stat)
-	}
 	return stats, nil
 }
-func CalculateConsecutiveMissedBlocks(db *sql.DB) ([]ConsecutiveMissedStat, error) {
-	query := `
-		SELECT addr, moniker, block_height, participated
-		FROM daily_participation
-		ORDER BY addr, block_height ASC
-	`
 
-	rows, err := db.Query(query)
+func CalculateMissedBlocks(db *gorm.DB) ([]MissedBlockStat, error) {
+	var results []struct {
+		Addr    string
+		Moniker string
+		Missed  int
+	}
+
+	err := db.Model(&database.DailyParticipation{}).
+		Select("addr, moniker, SUM(CASE WHEN participated = false THEN 1 ELSE 0 END) as missed").
+		Group("addr, moniker").
+		Scan(&results).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+
+	var stats []MissedBlockStat
+	for _, r := range results {
+		stats = append(stats, MissedBlockStat{
+			Address: r.Addr,
+			Moniker: r.Moniker,
+			Missed:  r.Missed,
+		})
+	}
+
+	return stats, nil
+}
+
+func CalculateConsecutiveMissedBlocks(db *gorm.DB) ([]ConsecutiveMissedStat, error) {
+	var rows []database.DailyParticipation
+
+	err := db.Order("addr, block_height ASC").Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
 
 	type streak struct {
 		moniker string
 		count   int
 	}
-
 	streaks := make(map[string]streak)
 
-	for rows.Next() {
-		var addr, moniker string
-		var height int64
-		var participated bool
+	for _, row := range rows {
+		s := streaks[row.Addr]
+		s.moniker = row.Moniker
 
-		if err := rows.Scan(&addr, &moniker, &height, &participated); err != nil {
-			return nil, err
-		}
-
-		s := streaks[addr]
-		s.moniker = moniker
-
-		if participated {
-			// Dès qu’il a participé, le streak repart à 0
+		if row.Participated {
 			s.count = 0
 		} else {
-			// Il n’a pas participé → streak++
 			s.count++
 		}
-
-		streaks[addr] = s
+		streaks[row.Addr] = s
 	}
 
-	// Transformation finale
 	var results []ConsecutiveMissedStat
 	for addr, s := range streaks {
 		results = append(results, ConsecutiveMissedStat{

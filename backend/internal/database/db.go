@@ -1,331 +1,452 @@
 package database
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
-	"os"
 	"time"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-func InitDB() *sql.DB {
-	db, err := sql.Open("sqlite3", "./webhooks.db")
+type User struct {
+	UserID    string    `gorm:"primaryKey;column:user_id" json:"user_id"`
+	Name      string    `gorm:"column:nameuser;not null" json:"name"`
+	Email     string    `gorm:"uniqueIndex;not null" json:"email"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
+}
+type HourReport struct {
+	UserID            string `gorm:"primaryKey;column:user_id;not null" `
+	DailyReportHour   int    `gorm:"column:daily_report_hour;default:9" json:"daily_report_hour"`
+	DailyReportMinute int    `gorm:"column:daily_report_minute;default:0" json:"daily_report_minute"`
+	Timezone          string `gorm:"column:timezone;default:Europe/Paris" `
+}
+
+type AlertContact struct {
+	ID          int       `gorm:"primaryKey;autoIncrement;column:id"`
+	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime"`
+	UserID      string    `gorm:"column:user_id;not null" `
+	Moniker     string    `gorm:"column:moniker;not null" `
+	NameContact string    `gorm:"column:namecontact;not null" `
+	MentionTag  string    `gorm:"column:mention_tag" `
+	IDwebhook   int       `gorm:"column:id_webhook" `
+}
+
+type WebhookGovDAO struct {
+	ID            int       `gorm:"primaryKey;autoIncrement;column:id" `
+	CreatedAt     time.Time `gorm:"column:created_at;autoCreateTime" `
+	Description   string    `gorm:"column:description" `
+	UserID        string    `gorm:"column:user_id;not null;index:idx_webhooks_govdao_user" `
+	URL           string    `gorm:"column:url;not null" `
+	Type          string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
+	LastCheckedID int       `gorm:"column:last_checked_id;not null;default:-1" `
+}
+type WebhookValidator struct {
+	ID          int       `gorm:"primaryKey;autoIncrement;column:id"`
+	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime" `
+	Description string    `gorm:"column:description" `
+	UserID      string    `gorm:"column:user_id;not null;index:idx_webhooks_validator_user" `
+	URL         string    `gorm:"column:url;not null" `
+	Type        string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
+}
+type DailyParticipation struct {
+	Date         string `gorm:"column:date;primaryKey;index:idx_participation_date,priority:1" `
+	BlockHeight  int    `gorm:"column:block_height;primaryKey" `
+	Moniker      string `gorm:"column:moniker;primaryKey" `
+	Addr         string `gorm:"column:addr;not null;index:idx_participation_date,priority:2" `
+	Participated bool   `gorm:"column:participated;not null" `
+}
+type AlertLog struct {
+	UserID      string    `gorm:"column:user_id;primaryKey" `
+	Addr        string    `gorm:"column:addr;primaryKey" `
+	Moniker     string    `gorm:"column:moniker;not null" `
+	Level       string    `gorm:"column:level;primaryKey" `
+	URL         string    `gorm:"column:url;primaryKey" `
+	StartHeight int       `gorm:"column:start_height;primaryKey;not null" `
+	EndHeight   int       `gorm:"column:end_height;primaryKey;not null" `
+	Skipped     bool      `gorm:"column:skipped;not null" `
+	SentAt      time.Time `gorm:"column:sent_at;autoCreateTime" `
+}
+type GovDAOState struct {
+	ID             int       `gorm:"primaryKey;check:id = 1"`
+	LastProposalID int       `gorm:"column:last_proposal_id;not null"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+type AddrMoniker struct {
+	Addr    string `gorm:"column:addr;primaryKey" `
+	Moniker string `gorm:"column:moniker;not null" `
+}
+
+// CReate index
+func InitDB() (*gorm.DB, error) {
+	db, err := gorm.Open(sqlite.Open("./webhooks.db"), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("DB opening error: %v", err)
 	}
-	dir, _ := os.Getwd()
-	log.Println("Working dir:", dir)
 
-	schema, err := os.ReadFile("./internal/database/schema.sql") // ou "./migrations/schema.sql"
-	if err != nil {
-		log.Fatalf("Error reading schema.sql: %v", err)
-	}
-
-	_, err = db.Exec(string(schema))
-	if err != nil {
-		log.Fatalf("Table creation error: %v", err)
-	}
-	_, err = db.Exec("PRAGMA journal_mode = WAL;") // Multi write
-	if err != nil {
-		log.Fatalf("Failed to enable WAL mode: %v", err)
-	}
-
-	return db
-}
-
-type Users struct {
-	USER_ID string `json:"user_id"`
-	NAME    string `json:"name"`
-	EMAIL   string `json:"email"`
-}
-type AlertContact struct {
-	ID         int
-	USER_ID    string
-	MONIKER    string
-	NAME       string
-	MENTIONTAG string
-}
-
-type WebhookGovDao struct {
-	ID            int
-	DESCRIPTION   string
-	USER          string
-	URL           string
-	Type          string
-	LastCheckedID int
-}
-type WebhookValidator struct {
-	ID          int
-	DESCRIPTION string
-	USER        string
-	URL         string
-	Type        string
-}
-type HourReport struct {
-	DAYLYRH int `json:"daily_report_hour"`
-	DAYLYRM int `json:"daily_report_minute"`
-}
-
-// ==================================== GovDao ======================================
-func InsertWebhook(user_id string, url string, description, wtype string, db *sql.DB) error {
-	if wtype != "discord" && wtype != "slack" {
-		return fmt.Errorf("Invalid type. Use discord or slack")
-	}
-
-	_, err := db.Exec("INSERT OR IGNORE INTO webhooks_govdao (user_id, url,description, type, last_checked_id) VALUES (?, ?,?, ?, 0)", user_id, url, description, wtype)
-	return err
-}
-
-func Loadwebhooks(db *sql.DB) ([]WebhookGovDao, error) {
-	rows, err := db.Query("SELECT id, description, user_id, url, type, last_checked_id FROM webhooks_govdao")
+	// Active WAL mode
+	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var webhooks []WebhookGovDao
-	for rows.Next() {
-		var w WebhookGovDao
-		if err := rows.Scan(&w.ID, &w.DESCRIPTION, &w.USER, &w.URL, &w.Type, &w.LastCheckedID); err != nil {
-			return nil, err
-		}
-		webhooks = append(webhooks, w)
-	}
-	return webhooks, nil
-}
-
-func UpdateLastCheckedID(url string, newID int, db *sql.DB) error {
-	_, err := db.Exec("UPDATE webhooks_govdao SET last_checked_id = ? WHERE url = ?", newID, url)
-	return err
-}
-
-func ListWebhooks(db *sql.DB, user_id string) ([]WebhookGovDao, error) {
-	rows, err := db.Query("SELECT id, description, user_id, url, type, last_checked_id FROM webhooks_govdao WHERE user_id = ?ORDER BY id ASC", user_id)
+	_, err = sqlDB.Exec("PRAGMA journal_mode = WAL;")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
-	defer rows.Close()
 
-	var list []WebhookGovDao
-	for rows.Next() {
-		var wh WebhookGovDao
-		err := rows.Scan(&wh.ID, &wh.DESCRIPTION, &wh.USER, &wh.URL, &wh.Type, &wh.LastCheckedID)
-		if err != nil {
-			return nil, err
-		}
-		list = append(list, wh)
-	}
-	return list, nil
-}
-func DeleteWebhook(id int, user_id string, db *sql.DB) error {
-	_, err := db.Exec("DELETE FROM webhooks_govdao WHERE id = ? and user_id = ?", id, user_id)
-	return err
-}
+	// Optionnel : augmente un peu le cache et active le verrouillage concurrent
+	_, _ = sqlDB.Exec("PRAGMA synchronous = NORMAL;")
+	_, _ = sqlDB.Exec("PRAGMA temp_store = MEMORY;")
 
-// ==========================webhooks_validator ===============================================
-
-func InsertMonitoringWebhook(user_id, url, description, typ string, db *sql.DB) error {
-	_, err := db.Exec("INSERT INTO webhooks_validator (user_id,description, url, type) VALUES (?, ?, ?,?)", user_id, description, url, typ)
-	return err
-}
-
-func DeleteMonitoringWebhook(id int, user_id string, db *sql.DB) error {
-	_, err := db.Exec("DELETE FROM webhooks_validator WHERE id = ? and user_id = ?", id, user_id)
-	return err
-}
-
-func ListMonitoringWebhooks(db *sql.DB, user_id string) ([]WebhookValidator, error) {
-	rows, err := db.Query("SELECT id, description, user_id, url, type FROM webhooks_validator WHERE user_id= ?", user_id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var result []WebhookValidator
-	for rows.Next() {
-		var hook WebhookValidator
-		if err := rows.Scan(&hook.ID, &hook.DESCRIPTION, &hook.USER, &hook.URL, &hook.Type); err != nil {
-			return nil, err
-		}
-		result = append(result, hook)
-	}
-	return result, nil
-}
-
-// =============================== gnovalidator y Govdao ======================================
-func UpdateMonitoringWebhook(db *sql.DB, id int, user_id, description, newURL, newType, tablename string) error {
-	query := fmt.Sprintf(
-		"UPDATE %s SET url=?,description=?, type=? WHERE user_id=? AND id = ?",
-		tablename,
+	err = db.AutoMigrate(
+		&User{}, &AlertContact{}, &WebhookValidator{},
+		&WebhookGovDAO{}, &HourReport{}, &GovDAOState{},
+		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{},
 	)
-	_, err := db.Exec(query, newURL, description, newType, user_id, id)
 	if err != nil {
-		return fmt.Errorf("failed to update webhook with id %d: %w", id, err)
+		return nil, err
 	}
+
+	InitGovDaoState(db)
+	CreateMissingBlocksView(db)
+
+	return db, nil
+}
+
+// =================================== VIEW MISSING BLOCK ============================
+func CreateMissingBlocksView(db *gorm.DB) error {
+	createViewSQL := `
+	CREATE VIEW IF NOT EXISTS daily_missing_series AS
+	WITH misses AS (
+		SELECT
+			addr,
+			moniker,
+			date,
+			block_height,
+			ROW_NUMBER() OVER (PARTITION BY addr, moniker, date ORDER BY block_height) AS rn
+		FROM daily_participations
+		WHERE participated = 0
+	),
+	islands AS (
+		SELECT
+			addr,
+			moniker,
+			date,
+			block_height,
+			block_height - rn AS grp
+		FROM misses
+	)
+	SELECT
+		addr,
+		moniker,
+		date,
+		MIN(block_height) AS start_height,
+		MAX(block_height) AS end_height,
+		COUNT(*) AS missed
+	FROM islands
+	GROUP BY addr, moniker, date, grp
+	HAVING COUNT(*) > 1;
+	`
+
+	if err := db.Exec(createViewSQL).Error; err != nil {
+		return fmt.Errorf("failed to create view: %w", err)
+	}
+
+	log.Println("✅ Vue `daily_missing_series` créée avec succès")
 	return nil
 }
 
-func GetWebhookByID(db *sql.DB, user_id string, table string) (*WebhookValidator, error) {
-	query := fmt.Sprintf("SELECT USER, description,	 URL, Type FROM %s WHERE user_id = ?", table)
+// ===================================State GovDao=====================================
+func InitGovDaoState(db *gorm.DB) error {
 
-	row := db.QueryRow(query, user_id)
-
-	var wh WebhookValidator
-	err := row.Scan(&wh.USER, &wh.DESCRIPTION, &wh.URL, &wh.Type)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil // Pas trouvé
-		}
-		return nil, fmt.Errorf("failed to get webhook with id %s: %w", user_id, err)
+	state := GovDAOState{
+		ID:             1,
+		LastProposalID: -1,
 	}
+	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&state).Error
 
+}
+func GetLastGovDaoProposalID(db *gorm.DB) (int, error) {
+	var state GovDAOState
+
+	err := db.First(&state, "id = ?", 1).Error
+	if err != nil {
+		return 0, err
+	}
+	return state.LastProposalID, nil
+}
+func UpdateLastGovDaoProposalID(db *gorm.DB, newID int) error {
+	return db.Model(&GovDAOState{}).
+		Where("id = ?", 1).
+		Updates(map[string]interface{}{
+			"last_proposal_id": newID,
+			"updated_at":       gorm.Expr("CURRENT_TIMESTAMP"),
+		}).Error
+}
+
+// // ==================================== GovDao ======================================
+func InsertWebhook(user_id string, url string, description, wtype string, db *gorm.DB) error {
+	govdao := WebhookGovDAO{
+		UserID:      user_id,
+		URL:         url,
+		Description: description,
+		Type:        wtype,
+	}
+	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&govdao).Error
+
+}
+
+func LoadWebhooks(db *gorm.DB) ([]WebhookGovDAO, error) {
+	var webhooks []WebhookGovDAO
+	err := db.Find(&webhooks).Error
+	return webhooks, err
+}
+func UpdateLastCheckedID(url string, newID int, db *gorm.DB) error {
+	return db.Model(&WebhookGovDAO{}).
+		Where("url = ?", url).
+		Update("last_checked_id", newID).
+		Error
+}
+
+func ListWebhooks(db *gorm.DB, userID string) ([]WebhookGovDAO, error) {
+	var list []WebhookGovDAO
+	err := db.
+		Select("id, description, user_id, url, type, last_checked_id").
+		Where("user_id = ?", userID).
+		Order("id ASC").
+		Find(&list).Error
+
+	if err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func DeleteWebhook(id int, userID string, db *gorm.DB) error {
+	err := db.
+		Where("id = ? AND user_id = ?", id, userID).
+		Delete(&WebhookGovDAO{}).
+		Error
+
+	return err
+}
+
+// // ==========================webhooks_validator ===============================================
+
+func InsertMonitoringWebhook(userID, url, description, typ string, db *gorm.DB) error {
+	wh := WebhookValidator{
+		UserID:      userID,
+		URL:         url,
+		Description: description,
+		Type:        typ,
+	}
+	return db.Create(&wh).Error
+}
+
+func DeleteMonitoringWebhook(id int, userID string, db *gorm.DB) error {
+	return db.
+		Where("id = ? AND user_id = ?", id, userID).
+		Delete(&WebhookValidator{}).
+		Error
+}
+
+func ListMonitoringWebhooks(db *gorm.DB, userID string) ([]WebhookValidator, error) {
+	var result []WebhookValidator
+	err := db.
+		Select("id, description, user_id, url, type").
+		Where("user_id = ?", userID).
+		Order("id ASC").
+		Find(&result).Error
+	return result, err
+}
+
+// =============================== gnovalidator y Govdao ======================================
+func UpdateMonitoringWebhook(db *gorm.DB, id int, userID, description, newURL, newType, tablename string) error {
+	stmt := fmt.Sprintf("UPDATE %s SET url = ?, description = ?, type = ? WHERE user_id = ? AND id = ?", tablename)
+	return db.Exec(stmt, newURL, description, newType, userID, id).Error
+}
+
+func GetWebhookByID(db *gorm.DB, userID, table string) (*WebhookValidator, error) {
+	var wh WebhookValidator
+	query := fmt.Sprintf("SELECT user_id, description, url, type FROM %s WHERE user_id = ?", table)
+	err := db.Raw(query, userID).Scan(&wh).Error
+	if err != nil {
+		return nil, err
+	}
 	return &wh, nil
 }
 
 //============================== USERS ===================================================
 
-func InsertUser(user_id, email, name string, db *sql.DB) error {
-	_, err := db.Exec("INSERT INTO users (user_id, email, nameuser) VALUES (?, ?, ?)", user_id, email, name)
-	createHourReport(db, user_id)
-	return err
-}
-func DeleteUser(user_id string, db *sql.DB) error {
-	_, err := db.Exec("DELETE FROM users WHERE user_id = ?", user_id)
-
-	_, err = db.Exec("DELETE FROM webhooks_govdao WHERE user_id = ?", user_id)
-
-	_, err = db.Exec("DELETE FROM webhooks_validator WHERE user_id = ?", user_id)
-
-	_, err = db.Exec("DELETE FROM alert_contacts WHERE user_id = ?", user_id)
-
-	_, err = db.Exec("DELETE FROM hour_report WHERE user_id = ?", user_id)
-
-	return err
-}
-
-func UpdateUser(db *sql.DB, name, email, user_id string) error {
-
-	_, err := db.Exec("UPDATE users SET nameuser=?, email = ? WHERE user_id=?", name, email, user_id)
-	if err != nil {
-		return fmt.Errorf("failed to update user with user_id %s: %w", user_id, err)
+func InsertUser(userID, email, name string, db *gorm.DB) error {
+	u := User{
+		UserID: userID,
+		Email:  email,
+		Name:   name,
 	}
-	return nil
-}
-func GetUserById(db *sql.DB, userID string) (*Users, error) {
-	row := db.QueryRow("SELECT user_id,nameuser, email, daily_report_hour, daily_report_minute FROM users WHERE user_id = ?", userID)
-
-	var usr Users
-	var hour, minute sql.NullInt64
-	err := row.Scan(&usr.USER_ID, &usr.NAME, &usr.EMAIL, &hour, &minute)
+	err := db.Create(&u).Error
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
+		return err
+	}
+	return createHourReport(db, userID)
+}
+func DeleteUser(userID string, db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		tables := []any{
+			&WebhookGovDAO{}, &WebhookValidator{},
+			&AlertContact{}, &HourReport{},
+			&User{},
 		}
-		return nil, fmt.Errorf("failed to get user with id %s: %w", userID, err)
+		for _, model := range tables {
+			if err := tx.Where("user_id = ?", userID).Delete(model).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+func UpdateUser(db *gorm.DB, name, email, userID string) error {
+	return db.
+		Model(&User{}).
+		Where("user_id = ?", userID).
+		Updates(map[string]interface{}{
+			"nameuser": name,
+			"email":    email,
+		}).Error
+}
+func GetUserById(db *gorm.DB, userID string) (*User, error) {
+	var usr User
+	err := db.
+		Select("user_id, nameuser, email").
+		Where("user_id = ?", userID).
+		First(&usr).Error
+	if err != nil {
+		return nil, err
 	}
-
 	return &usr, nil
 }
 
 // ============================== Report Hour =============================================
-func UpdateHeureReport(db *sql.DB, H, M int, T, userID string) error {
-	// Valider la timezone
-	loc, err := time.LoadLocation(T)
-	if err != nil {
-		log.Printf("invalid timezone for user %s: %s, defaulting to UTC", userID, T)
-		loc = time.UTC
+func UpdateHeureReport(db *gorm.DB, H, M int, T, userID string) error {
+	// Validate timezone
+	if _, err := time.LoadLocation(T); err != nil {
+		log.Printf("Invalid timezone '%s', defaulting to UTC", T)
 		T = "UTC"
 	}
-	println(loc)
-	// Mise à jour dans la base
-	_, err = db.Exec(`
-		UPDATE hour_report 
-		SET daily_report_hour = ?, daily_report_minute = ?, timezone = ? 
-		WHERE user_id = ?`, H, M, T, userID)
-
-	if err != nil {
-		return fmt.Errorf("failed to update hour and timezone for user %s: %w", userID, err)
-	}
-
-	return nil
+	return db.
+		Model(&HourReport{}).
+		Where("user_id = ?", userID).
+		Updates(map[string]interface{}{
+			"daily_report_hour":   H,
+			"daily_report_minute": M,
+			"timezone":            T,
+		}).Error
 }
-func GetHourReport(db *sql.DB, userID string) (*HourReport, error) {
-	row := db.QueryRow("SELECT daily_report_hour, daily_report_minute  FROM hour_report WHERE user_id = ?", userID)
-
+func GetHourReport(db *gorm.DB, userID string) (*HourReport, error) {
 	var hr HourReport
-	err := row.Scan(&hr.DAYLYRH, &hr.DAYLYRM)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to get hour report for user %s: %w", userID, err)
-	}
-	return &hr, nil
-}
-func createHourReport(db *sql.DB, user_id string) error {
-	_, err := db.Exec("INSERT INTO hour_report (user_id) VALUES (?)", user_id)
-	return err
-}
-
-// ============================== Alert_contact =============================================
-func InsertAlertContact(db *sql.DB, user_id, moniker, namecontact, mention_tag string) error {
-	stmt, err := db.Prepare(`
-		INSERT INTO alert_contacts (user_id, moniker, namecontact, mention_tag)
-		VALUES (?, ?, ?, ?)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare insert statement: %w", err)
-	}
-	defer stmt.Close()
-
-	_, err = stmt.Exec(user_id, moniker, namecontact, mention_tag)
-	if err != nil {
-		return fmt.Errorf("failed to execute insert: %w", err)
-	}
-
-	return nil
-}
-
-func ListAlertContacts(db *sql.DB, userID string) ([]AlertContact, error) {
-	rows, err := db.Query(`
-		SELECT id, user_id, moniker, namecontact, mention_tag
-		FROM alert_contacts WHERE user_id = ? ORDER BY id ASC`, userID)
+	err := db.
+		Select("daily_report_hour, daily_report_minute").
+		Where("user_id = ?", userID).
+		First(&hr).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	return &hr, nil
+}
+func createHourReport(db *gorm.DB, userID string) error {
+	return db.Create(&HourReport{UserID: userID}).Error
+}
 
-	var contacts []AlertContact
-	for rows.Next() {
-		var c AlertContact
-		if err := rows.Scan(&c.ID, &c.USER_ID, &c.MONIKER, &c.NAME, &c.MENTIONTAG); err != nil {
-			return nil, err
-		}
-		contacts = append(contacts, c)
+// ============================== Alert_contact =============================================
+func InsertAlertContact(db *gorm.DB, userID, moniker, namecontact, mentionTag string, idwebhook int) error {
+	contact := AlertContact{
+		UserID:      userID,
+		Moniker:     moniker,
+		NameContact: namecontact,
+		MentionTag:  mentionTag,
+		IDwebhook:   idwebhook,
 	}
-	return contacts, nil
+	return db.Create(&contact).Error
 }
-func UpdateAlertContact(db *sql.DB, id int, moniker, namecontact, mentionTag string) error {
-	_, err := db.Exec(`
-		UPDATE alert_contacts SET moniker = ?, namecontact = ?, mention_tag = ?
-		WHERE id = ?`, moniker, namecontact, mentionTag, id)
-	return err
+
+func ListAlertContacts(db *gorm.DB, userID string) ([]AlertContact, error) {
+	var contacts []AlertContact
+	err := db.
+		Where("user_id = ?", userID).
+		Order("id ASC").
+		Find(&contacts).Error
+	return contacts, err
 }
-func DeleteAlertContact(db *sql.DB, id int) error {
-	_, err := db.Exec("DELETE FROM alert_contacts WHERE id = ?", id)
-	return err
+
+func UpdateAlertContact(db *gorm.DB, id int, moniker, namecontact, mentionTag string, idwebhook int) error {
+	return db.
+		Model(&AlertContact{}).
+		Where("id = ?", id).
+		Updates(AlertContact{
+			Moniker:     moniker,
+			NameContact: namecontact,
+			MentionTag:  mentionTag,
+			IDwebhook:   idwebhook,
+		}).Error
+}
+func DeleteAlertContact(db *gorm.DB, id int) error {
+	return db.Delete(&AlertContact{}, id).Error
 }
 
 // ==================================== Purge ==========================================
-func PruneOldParticipationData(db *sql.DB, keepDays int) error {
+func PruneOldParticipationData(db *gorm.DB, keepDays int) error {
 	cutoff := time.Now().AddDate(0, 0, -keepDays).Format("2006-01-02")
-	stmt := `DELETE FROM daily_participation WHERE date < ?`
+	res := db.
+		Where("date < ?", cutoff).
+		Delete(&DailyParticipation{})
 
-	res, err := db.Exec(stmt, cutoff)
-	if err != nil {
-		return fmt.Errorf("failed to prune old data: %w", err)
+	if res.Error != nil {
+		return res.Error
 	}
-	count, _ := res.RowsAffected()
-	log.Printf("🧹 Pruned %d old rows (before %s)", count, cutoff)
+
+	log.Printf("🧹 Pruned %d old rows (before %s)", res.RowsAffected, cutoff)
 	return nil
+}
+
+// ====================================== ALERT LOG ======================================
+func InsertAlertlog(db *gorm.DB, userID, addr, moniker, level, url string, startheight, endheight int, skipped bool, sent time.Time) error {
+	alert := AlertLog{
+		UserID:      userID,
+		Addr:        addr,
+		Moniker:     moniker,
+		Level:       level,
+		URL:         url,
+		StartHeight: startheight,
+		EndHeight:   endheight,
+		Skipped:     skipped,
+		SentAt:      sent,
+	}
+	return db.Create(&alert).Error
+}
+
+// ====================================== ADDR MONIKER =============================
+
+func InsertAddrMoniker(db *gorm.DB, addr, moniker string) error {
+	addrmoniker := AddrMoniker{
+
+		Addr:    addr,
+		Moniker: moniker,
+	}
+	return db.Create(&addrmoniker).Error
+}
+func GetMoniker(db *gorm.DB) (map[string]string, error) {
+	var entries []AddrMoniker
+	result := db.Find(&entries)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	monikerMap := make(map[string]string)
+	for _, e := range entries {
+		monikerMap[e.Addr] = e.Moniker
+		log.Printf("📦 Loaded from DB — Addr: %s, Moniker: %s", e.Addr, e.Moniker)
+	}
+	log.Printf("✅ Loaded %d monikers from DB", len(monikerMap))
+	return monikerMap, nil
 }

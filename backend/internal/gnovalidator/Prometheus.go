@@ -1,7 +1,6 @@
 package gnovalidator
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"gorm.io/gorm"
 )
 
 type ValidatorStat struct {
@@ -71,7 +71,7 @@ func StartPrometheusServer(port int) {
 		}
 	}()
 }
-func UpdatePrometheusMetricsFromDB(db *sql.DB) error {
+func UpdatePrometheusMetricsFromDB(db *gorm.DB) error {
 	// ValidatorParticipation
 	stats, err := CalculateValidatorRates(db)
 	if err != nil {
@@ -101,7 +101,7 @@ func UpdatePrometheusMetricsFromDB(db *sql.DB) error {
 	return nil
 }
 
-func StartMetricsUpdater(db *sql.DB) {
+func StartMetricsUpdater(db *gorm.DB) {
 	go func() {
 		for {
 			err := UpdatePrometheusMetricsFromDB(db)

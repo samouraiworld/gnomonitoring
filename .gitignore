@@ -5,4 +5,4 @@ Validator/secrets/*
 **/config.back.yaml
 **webhooks.db
 **.db
-
+**schema.sql
