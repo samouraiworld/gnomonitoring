@@ -19,7 +19,7 @@ var mu sync.Mutex
 
 func StartGovDaoManager(db *gorm.DB) {
 	log.Println("GovDao manager started")
-	ticker := time.NewTicker(50 * time.Second) // check every 10s
+	ticker := time.NewTicker(10 * time.Minute) // check every 10s
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -33,7 +33,7 @@ func StartGovDaoManager(db *gorm.DB) {
 		for _, wh := range webhooks {
 			key := fmt.Sprintf("%s|%s", wh.UserID, wh.URL)
 			if !runningWatchers[key] {
-				log.Printf("🔁 Nouvelle surveillance GovDAO pour %s", wh.URL)
+				//	log.Printf("🔁 Nouvelle surveillance GovDAO pour %s", wh.URL)
 				go StartWebhookWatcher(wh, db)
 				runningWatchers[wh.URL] = true
 			}
@@ -43,17 +43,15 @@ func StartGovDaoManager(db *gorm.DB) {
 }
 
 func StartWebhookWatcher(w database.WebhookGovDAO, db *gorm.DB) {
-	// log.Println("Begin Start GovDao")
+	log.Println("Begin Start GovDao")
 	ticker := time.NewTicker(time.Duration(internal.Config.IntervallSecond) * time.Second)
 	defer ticker.Stop()
-	log.Printf("user %s url:%s, lastid: %d", w.UserID, w.URL, w.LastCheckedID)
+
 	for range ticker.C {
 
 		nextID := w.LastCheckedID + 1
-		println("nextid:%d", nextID)
 		exists, title, moniker := ProposalExists(nextID)
-		// log.Printf("check GovDao num %d\n", nextID)
-		println("Exist %s", exists)
+
 		if exists {
 			msg := fmt.Sprintf("--- \n 🗳️ ** New Proposal N° %d: %s ** - %s \n 🔗source: %s/r/gov/dao:%d",
 				nextID, title, moniker, internal.Config.Gnoweb, nextID)
@@ -63,7 +61,7 @@ func StartWebhookWatcher(w database.WebhookGovDAO, db *gorm.DB) {
 
 			switch w.Type {
 			case "discord":
-				log.Println("Send GovDao alert")
+
 				internal.SendDiscordAlert(msg, w.URL)
 			case "slack":
 				internal.SendSlackAlert(msgSlack, w.URL)
@@ -79,7 +77,7 @@ func StartWebhookWatcher(w database.WebhookGovDAO, db *gorm.DB) {
 }
 func ProposalExists(i int) (bool, string, string) {
 	url := fmt.Sprintf("%s/r/gov/dao:%d", internal.Config.Gnoweb, i)
-	println(url)
+	//println(url)
 	resp, err := http.Get(url)
 
 	if err != nil {

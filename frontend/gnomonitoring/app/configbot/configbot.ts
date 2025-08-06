@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 type Webhook = { ID?: number; Description: string; URL: string; Type: string };
 type WebhookType = "gov" | "val";
 type WebhookField = keyof Webhook;
-type ContactAlert = { ID?: number; MONIKER: string; NAME: string; MENTIONTAG: string };
+type ContactAlert = { ID?: number; MONIKER: string; NAME: string; MENTIONTAG: string; IDWEBHOOK?: number; };
 
 export function ConfigBot() {
     const { user, isLoaded } = useUser();
@@ -14,14 +14,14 @@ export function ConfigBot() {
     type Webhook = { ID?: number; Description: string; URL: string; Type: string };
     const [govWebhooks, setGovWebhooks] = useState<Webhook[]>([{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
     const [valWebhooks, setValWebhooks] = useState<Webhook[]>([{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
-    const [contacts, setContacts] = useState<ContactAlert[]>([{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]);
+    const [contacts, setContacts] = useState<ContactAlert[]>([{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "", IDWEBHOOK: undefined }]);
     const sections: { title: string; type: WebhookType; webhooks: Webhook[] }[] = [
         { title: "Webhooks GovDAO", type: "gov", webhooks: govWebhooks },
         { title: "Webhooks Validator", type: "val", webhooks: valWebhooks },
     ];
     const loadConfig = async () => {
 
-        if (!user) return; // ✅ Secxurety
+        if (!user) return; // ✅ Securety
         try {
             const res = await fetch(`/api/get-webhooks?user_id=${user.id}`);
             if (!res.ok) throw new Error("Error during the loading of the config");
@@ -39,8 +39,9 @@ export function ConfigBot() {
                         MONIKER: c.Moniker,
                         NAME: c.NameContact,
                         MENTIONTAG: c.MentionTag,
+                        IDWEBHOOK: c.IDwebhook ? String(c.IDwebhook) : "",
                     }))
-                    : [{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "" }]
+                    : [{ ID: undefined, MONIKER: "", NAME: "", MENTIONTAG: "", IDWEBHOOK: undefined }]
             );
             // ✅ UPdate hour if disponible 
             if (data.hour?.daily_report_hour !== undefined && data.hour?.daily_report_minute !== undefined) {
@@ -186,14 +187,14 @@ export function ConfigBot() {
             if (!res.ok) {
                 const errorText = await res.text();
                 console.error("❌ Erreur API:", errorText);
-                alert("Erreur lors de la suppression");
+                alert("Network error while deleting");
                 return;
             }
 
-            // ✅ Recharge la liste
+            // ✅ Reload List
             await loadConfig();
 
-            // ✅ Si liste vide, on garde une ligne par défaut
+            // ✅ If the list is empty, we keep one line by default
             if (type === "gov" && govWebhooks.length <= 1) {
                 setGovWebhooks([{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
             }
@@ -201,19 +202,19 @@ export function ConfigBot() {
                 setValWebhooks([{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
             }
 
-            alert("✅ Webhook supprimé avec succès !");
+            alert("✅ Webhook successfully removed!");
         } catch (error) {
-            console.error("❌ Erreur réseau:", error);
-            alert("Erreur réseau lors de la suppression");
+            console.error("❌  Network error:", error);
+            alert("Network error while deleting");
         }
     }
     const handleCreateContact = async (index: number) => {
         const contact = contacts[index];
-        if (!contact.MONIKER || !contact.NAME || !contact.MENTIONTAG) {
-            alert("⚠️ Tous les champs doivent être remplis.");
+        if (!contact.MONIKER || !contact.NAME || !contact.MENTIONTAG || !contact.IDWEBHOOK) {
+            alert("⚠️ All fields must be completed.");
             return;
         }
-
+        console.log("Saving contact with webhook ID:", contact.IDWEBHOOK, typeof contact.IDWEBHOOK);
         try {
             const res = await fetch("/api/add-contact-alert", {
                 method: "POST",
@@ -223,27 +224,28 @@ export function ConfigBot() {
                     moniker: contact.MONIKER,
                     namecontact: contact.NAME,
                     mention_tag: contact.MENTIONTAG,
+                    id_Webhook: contact.IDWEBHOOK,
                 }),
             });
 
             if (!res.ok) {
                 const errorText = await res.text();
-                console.error("❌ Erreur API :", errorText);
-                alert("Erreur lors de l’enregistrement du contact.");
+                console.error("❌ Error API :", errorText);
+                alert("Error saving contact.");
             } else {
-                alert("✅ Contact enregistré !");
-                await loadConfig(); // Recharge les contacts avec l’ID en BDD
+                alert("✅ Save Contact!");
+                await loadConfig(); // Reload contacts with ID in BDD
             }
         } catch (error) {
-            console.error("❌ Erreur réseau :", error);
-            alert("Erreur réseau.");
+            console.error("❌ Network error:", error);
+            alert("Network error.");
         }
     };
 
     const handleUpdateContact = async (index: number) => {
         const contact = contacts[index];
         if (!contact.ID) {
-            alert("⚠️ Ce contact n’a pas encore été enregistré.");
+            alert("⚠️ This contact has not yet been saved.");
             return;
         }
 
@@ -256,19 +258,20 @@ export function ConfigBot() {
                     Moniker: contact.MONIKER,
                     NameContact: contact.NAME,
                     Mention_Tag: contact.MENTIONTAG,
+                    Id_Webhook: contact.IDWEBHOOK,
                 }),
             });
 
             if (!res.ok) {
                 const errorText = await res.text();
-                console.error("❌ Erreur API Update:", errorText);
-                alert("Erreur lors de la mise à jour du contact.");
+                console.error("❌ Error API update:", errorText);
+                alert("Error updating contact.");
             } else {
-                alert("✅ Contact mis à jour !");
+                alert("✅ Contact updated!");
             }
         } catch (error) {
-            console.error("❌ Erreur réseau :", error);
-            alert("Erreur réseau.");
+            console.error("❌ Network error: :", error);
+            alert("Network error.");
         }
     };
 
@@ -279,7 +282,10 @@ export function ConfigBot() {
 
     const handleContactChange = (i: number, field: string, value: string) => {
         const updated = [...contacts];
-        updated[i] = { ...updated[i], [field]: value }; // FIX: maintenant ça met à jour la valeur
+        updated[i] = {
+            ...updated[i],
+            [field]: field === "IDWEBHOOK" ? parseInt(value, 10) || undefined : value,
+        };
         setContacts(updated);
     };
 

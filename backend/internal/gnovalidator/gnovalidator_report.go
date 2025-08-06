@@ -67,7 +67,7 @@ func SendDailyStatsForUser(db *gorm.DB, userID string) {
 	for addr, rate := range rates {
 		moniker := MonikerMap[addr]
 		if moniker == "" {
-			moniker = "inconnu"
+			moniker = "unknown"
 		}
 		emoji := "🟢"
 		if rate < 95.0 {
@@ -84,40 +84,6 @@ func SendDailyStatsForUser(db *gorm.DB, userID string) {
 		log.Printf("[SendDailyStatsForUser] Send error for %s: %v", userID, err)
 	}
 }
-
-// func SendDailyStats(db *sql.DB) {
-// 	MonikerMutex.RLock()
-// 	defer MonikerMutex.RUnlock()
-
-// 	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-// 	rates, minblock, maxblock := CalculateRate(db, yesterday)
-// 	// rates, minblock, maxblock := CalculateRate(db, "2025-07-14") // for test
-// 	var buffer bytes.Buffer
-// 	buffer.WriteString(fmt.Sprintf("📊 *Daily Participation Summary* for %s (Blocks %d → %d):\n\n", yesterday, minblock, maxblock))
-// 	for addr, rate := range rates {
-// 		moniker := MonikerMap[addr]
-// 		if moniker == "" {
-// 			moniker = "inconnu"
-// 		}
-
-// 		emoji := "🟢"
-// 		if rate < 95.0 {
-// 			emoji = "🔴"
-// 		}
-
-// 		buffer.WriteString(fmt.Sprintf("  %s Validator : %s addr: (%s) rate : %.2f%%\n", emoji, moniker, addr, rate))
-// 	}
-
-// 	msg := buffer.String()
-// 	err := internal.SendAllValidatorAlerts(msg, "info", "", "", db)
-// 	if err != nil {
-// 		log.Printf("[SendDailyStats] Discord alert failed: %v", err)
-// 	}
-// 	// err = internal.SendSlackAlertValidator(user_id, msg, db)
-// 	// if err != nil {
-// 	// 	log.Printf("[SendDailyStats] Slack alert failed: %v", err)
-// 	// }
-// }
 
 func CalculateRate(db *gorm.DB, date string) (map[string]float64, int64, int64) {
 	rates := make(map[string]float64)
