@@ -418,6 +418,7 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		Moniker     string `json:"moniker"`
 		NameContact string `json:"namecontact"`
 		MentionTag  string `json:"mention_tag"`
+		IDwebhook   int    `json:"id_webhook"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -430,7 +431,7 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
-	err := database.InsertAlertContact(db, input.UserID, input.Moniker, input.NameContact, input.MentionTag)
+	err := database.InsertAlertContact(db, input.UserID, input.Moniker, input.NameContact, input.MentionTag, input.IDwebhook)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to insert alert contact: %v", err), http.StatusInternalServerError)
 		return
@@ -473,6 +474,7 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		Moniker     string `json:"moniker"`
 		NameContact string `json:"namecontact"`
 		MentionTag  string `json:"mention_tag"`
+		IDwebhook   int    `json:"id_webhook"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
@@ -480,7 +482,7 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
-	err := database.UpdateAlertContact(db, data.ID, data.Moniker, data.NameContact, data.MentionTag)
+	err := database.UpdateAlertContact(db, data.ID, data.Moniker, data.NameContact, data.MentionTag, data.IDwebhook)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to update alert contact: %v", err), http.StatusInternalServerError)
 		return

@@ -137,6 +137,22 @@ export default function ConfigBotPage() {
                         <input type="text" placeholder="Mention tag" value={c.MENTIONTAG}
                             onChange={(e) => handleContactChange(i, "MENTIONTAG", e.target.value)}
                             className="border p-2 rounded w-full md:w-1/4 dark:bg-neutral-800 dark:border-neutral-600" />
+
+
+                        <select
+                            value={c.IDWEBHOOK || ""}
+                            onChange={(e) => handleContactChange(i, "WEBHOOK_ID", e.target.value)}
+                            className="border p-2 rounded w-full md:w-1/4 dark:bg-neutral-800 dark:border-neutral-600"
+                        >
+                            <option value="">Associate with a webhook...</option>
+                            {valWebhooks
+                                .filter((wh) => wh.ID !== undefined)
+                                .map((wh) => (
+                                    <option key={wh.ID} value={String(wh.ID)}>
+                                        {wh.Description || wh.URL}
+                                    </option>
+                                ))}
+                        </select>
                         <div className="flex gap-1">
                             <button onClick={() => handleCreateContact(i)}
                                 className="bg-green-600 hover:bg-green-700 text-white px-2 rounded">

@@ -30,6 +30,7 @@ type AlertContact struct {
 	Moniker     string    `gorm:"column:moniker;not null" `
 	NameContact string    `gorm:"column:namecontact;not null" `
 	MentionTag  string    `gorm:"column:mention_tag" `
+	IDwebhook   int       `gorm:"column:id_webhook" `
 }
 
 type WebhookGovDAO struct {
@@ -57,17 +58,24 @@ type DailyParticipation struct {
 	Participated bool   `gorm:"column:participated;not null" `
 }
 type AlertLog struct {
-	UserID  string    `gorm:"column:user_id;primaryKey" `
-	Addr    string    `gorm:"column:addr;primaryKey" `
-	Moniker string    `gorm:"column:moniker;not null" `
-	Level   string    `gorm:"column:level;primaryKey" `
-	URL     *string   `gorm:"column:url;primaryKey" `
-	SentAt  time.Time `gorm:"column:sent_at;autoCreateTime" `
+	UserID      string    `gorm:"column:user_id;primaryKey" `
+	Addr        string    `gorm:"column:addr;primaryKey" `
+	Moniker     string    `gorm:"column:moniker;not null" `
+	Level       string    `gorm:"column:level;primaryKey" `
+	URL         string    `gorm:"column:url;primaryKey" `
+	StartHeight int       `gorm:"column:start_height;primaryKey;not null" `
+	EndHeight   int       `gorm:"column:end_height;primaryKey;not null" `
+	Skipped     bool      `gorm:"column:skipped;not null" `
+	SentAt      time.Time `gorm:"column:sent_at;autoCreateTime" `
 }
 type GovDAOState struct {
 	ID             int       `gorm:"primaryKey;check:id = 1"`
 	LastProposalID int       `gorm:"column:last_proposal_id;not null"`
 	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+type AddrMoniker struct {
+	Addr    string `gorm:"column:addr;primaryKey" `
+	Moniker string `gorm:"column:moniker;not null" `
 }
 
 // CReate index
@@ -76,14 +84,77 @@ func InitDB() (*gorm.DB, error) {
 	if err != nil {
 		log.Fatalf("DB opening error: %v", err)
 	}
-	err = db.AutoMigrate(&User{}, &AlertContact{}, &WebhookValidator{}, &WebhookGovDAO{}, &HourReport{}, &GovDAOState{}, &DailyParticipation{}, &AlertLog{})
+
+	// Active WAL mode
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	_, err = sqlDB.Exec("PRAGMA journal_mode = WAL;")
+	if err != nil {
+		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
+	}
+
+	// Optionnel : augmente un peu le cache et active le verrouillage concurrent
+	_, _ = sqlDB.Exec("PRAGMA synchronous = NORMAL;")
+	_, _ = sqlDB.Exec("PRAGMA temp_store = MEMORY;")
+
+	err = db.AutoMigrate(
+		&User{}, &AlertContact{}, &WebhookValidator{},
+		&WebhookGovDAO{}, &HourReport{}, &GovDAOState{},
+		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{},
+	)
 	if err != nil {
 		return nil, err
 	}
 
 	InitGovDaoState(db)
+	CreateMissingBlocksView(db)
 
 	return db, nil
+}
+
+// =================================== VIEW MISSING BLOCK ============================
+func CreateMissingBlocksView(db *gorm.DB) error {
+	createViewSQL := `
+	CREATE VIEW IF NOT EXISTS daily_missing_series AS
+	WITH misses AS (
+		SELECT
+			addr,
+			moniker,
+			date,
+			block_height,
+			ROW_NUMBER() OVER (PARTITION BY addr, moniker, date ORDER BY block_height) AS rn
+		FROM daily_participations
+		WHERE participated = 0
+	),
+	islands AS (
+		SELECT
+			addr,
+			moniker,
+			date,
+			block_height,
+			block_height - rn AS grp
+		FROM misses
+	)
+	SELECT
+		addr,
+		moniker,
+		date,
+		MIN(block_height) AS start_height,
+		MAX(block_height) AS end_height,
+		COUNT(*) AS missed
+	FROM islands
+	GROUP BY addr, moniker, date, grp
+	HAVING COUNT(*) > 1;
+	`
+
+	if err := db.Exec(createViewSQL).Error; err != nil {
+		return fmt.Errorf("failed to create view: %w", err)
+	}
+
+	log.Println("✅ Vue `daily_missing_series` créée avec succès")
+	return nil
 }
 
 // ===================================State GovDao=====================================
@@ -288,12 +359,13 @@ func createHourReport(db *gorm.DB, userID string) error {
 }
 
 // ============================== Alert_contact =============================================
-func InsertAlertContact(db *gorm.DB, userID, moniker, namecontact, mentionTag string) error {
+func InsertAlertContact(db *gorm.DB, userID, moniker, namecontact, mentionTag string, idwebhook int) error {
 	contact := AlertContact{
 		UserID:      userID,
 		Moniker:     moniker,
 		NameContact: namecontact,
 		MentionTag:  mentionTag,
+		IDwebhook:   idwebhook,
 	}
 	return db.Create(&contact).Error
 }
@@ -307,7 +379,7 @@ func ListAlertContacts(db *gorm.DB, userID string) ([]AlertContact, error) {
 	return contacts, err
 }
 
-func UpdateAlertContact(db *gorm.DB, id int, moniker, namecontact, mentionTag string) error {
+func UpdateAlertContact(db *gorm.DB, id int, moniker, namecontact, mentionTag string, idwebhook int) error {
 	return db.
 		Model(&AlertContact{}).
 		Where("id = ?", id).
@@ -315,6 +387,7 @@ func UpdateAlertContact(db *gorm.DB, id int, moniker, namecontact, mentionTag st
 			Moniker:     moniker,
 			NameContact: namecontact,
 			MentionTag:  mentionTag,
+			IDwebhook:   idwebhook,
 		}).Error
 }
 func DeleteAlertContact(db *gorm.DB, id int) error {
@@ -334,4 +407,46 @@ func PruneOldParticipationData(db *gorm.DB, keepDays int) error {
 
 	log.Printf("🧹 Pruned %d old rows (before %s)", res.RowsAffected, cutoff)
 	return nil
+}
+
+// ====================================== ALERT LOG ======================================
+func InsertAlertlog(db *gorm.DB, userID, addr, moniker, level, url string, startheight, endheight int, skipped bool, sent time.Time) error {
+	alert := AlertLog{
+		UserID:      userID,
+		Addr:        addr,
+		Moniker:     moniker,
+		Level:       level,
+		URL:         url,
+		StartHeight: startheight,
+		EndHeight:   endheight,
+		Skipped:     skipped,
+		SentAt:      sent,
+	}
+	return db.Create(&alert).Error
+}
+
+// ====================================== ADDR MONIKER =============================
+
+func InsertAddrMoniker(db *gorm.DB, addr, moniker string) error {
+	addrmoniker := AddrMoniker{
+
+		Addr:    addr,
+		Moniker: moniker,
+	}
+	return db.Create(&addrmoniker).Error
+}
+func GetMoniker(db *gorm.DB) (map[string]string, error) {
+	var entries []AddrMoniker
+	result := db.Find(&entries)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	monikerMap := make(map[string]string)
+	for _, e := range entries {
+		monikerMap[e.Addr] = e.Moniker
+		log.Printf("📦 Loaded from DB — Addr: %s, Moniker: %s", e.Addr, e.Moniker)
+	}
+	log.Printf("✅ Loaded %d monikers from DB", len(monikerMap))
+	return monikerMap, nil
 }

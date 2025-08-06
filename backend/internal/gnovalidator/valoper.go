@@ -16,6 +16,8 @@ import (
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"gorm.io/gorm"
 )
 
 type Valoper struct {
@@ -127,7 +129,7 @@ func GetGenesisMonikers(rpcURL string) (map[string]string, error) {
 	return monikers, nil
 }
 
-func InitMonikerMap() {
+func InitMonikerMap(db *gorm.DB) {
 	type Validator struct {
 		Address string `json:"address"`
 	}
@@ -191,6 +193,11 @@ func InitMonikerMap() {
 	if err != nil {
 		log.Printf("⚠️ Failed to get genesis monikers: %v", err)
 	}
+	// Step 3 — Monikers from DB
+	dbMap, err := database.GetMoniker(db)
+	if err != nil {
+		log.Printf("⚠️ Failed to get monikers from DB: %v", err)
+	}
 
 	// Step 4 — Building a Complete and Prioritized MonikerMap
 	MonikerMutex.Lock()
@@ -199,9 +206,10 @@ func InitMonikerMap() {
 
 	for _, val := range validatorsResp.Result.Validators {
 		addr := val.Address
-		moniker := "inconnu"
-
-		if m, ok := valoperMap[addr]; ok {
+		moniker := "unknown"
+		if m, ok := dbMap[addr]; ok {
+			moniker = m
+		} else if m, ok := valoperMap[addr]; ok {
 			moniker = m
 		} else if m, ok := genesisMap[addr]; ok {
 			moniker = m

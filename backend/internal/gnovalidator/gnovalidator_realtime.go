@@ -51,8 +51,9 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 		}
 
 		currentHeight := lastStored + 1
-
+		println(currentHeight)
 		for {
+
 			latest, err := client.LatestBlockHeight()
 			if err != nil {
 				log.Printf("Erreur lors de la récupération du dernier bloc : %v", err)
@@ -71,7 +72,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
 					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d since %s (%s ago)", latest, lastProgressTime.Format(time.RFC822), time.Since(lastProgressTime).Truncate(time.Second))
 					log.Println(msg)
-					internal.SendAllValidatorAlerts(msg, "", "", "", db)
+					internal.SendAllValidatorAlerts(msg, "", "", "", 0, 0, db)
 
 					alertSent = true
 					restoredNotified = false
@@ -82,7 +83,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				lastProgressTime = time.Now()
 
 				if alertSent && !restoredNotified {
-					internal.SendAllValidatorAlerts("✅ **Activity Restored**: Gnoland is back to normal.", "", "", "", db)
+					internal.SendAllValidatorAlerts("✅ **Activity Restored**: Gnoland is back to normal.", "", "", "", 0, 0, db)
 					restoredNotified = true
 					alertSent = false
 				}
@@ -95,7 +96,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				continue
 			}
 
-			log.Println("last block ", latest)
+			// log.Println("last block ", latest)
 
 			for h := currentHeight + 1; h <= latest; h++ {
 				block, err := client.Block(h)
@@ -139,7 +140,7 @@ func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
 			MonikerMutex.RUnlock()
 
 			// Refresh MonikerMap
-			InitMonikerMap()
+			InitMonikerMap(db)
 
 			// Compare with the old Monikermap
 			MonikerMutex.RLock()
@@ -147,7 +148,7 @@ func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
 				if _, exists := oldMap[addr]; !exists {
 					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
 					log.Println(msg)
-					internal.SendAllValidatorAlerts(msg, "info", addr, moniker, db)
+					internal.SendAllValidatorAlerts(msg, "info", addr, moniker, 0, 0, db)
 				}
 			}
 			MonikerMutex.RUnlock()
@@ -161,10 +162,7 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 			today := time.Now().Format("2006-01-02")
 
 			rows, err := db.Raw(`
-				SELECT addr, moniker, COUNT(*) 
-				FROM daily_participations 
-				WHERE date = ? AND participated = 0 
-				GROUP BY addr, moniker
+				SELECT addr,moniker,start_height,end_height,missed FROM daily_missing_series WHERE date = ?
 			`, today).Rows()
 			if err != nil {
 				log.Printf("❌ Error executing query: %v", err)
@@ -174,9 +172,9 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 
 			for rows.Next() {
 				var addr, moniker string
-				var missed int
+				var missed, start_height, end_height int
 
-				if err := rows.Scan(&addr, &moniker, &missed); err != nil {
+				if err := rows.Scan(&addr, &moniker, &start_height, &end_height, &missed); err != nil {
 					log.Printf("❌ Error scanning row: %v", err)
 					continue
 				}
@@ -196,12 +194,12 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 				}
 
 				msg := fmt.Sprintf(
-					"%s %s%s%s\naddr: %s\nmoniker: %s\nmissed %d blocks today",
-					emoji, prefix, level, prefix, addr, moniker, missed,
+					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
 				)
-				log.Println(msg)
+				log.Println("MESSAGE:", msg)
 
-				internal.SendAllValidatorAlerts(msg, level, addr, moniker, db)
+				internal.SendAllValidatorAlerts(msg, level, addr, moniker, start_height, end_height, db)
 			}
 
 			rows.Close() // On ferme explicitement ici, pas avec defer
@@ -253,7 +251,7 @@ func StartValidatorMonitoring(db *gorm.DB) {
 	}
 	client := gnoclient.Client{RPCClient: rpcClient}
 
-	InitMonikerMap() // init validator Map
+	InitMonikerMap(db) // init validator Map
 	WatchNewValidators(db, 5*time.Minute)
 	CollectParticipation(db, client)         // collect participant
 	WatchValidatorAlerts(db, 20*time.Second) // DB-based of alerts
