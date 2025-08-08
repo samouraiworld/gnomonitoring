@@ -77,6 +77,13 @@ type AddrMoniker struct {
 	Addr    string `gorm:"column:addr;primaryKey" `
 	Moniker string `gorm:"column:moniker;not null" `
 }
+type AlertSummary struct {
+	Moniker     string
+	Level       string
+	StartHeight int
+	EndHeight   int
+	SentAt      time.Time
+}
 
 // CReate index
 func InitDB() (*gorm.DB, error) {
@@ -379,15 +386,16 @@ func ListAlertContacts(db *gorm.DB, userID string) ([]AlertContact, error) {
 	return contacts, err
 }
 
-func UpdateAlertContact(db *gorm.DB, id int, moniker, namecontact, mentionTag string, idwebhook int) error {
+func UpdateAlertContact(db *gorm.DB, id int, userID, moniker, namecontact, mentionTag string, idwebhook int) error {
+
 	return db.
 		Model(&AlertContact{}).
-		Where("id = ?", id).
-		Updates(AlertContact{
-			Moniker:     moniker,
-			NameContact: namecontact,
-			MentionTag:  mentionTag,
-			IDwebhook:   idwebhook,
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(map[string]interface{}{
+			"moniker":     moniker,
+			"namecontact": namecontact,
+			"mention_tag": mentionTag,
+			"id_webhook":  idwebhook,
 		}).Error
 }
 func DeleteAlertContact(db *gorm.DB, id int) error {
@@ -423,6 +431,18 @@ func InsertAlertlog(db *gorm.DB, userID, addr, moniker, level, url string, start
 		SentAt:      sent,
 	}
 	return db.Create(&alert).Error
+}
+
+func GetAlertLog(db *gorm.DB) ([]AlertSummary, error) {
+	var alerts []AlertSummary
+	result := db.
+		Model(&AlertLog{}).
+		Select("DISTINCT moniker, level, start_height, end_height,sent_at").
+		Order("sent_at desc").
+		Limit(10).
+		Scan(&alerts) // Scan au lieu de Find pour struct personnalisée
+
+	return alerts, result.Error
 }
 
 // ====================================== ADDR MONIKER =============================

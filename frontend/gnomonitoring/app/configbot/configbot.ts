@@ -254,11 +254,11 @@ export function ConfigBot() {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    ID: contact.ID,
-                    Moniker: contact.MONIKER,
-                    NameContact: contact.NAME,
-                    Mention_Tag: contact.MENTIONTAG,
-                    Id_Webhook: contact.IDWEBHOOK,
+                    id: contact.ID,
+                    moniker: contact.MONIKER,
+                    namecontact: contact.NAME,
+                    mention_tag: contact.MENTIONTAG,
+                    id_webhook: contact.IDWEBHOOK,
                 }),
             });
 

@@ -233,7 +233,7 @@ func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]
 			return err
 		}
 
-		log.Printf("✅ Saved participation for %s (%s) at height %d: %v", valAddr, moniker, blockHeight, participated)
+		//log.Printf("✅ Saved participation for %s (%s) at height %d: %v", valAddr, moniker, blockHeight, participated)
 	}
 
 	if err := tx.Commit().Error; err != nil {
