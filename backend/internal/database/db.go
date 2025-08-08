@@ -92,7 +92,7 @@ func InitDB() (*gorm.DB, error) {
 		log.Fatalf("DB opening error: %v", err)
 	}
 
-	// Active WAL mode
+	// Activate WAL mode
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, err
@@ -102,7 +102,6 @@ func InitDB() (*gorm.DB, error) {
 		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
 	}
 
-	// Optionnel : augmente un peu le cache et active le verrouillage concurrent
 	_, _ = sqlDB.Exec("PRAGMA synchronous = NORMAL;")
 	_, _ = sqlDB.Exec("PRAGMA temp_store = MEMORY;")
 
@@ -160,7 +159,7 @@ func CreateMissingBlocksView(db *gorm.DB) error {
 		return fmt.Errorf("failed to create view: %w", err)
 	}
 
-	log.Println("✅ Vue `daily_missing_series` créée avec succès")
+	log.Println("✅ View `daily_missing_series` created")
 	return nil
 }
 
@@ -440,7 +439,7 @@ func GetAlertLog(db *gorm.DB) ([]AlertSummary, error) {
 		Select("DISTINCT moniker, level, start_height, end_height,sent_at").
 		Order("sent_at desc").
 		Limit(10).
-		Scan(&alerts) // Scan au lieu de Find pour struct personnalisée
+		Scan(&alerts)
 
 	return alerts, result.Error
 }

@@ -10,25 +10,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// func StartDailyReports(db *sql.DB) {
-// 	rows, err := db.Query("SELECT user_id, daily_report_hour, daily_report_minute, timezone FROM hour_report")
-// 	if err != nil {
-// 		log.Fatalf("❌ Failed to fetch report hours: %v", err)
-// 		return
-// 	}
-// 	defer rows.Close()
-
-// 	for rows.Next() {
-// 		var userID, tz string
-// 		var hour, minute int
-// 		if err := rows.Scan(&userID, &hour, &minute, &tz); err != nil {
-// 			log.Printf("⚠️ Error scanning user report config: %v", err)
-// 			continue
-// 		}
-
-//			go scheduleUserReport(db, userID, hour, minute, tz)
-//		}
-//	}
 func SheduleUserReport(userID string, hour, minute int, timezone string, db *gorm.DB, reload <-chan struct{}) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
@@ -52,7 +33,7 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 			SendDailyStatsForUser(db, userID)
 		case <-reload:
 			log.Printf("♻️ Reloading schedule for user %s", userID)
-			return // on sort : l’appelant relancera avec les nouvelles données
+			return
 		}
 	}
 }
@@ -78,7 +59,6 @@ func SendDailyStatsForUser(db *gorm.DB, userID string) {
 
 	msg := buffer.String()
 
-	// Appel à ta méthode d'envoi (Discord, Slack)
 	err := internal.SendUserReportAlert(userID, msg, db)
 	if err != nil {
 		log.Printf("[SendDailyStatsForUser] Send error for %s: %v", userID, err)
@@ -88,11 +68,11 @@ func SendDailyStatsForUser(db *gorm.DB, userID string) {
 func CalculateRate(db *gorm.DB, date string) (map[string]float64, int64, int64) {
 	rates := make(map[string]float64)
 
-	// ✅ Étape 1 : récupérer les hauteurs min/max
+	//Step 1: Retrieve the min/max heights
 	var minHeight, maxHeight int64
 	err := db.Raw(`
 		SELECT MIN(block_height), MAX(block_height)
-		FROM daily_participation
+		FROM daily_participations
 		WHERE date = ?
 	`, date).Row().Scan(&minHeight, &maxHeight)
 
@@ -101,14 +81,14 @@ func CalculateRate(db *gorm.DB, date string) (map[string]float64, int64, int64) 
 		return rates, 0, 0
 	}
 
-	// ✅ Étape 2 : requête de participation
+	// Step 2: Request for participation
 	rows, err := db.Raw(`
 		SELECT 
 			addr,
 			moniker,
 			COUNT(*) AS total_blocks,
 			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_blocks
-		FROM daily_participation
+		FROM daily_participations
 		WHERE date = ?
 		GROUP BY addr, moniker
 	`, date).Rows()
@@ -118,7 +98,8 @@ func CalculateRate(db *gorm.DB, date string) (map[string]float64, int64, int64) 
 	}
 	defer rows.Close()
 
-	// ✅ Étape 3 : traitement des résultats
+	// Step 3: Processing the results
+
 	for rows.Next() {
 		var addr, moniker string
 		var total, participated int

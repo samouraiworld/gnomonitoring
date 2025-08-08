@@ -26,24 +26,6 @@ func InitScheduler(db *gorm.DB) {
 	println("Scheduler started")
 }
 
-// func (s *Scheduler) StartAll(db *gorm.DB) {
-// 	rows, err := s.db.Raw("SELECT user_id, daily_report_hour, daily_report_minute, timezone FROM hour_report")
-// 	if err != nil {
-// 		log.Fatalf("❌ Failed to fetch report hours: %v", err)
-// 		return
-// 	}
-// 	defer rows.Close()
-
-//		for rows.Next() {
-//			var userID, tz string
-//			var hour, minute int
-//			if err := rows.Scan(&userID, &hour, &minute, &tz); err != nil {
-//				log.Printf("⚠️ Error scanning user report config: %v", err)
-//				continue
-//			}
-//			s.StartForUser(userID, hour, minute, tz, db)
-//		}
-//	}
 func (s *Scheduler) StartAll(db *gorm.DB) {
 	rows, err := db.Raw(`
 		SELECT user_id, daily_report_hour, daily_report_minute, timezone 
@@ -69,12 +51,12 @@ func (s *Scheduler) StartForUser(userID string, hour, minute int, timezone strin
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Si un scheduler existe déjà : on le "kill"
+	// If a scheduler already exists: we "kill" it
 	if ch, exists := s.reloadChans[userID]; exists {
-		close(ch) // envoie un signal d’arrêt
+		close(ch) // sends a stop signal
 	}
 
-	// Nouveau canal de reload
+	// New reload channel
 	reload := make(chan struct{})
 	s.reloadChans[userID] = reload
 

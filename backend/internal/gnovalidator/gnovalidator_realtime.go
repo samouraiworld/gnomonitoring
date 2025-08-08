@@ -12,7 +12,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// VARIABLE DECLARATION
 var MonikerMutex sync.RWMutex
 var lastRPCErrorAlert time.Time //anti spam for error RPC
 var (
@@ -56,7 +55,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 
 			latest, err := client.LatestBlockHeight()
 			if err != nil {
-				log.Printf("Erreur lors de la récupération du dernier bloc : %v", err)
+				log.Printf("Error retrieving last block: %v", err)
 
 				if time.Since(lastRPCErrorAlert) > 10*time.Minute {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
@@ -67,7 +66,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				time.Sleep(10 * time.Second)
 				continue
 			}
-			// Détection de stagnation
+			// Stagnation detection
 			if lastProgressHeight != -1 && latest == lastProgressHeight {
 				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
 					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d since %s (%s ago)", latest, lastProgressTime.Format(time.RFC822), time.Since(lastProgressTime).Truncate(time.Second))
@@ -202,7 +201,7 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 				internal.SendAllValidatorAlerts(msg, level, addr, moniker, start_height, end_height, db)
 			}
 
-			rows.Close() // On ferme explicitement ici, pas avec defer
+			rows.Close()
 
 			time.Sleep(checkInterval)
 		}
@@ -225,7 +224,7 @@ func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]
 	`
 
 	for valAddr, moniker := range monikerMap {
-		participated := participating[valAddr] // false si non trouvé
+		participated := participating[valAddr] // false if not find
 
 		if err := tx.Exec(stmt, today, blockHeight, moniker, valAddr, participated).Error; err != nil {
 			log.Printf("❌ Error saving participation for %s: %v", valAddr, err)
@@ -233,7 +232,7 @@ func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]
 			return err
 		}
 
-		//log.Printf("✅ Saved participation for %s (%s) at height %d: %v", valAddr, moniker, blockHeight, participated)
+		log.Printf("✅ Saved participation for %s (%s) at height %d: %v", valAddr, moniker, blockHeight, participated)
 	}
 
 	if err := tx.Commit().Error; err != nil {

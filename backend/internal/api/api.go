@@ -52,14 +52,13 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	// ✅ Check rrequire FieldVérifier les champs obligatoires
 	if webhook.UserID == "" || webhook.URL == "" || webhook.Type == "" || webhook.Description == "" {
 
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	// ✅ Vérifier si le webhook existe déjà
+	//Check if webhhok exist
 	var exists bool
 	err = db.Model(&database.WebhookGovDAO{}).
 		Select("count(*) > 0").
@@ -72,7 +71,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	}
 
 	if exists {
-		// ✅ Webhook déjà présent → retourne 409
+		// webhook exist → retunr 409
 		w.WriteHeader(http.StatusConflict)
 		w.Write([]byte("Webhook already exists"))
 		return
@@ -85,7 +84,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	}
 	lastid = lastid - 1
 
-	// ✅ Si pas existant, on insère
+	// If not exist insert
 	err = database.InsertWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, db)
 	if err != nil {
 		log.Println("Insert error:", err)
@@ -325,13 +324,11 @@ func GetUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 
-	// Vérifie que la méthode est bien PUT
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Décodage du JSON envoyé dans le body
 	var user struct {
 		Name  string `json:"name"`
 		Email string `json:"email"`
@@ -343,14 +340,12 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	// Récupère le user_id (via auth ou query param selon ton système)
 	userID, err := getUserIDFromRequest(r)
 	if err != nil {
 		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
 
-	// Mise à jour en base
 	err = database.UpdateUser(db, user.Name, user.Email, userID)
 	if err != nil {
 		http.Error(w, "Failed to update user: "+err.Error(), http.StatusInternalServerError)
@@ -682,9 +677,9 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	// Démarrage du serveur HTTP - **C’EST ICI QUE TU COMMENCES À ÉCOUTER LE PORT**
+	// Starting the HTTP server -
 	addr := ":" + internal.Config.BackendPort
-	// Optionnel : log pour debug
+
 	log.Printf("Starting Webhook API server on %s\n", addr)
 
 	err := http.ListenAndServe(addr, nil)
