@@ -3,7 +3,7 @@ import AddWebhookForm from './Form'
 
 export default function AddPage() {
     return (
-        <Suspense fallback={<div>Chargement du formulaire...</div>}>
+        <Suspense fallback={<div>Loading form...</div>}>
             <AddWebhookForm />
         </Suspense>
     )

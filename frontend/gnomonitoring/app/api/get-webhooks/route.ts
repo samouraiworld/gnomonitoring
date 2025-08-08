@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
             hour: hourData,
         });
     } catch (err: any) {
-        return new NextResponse(err.message || "Erreur serveur", { status: 500 });
+        return new NextResponse(err.message || "Error backend", { status: 500 });
     }
 }
 

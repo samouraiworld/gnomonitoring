@@ -7,7 +7,7 @@ export default function AddWebhook() {
     const router = useRouter()
     const searchParams = useSearchParams()
 
-    const typeParam = searchParams.get('type') || 'govdao' // valeur par défaut
+    const typeParam = searchParams.get('type') || 'govdao' // default valor
     const apiEndpoint = typeParam === 'validator' ? 'gnovalidator' : 'webhooksgovdao'
 
     const [user, setUser] = useState('')
@@ -27,7 +27,7 @@ export default function AddWebhook() {
         })
 
         if (res.ok) {
-            setMessage('✅ Webhook ajouté avec succès !')
+            setMessage('✅ Webhook added successfully!')
             setURL('')
             setType('discord')
             setTimeout(() => {
@@ -35,7 +35,7 @@ export default function AddWebhook() {
             }, 1000)
         } else {
             const txt = await res.text()
-            setMessage(`❌ Erreur : ${txt}`)
+            setMessage(`❌ Error : ${txt}`)
         }
     }
 

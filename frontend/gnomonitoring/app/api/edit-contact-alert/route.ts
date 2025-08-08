@@ -44,7 +44,7 @@ export async function PUT(req: Request) {
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error("Erreur backend Go:", errorText);
+            console.error("Error backend:", errorText);
             return NextResponse.json({ error: "Failed to update webhook" }, { status: 500 });
         }
 

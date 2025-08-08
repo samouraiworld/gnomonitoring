@@ -25,6 +25,6 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ success: true })
     } catch (err: any) {
-        return new NextResponse(err.message || 'Erreur serveur', { status: 500 })
+        return new NextResponse(err.message || 'Error backend', { status: 500 })
     }
 }

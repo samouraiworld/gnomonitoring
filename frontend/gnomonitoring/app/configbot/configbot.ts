@@ -21,13 +21,13 @@ export function ConfigBot() {
     ];
     const loadConfig = async () => {
 
-        if (!user) return; // ✅ Securety
+        if (!user) return; // ✅ Security
         try {
             const res = await fetch(`/api/get-webhooks?user_id=${user.id}`);
             if (!res.ok) throw new Error("Error during the loading of the config");
 
             const data = await res.json();
-            console.log("✅ Data reçue du backend :", data);
+            console.log("✅ Data received from the backend :", data);
 
             setGovWebhooks(data.govWebhooks?.length > 0 ? data.govWebhooks : [{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
             setValWebhooks(data.valWebhooks?.length > 0 ? data.valWebhooks : [{ ID: undefined, Description: "", URL: "", Type: "discord" }]);
@@ -87,10 +87,9 @@ export function ConfigBot() {
         const target = type === "gov" ? "govdao" : "validator";
 
         if (!webhook.URL.trim()) {
-            alert("⚠️ L'url ne peut pas être vide !");
+            alert("⚠️The URL cannot be empty!");
             return;
         }
-        console.log("Description webhhok" + webhook.Description)
         try {
             const res = await fetch("/api/add-webhook", {
                 method: "POST",
@@ -105,31 +104,31 @@ export function ConfigBot() {
             });
 
             if (res.status === 409) {
-                alert("⚠️ Ce webhook existe déjà !");
+                alert("⚠️ This webhook already exists!");
                 return;
             }
 
             if (!res.ok) {
                 const errorText = await res.text();
-                console.error("❌ Erreur API:", errorText);
-                alert("Erreur lors de l’enregistrement du webhook.");
+                console.error("❌ Error API:", errorText);
+                alert("Error saving webhook.");
             } else {
                 const data = await res.json(); // supposons { id: 123 }
-                alert("✅ Webhook enregistré avec succès !");
+                alert("✅ Webhook successfully registered !");
                 await loadConfig();
 
-                // ✅ Mettre à jour l'ID dans le state (important pour Delete)
+                // ✅ Update the ID in the state (important for Delete)
                 if (type === "gov") {
                     const updated = [...govWebhooks];
-                    updated[index] = { ...updated[index], ID: data.id }; // ✅ Force la copie                    setGovWebhooks(updated);
+                    updated[index] = { ...updated[index], ID: data.id }; // ✅ Force copy setGovWebhooks(updated);
                 } else {
                     const updated = [...valWebhooks];
-                    updated[index] = { ...updated[index], ID: data.id }; // ✅ Force la copie                    setValWebhooks(updated);
+                    updated[index] = { ...updated[index], ID: data.id }; // ✅ Force copy setValWebhooks(updated);
                 }
             }
         } catch (error) {
-            console.error("❌ Erreur réseau :", error);
-            alert("Erreur réseau lors de l’appel API.");
+            console.error("❌ Erreur Network :", error);
+            alert("Network error during API call.");
         }
     };
     const handleUpdateNewWebhook = async (type: WebhookType, index: number) => {
@@ -154,14 +153,14 @@ export function ConfigBot() {
 
             if (!res.ok) {
                 const errorText = await res.text();
-                console.error("❌ Erreur API Update:", errorText);
-                alert("Erreur lors de la mise à jour du webhook.");
+                console.error("❌ Error API Update:", errorText);
+                alert("Error updating webhook.");
             } else {
-                alert("✅ Webhook mis à jour avec succès !");
+                alert("✅ Webhook updated successfully!");
             }
         } catch (error) {
-            console.error("❌ Erreur réseau :", error);
-            alert("Erreur réseau lors de l’appel API.");
+            console.error("❌ Network error :", error);
+            alert("Network error during API call.");
         }
         ;
     };
@@ -169,7 +168,7 @@ export function ConfigBot() {
 
     async function handleDeleteWebhook(type: WebhookType, id?: number) {
         if (!id || !user?.id) {
-            alert("⚠️ Impossible de supprimer : ID ou user_id manquant");
+            alert("⚠️ Unable to delete: Missing ID or user_id");
             return;
         }
 
@@ -186,7 +185,7 @@ export function ConfigBot() {
 
             if (!res.ok) {
                 const errorText = await res.text();
-                console.error("❌ Erreur API:", errorText);
+                console.error("❌ Error API:", errorText);
                 alert("Network error while deleting");
                 return;
             }
@@ -291,7 +290,7 @@ export function ConfigBot() {
 
     async function handleDeleteContact(id?: number) {
         if (!id || !user?.id) {
-            alert("⚠️ Impossible de supprimer : ID ou user_id manquant");
+            alert("⚠️ Unable to delete: Missing ID or user_id");
             return;
         }
 
@@ -306,20 +305,20 @@ export function ConfigBot() {
 
             if (!res.ok) {
                 const errorText = await res.text();
-                console.error("❌ Erreur API:", errorText);
-                alert("Erreur lors de la suppression");
+                console.error("❌ Error API:", errorText);
+                alert("Error while deleting");
                 return;
             }
 
-            // ✅ Recharge la liste
+            // ✅ Reload the list
             await loadConfig();
 
 
 
-            alert("✅ contact alert supprimé avec succès !");
+            alert("✅ contact alert successfully deleted!");
         } catch (error) {
-            console.error("❌ Erreur réseau:", error);
-            alert("Erreur réseau lors de la suppression");
+            console.error("❌Network error:", error);
+            alert("Network error while deleting");
         }
     }
     const handleSaveHour = async () => {
@@ -338,14 +337,14 @@ export function ConfigBot() {
 
             if (!res.ok) {
                 const text = await res.text();
-                console.error("❌ Erreur API :", text);
-                alert("Erreur lors de l'enregistrement de l'heure.");
+                console.error("❌ Error API :", text);
+                alert("Error saving time.");
             } else {
-                alert("✅ Heure enregistrée !");
+                alert("✅ Time recorded !");
             }
         } catch (err) {
-            console.error("❌ Erreur réseau :", err);
-            alert("Erreur réseau.");
+            console.error("❌ Network error :", err);
+            alert("Network error.");
         }
     };
 
@@ -382,6 +381,6 @@ export function ConfigBot() {
         sections,
 
 
-        // et toutes les autres fonctions exposées comme props (save, update, delete)
+
     };
 }
