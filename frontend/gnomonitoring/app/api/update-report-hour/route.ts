@@ -7,7 +7,7 @@ export async function PUT(req: NextRequest) {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
     if (hour === undefined || minute === undefined || !user_id) {
-        return new NextResponse("Paramètres manquants", { status: 400 });
+        return new NextResponse("Missing settings", { status: 400 });
     }
 
     try {
@@ -25,6 +25,6 @@ export async function PUT(req: NextRequest) {
 
         return NextResponse.json({ success: true });
     } catch (err: any) {
-        return new NextResponse(err.message || "Erreur serveur", { status: 500 });
+        return new NextResponse(err.message || "Error backend", { status: 500 });
     }
 }

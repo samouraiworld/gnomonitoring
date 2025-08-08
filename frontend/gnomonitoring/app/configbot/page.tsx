@@ -131,7 +131,7 @@ export default function ConfigBotPage() {
                         <input type="text" placeholder="Moniker" value={c.MONIKER}
                             onChange={(e) => handleContactChange(i, "MONIKER", e.target.value)}
                             className="border p-2 rounded w-full md:w-1/4 dark:bg-neutral-800 dark:border-neutral-600" />
-                        <input type="text" placeholder="Nom" value={c.NAME}
+                        <input type="text" placeholder="Name" value={c.NAME}
                             onChange={(e) => handleContactChange(i, "NAME", e.target.value)}
                             className="border p-2 rounded w-full md:w-1/4 dark:bg-neutral-800 dark:border-neutral-600" />
                         <input type="text" placeholder="Mention tag" value={c.MENTIONTAG}
