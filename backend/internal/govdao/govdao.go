@@ -25,7 +25,7 @@ func StartGovDaoManager(db *gorm.DB) {
 	for range ticker.C {
 		webhooks, err := database.LoadWebhooks(db)
 		if err != nil {
-			log.Printf("Erreur chargement des webhooks: %v", err)
+			log.Printf("Error loading webhooks: %v", err)
 			continue
 		}
 
@@ -33,7 +33,7 @@ func StartGovDaoManager(db *gorm.DB) {
 		for _, wh := range webhooks {
 			key := fmt.Sprintf("%s|%s", wh.UserID, wh.URL)
 			if !runningWatchers[key] {
-				//	log.Printf("🔁 Nouvelle surveillance GovDAO pour %s", wh.URL)
+				//	log.Printf("🔁 New GovDAO Surveillance for %s", wh.URL)
 				go StartWebhookWatcher(wh, db)
 				runningWatchers[wh.URL] = true
 			}
@@ -81,7 +81,7 @@ func ProposalExists(i int) (bool, string, string) {
 	resp, err := http.Get(url)
 
 	if err != nil {
-		fmt.Printf("Erreur HTTP : %v\n", err)
+		fmt.Printf("Error HTTP : %v\n", err)
 		return false, "", ""
 	}
 	defer resp.Body.Close()
@@ -92,7 +92,7 @@ func ProposalExists(i int) (bool, string, string) {
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		fmt.Printf("Erreur parsing HTML : %v\n", err)
+		fmt.Printf("Error parsing HTML : %v\n", err)
 		return true, "", ""
 	}
 

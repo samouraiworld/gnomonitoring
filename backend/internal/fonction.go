@@ -66,7 +66,7 @@ func SendSlackAlert(msg string, webhookURL string) error {
 
 	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
-		log.Printf("Erreur envoi Slack : %v", err)
+		log.Printf("Erreur sending Slack alert : %v", err)
 		return nil
 	}
 	defer resp.Body.Close()
@@ -108,8 +108,8 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 			log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker, wh.UserID, wh.URL)
 			continue
 		}
-		//check si dans la table daily participate pour une addr la colonne particpate = 1 et la valeur et block_heigt > end height
-		// alors envoyer l alerte sinon non
+		//Check if in the daily participate table for an addr the column participate = 1 and the value and block_heigt > end height
+		// Then send the alert, otherwise no
 		var countparticipated int
 		err = db.Raw(`
 			SELECT sum(participated) FROM daily_participations
@@ -130,38 +130,6 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 		//================== Build msg ===============
 
 		fullMsg := message
-
-		// 3. Mention if CRITICAL
-		// if level == "CRITICAL" {
-		// 	type tag struct {
-		// 		MentionTag string
-		// 	}
-		// 	var res []tag
-
-		// 	err := db.Model(&database.AlertContact{}).
-		// 		Select("mention_tag").
-		// 		Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
-		// 		Find(&res).Error
-
-		// 	if err != nil {
-		// 		return fmt.Errorf("failed to fetch mentions: %w", err)
-		// 	}
-		// 	for _, r := range res {
-
-		// 		fmt.Println(r.MentionTag)
-		// 		fullMsg += "\n" + "<@" + r.MentionTag + ">"
-		// 	}
-		// 	println("full Message", fullMsg)
-
-		// }
-
-		// // 4. Envoi
-		// var sendErr error
-		// switch wh.Type {
-		// case "discord":
-		// 	sendErr = SendDiscordAlert(fullMsg, wh.URL)
-		// case "slack":
-		// 	sendErr = SendSlackAlert(fullMsg, wh.URL)
 		switch wh.Type {
 		case "discord":
 			if level == "CRITICAL" {
@@ -212,10 +180,6 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 			continue
 		}
 
-		// if sendErr != nil {
-		// 	log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
-		// 	continue
-		// }
 		database.InsertAlertlog(db, wh.UserID, addr, moniker, level, wh.URL, start_height, end_height, true, time.Now())
 
 		if err != nil {
@@ -312,13 +276,12 @@ func SendResolveAlerts(db *gorm.DB) {
 			log.Printf("❌ DB error checking count participated: %v", err)
 			continue
 		}
-		log.Println("countparticipated", countparticipated)
 		if countparticipated == 0 {
-			log.Printf("Not resolve error")
+			// log.Printf("Not resolve error")
 			continue
 		}
 
-		// Envoi du RESOLVED
+		// send RESOLVED
 		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s)", a.Moniker, a.Addr)
 		if strings.Contains(a.URL, "discord.com") {
 			SendDiscordAlert(resolveMsg, a.URL)
