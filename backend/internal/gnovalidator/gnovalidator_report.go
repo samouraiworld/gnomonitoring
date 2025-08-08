@@ -30,7 +30,7 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 		select {
 		case <-time.After(wait):
 			log.Printf("⏰ Sending report for user %s", userID)
-			SendDailyStatsForUser(db, userID)
+			SendDailyStatsForUser(db, userID, loc)
 		case <-reload:
 			log.Printf("♻️ Reloading schedule for user %s", userID)
 			return
@@ -38,23 +38,28 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 	}
 }
 
-func SendDailyStatsForUser(db *gorm.DB, userID string) {
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+func SendDailyStatsForUser(db *gorm.DB, userID string, loc *time.Location) {
+	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
 	rates, minBlock, maxBlock := CalculateRate(db, yesterday)
+
+	if len(rates) == 0 {
+		log.Printf("⚠️ No participation data found for user %s on date %s", userID, yesterday)
+		return
+	}
 
 	var buffer bytes.Buffer
 	buffer.WriteString(fmt.Sprintf("📊 *Daily Summary* for %s (Blocks %d → %d):\n\n", yesterday, minBlock, maxBlock))
 
-	for addr, rate := range rates {
-		moniker := MonikerMap[addr]
+	for addr, data := range rates {
+		moniker := data.Moniker
 		if moniker == "" {
 			moniker = "unknown"
 		}
 		emoji := "🟢"
-		if rate < 95.0 {
+		if data.Rate < 95.0 {
 			emoji = "🔴"
 		}
-		buffer.WriteString(fmt.Sprintf("  %s Validator: %s addr: (%s) rate: %.2f%%\n", emoji, moniker, addr, rate))
+		buffer.WriteString(fmt.Sprintf("  %s Validator: %s addr: (%s) rate: %.2f%%\n", emoji, moniker, addr, data.Rate))
 	}
 
 	msg := buffer.String()
@@ -65,10 +70,15 @@ func SendDailyStatsForUser(db *gorm.DB, userID string) {
 	}
 }
 
-func CalculateRate(db *gorm.DB, date string) (map[string]float64, int64, int64) {
-	rates := make(map[string]float64)
+type ValidatorRate struct {
+	Rate    float64
+	Moniker string
+}
 
-	//Step 1: Retrieve the min/max heights
+func CalculateRate(db *gorm.DB, date string) (map[string]ValidatorRate, int64, int64) {
+	rates := make(map[string]ValidatorRate)
+
+	// Step 1: Retrieve the min/max heights
 	var minHeight, maxHeight int64
 	err := db.Raw(`
 		SELECT MIN(block_height), MAX(block_height)
@@ -98,8 +108,7 @@ func CalculateRate(db *gorm.DB, date string) (map[string]float64, int64, int64) 
 	}
 	defer rows.Close()
 
-	// Step 3: Processing the results
-
+	// Step 3: Process the results
 	for rows.Next() {
 		var addr, moniker string
 		var total, participated int
@@ -110,7 +119,11 @@ func CalculateRate(db *gorm.DB, date string) (map[string]float64, int64, int64) 
 		}
 
 		if total > 0 {
-			rates[addr] = float64(participated) / float64(total) * 100
+			rate := float64(participated) / float64(total) * 100
+			rates[addr] = ValidatorRate{
+				Rate:    rate,
+				Moniker: moniker,
+			}
 		}
 	}
 
