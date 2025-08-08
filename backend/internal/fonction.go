@@ -81,6 +81,7 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 		UserID string
 		URL    string
 		Type   string
+		ID     int
 	}
 
 	var webhooks []Webhook
@@ -94,9 +95,9 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 		err := db.Raw(`
 		SELECT COUNT(*) FROM alert_logs 
 		WHERE user_id = ? AND addr = ? AND level = ? AND url = ?
-		AND start_height= ? AND end_height = ? 
+		AND start_height= ?
 		AND skipped = 1	
-		`, wh.UserID, addr, level, wh.URL, start_height, end_height).Scan(&count).Error
+		`, wh.UserID, addr, level, wh.URL, start_height).Scan(&count).Error
 
 		if err != nil {
 			log.Printf("❌ DB error checking alert_logs: %v", err)
@@ -131,44 +132,90 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 		fullMsg := message
 
 		// 3. Mention if CRITICAL
-		if level == "CRITICAL" {
-			type tag struct {
-				MentionTag string
-			}
-			var res []tag
+		// if level == "CRITICAL" {
+		// 	type tag struct {
+		// 		MentionTag string
+		// 	}
+		// 	var res []tag
 
-			err := db.Model(&database.AlertContact{}).
-				Select("mention_tag").
-				Where("user_id = ? AND moniker = ?", wh.UserID, moniker).
-				Find(&res).Error
+		// 	err := db.Model(&database.AlertContact{}).
+		// 		Select("mention_tag").
+		// 		Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
+		// 		Find(&res).Error
 
-			if err != nil {
-				return fmt.Errorf("failed to fetch mentions: %w", err)
-			}
-			for _, r := range res {
+		// 	if err != nil {
+		// 		return fmt.Errorf("failed to fetch mentions: %w", err)
+		// 	}
+		// 	for _, r := range res {
 
-				fmt.Println(r.MentionTag)
-				fullMsg += "\n" + "<@" + r.MentionTag + ">"
-			}
-			println("full Message", fullMsg)
+		// 		fmt.Println(r.MentionTag)
+		// 		fullMsg += "\n" + "<@" + r.MentionTag + ">"
+		// 	}
+		// 	println("full Message", fullMsg)
 
-		}
+		// }
 
-		// 4. Envoi
-		var sendErr error
+		// // 4. Envoi
+		// var sendErr error
+		// switch wh.Type {
+		// case "discord":
+		// 	sendErr = SendDiscordAlert(fullMsg, wh.URL)
+		// case "slack":
+		// 	sendErr = SendSlackAlert(fullMsg, wh.URL)
 		switch wh.Type {
 		case "discord":
-			sendErr = SendDiscordAlert(fullMsg, wh.URL)
+			if level == "CRITICAL" {
+				type tag struct{ MentionTag string }
+				var res []tag
+				err := db.Model(&database.AlertContact{}).
+					Select("mention_tag").
+					Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
+					Find(&res).Error
+				if err != nil {
+					return fmt.Errorf("failed to fetch mentions: %w", err)
+				}
+				for _, r := range res {
+					fullMsg += "\n<@" + r.MentionTag + ">"
+				}
+			}
+			sendErr := SendDiscordAlert(fullMsg, wh.URL)
+			if sendErr != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+				continue
+			}
+
 		case "slack":
-			sendErr = SendSlackAlert(fullMsg, wh.URL)
+			if level == "CRITICAL" {
+				type tag struct{ MentionTag string }
+				log.Printf("TYPE SLACK")
+				var res []tag
+				err := db.Model(&database.AlertContact{}).
+					Select("mention_tag").
+					Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
+					Find(&res).Error
+				if err != nil {
+					return fmt.Errorf("failed to fetch mentions: %w", err)
+				}
+
+				for _, r := range res {
+					fullMsg += "\n <@" + r.MentionTag + ">"
+				}
+				log.Println(fullMsg)
+			}
+			sendErr := SendSlackAlert(fullMsg, wh.URL)
+			if sendErr != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+				continue
+			}
+
 		default:
 			continue
 		}
 
-		if sendErr != nil {
-			log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
-			continue
-		}
+		// if sendErr != nil {
+		// 	log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+		// 	continue
+		// }
 		database.InsertAlertlog(db, wh.UserID, addr, moniker, level, wh.URL, start_height, end_height, true, time.Now())
 
 		if err != nil {
@@ -258,8 +305,8 @@ func SendResolveAlerts(db *gorm.DB) {
 		// check if participation is true after end_heigt+1
 		var countparticipated int
 		err = db.Raw(`
-			SELECT sum(participated) FROM daily_participations
-			WHERE addr = ? AND block_height= (?+1)
+			SELECT participated FROM daily_participations
+			WHERE addr = ? AND block_height= (?+2)
 			`, a.Addr, a.EndHeight).Scan(&countparticipated).Error
 		if err != nil {
 			log.Printf("❌ DB error checking count participated: %v", err)

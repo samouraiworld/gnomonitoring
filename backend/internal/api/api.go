@@ -1,14 +1,17 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
 	"gorm.io/gorm"
 )
@@ -463,6 +466,7 @@ func GetAlertContactsHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB
 	json.NewEncoder(w).Encode(contacts)
 }
 func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+
 	EnableCORS(w)
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -471,18 +475,20 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 
 	var data struct {
 		ID          int    `json:"id"`
+		UserID      string `json:"user_id"`
 		Moniker     string `json:"moniker"`
 		NameContact string `json:"namecontact"`
 		MentionTag  string `json:"mention_tag"`
 		IDwebhook   int    `json:"id_webhook"`
 	}
-
+	bodyBytes, _ := io.ReadAll(r.Body)
+	log.Println("Raw body:", string(bodyBytes))
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
-
-	err := database.UpdateAlertContact(db, data.ID, data.Moniker, data.NameContact, data.MentionTag, data.IDwebhook)
+	err := database.UpdateAlertContact(db, data.ID, data.UserID, data.Moniker, data.NameContact, data.MentionTag, data.IDwebhook)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to update alert contact: %v", err), http.StatusInternalServerError)
 		return
@@ -518,6 +524,33 @@ func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Alert contact deleted"))
+}
+
+// ====================== Block Height ============
+func Getblockheight(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+
+	}
+	lastStored, err := gnovalidator.GetLastStoredHeight(db)
+	if lastStored == 0 {
+		log.Printf("❌ Failed to get latest block height: %v", err)
+		return
+	}
+	json.NewEncoder(w).Encode(lastStored)
+}
+
+// ======================last incident ==================================
+func Getlastincident(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+
+	incident, err := database.GetAlertLog(db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(incident)
 }
 
 // ======================CORS=============================================
@@ -620,7 +653,35 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
+	// ====================== Dashboard =================
+	http.HandleFunc("/block_height", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
 
+		case http.MethodGet:
+			Getblockheight(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+	http.HandleFunc("/lastest_incidents", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			Getlastincident(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
 	// Démarrage du serveur HTTP - **C’EST ICI QUE TU COMMENCES À ÉCOUTER LE PORT**
 	addr := ":" + internal.Config.BackendPort
 	// Optionnel : log pour debug

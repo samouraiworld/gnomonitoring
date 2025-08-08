@@ -141,7 +141,7 @@ export default function ConfigBotPage() {
 
                         <select
                             value={c.IDWEBHOOK || ""}
-                            onChange={(e) => handleContactChange(i, "WEBHOOK_ID", e.target.value)}
+                            onChange={(e) => handleContactChange(i, "IDWEBHOOK", e.target.value)}
                             className="border p-2 rounded w-full md:w-1/4 dark:bg-neutral-800 dark:border-neutral-600"
                         >
                             <option value="">Associate with a webhook...</option>
