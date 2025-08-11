@@ -10,6 +10,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+type ParticipationRate struct {
+	Addr              string
+	Moniker           string
+	ParticipationRate float64
+}
+
 type User struct {
 	UserID    string    `gorm:"primaryKey;column:user_id" json:"user_id"`
 	Name      string    `gorm:"column:nameuser;not null" json:"name"`
@@ -51,11 +57,11 @@ type WebhookValidator struct {
 	Type        string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
 }
 type DailyParticipation struct {
-	Date         string `gorm:"column:date;primaryKey;index:idx_participation_date,priority:1" `
-	BlockHeight  int    `gorm:"column:block_height;primaryKey" `
-	Moniker      string `gorm:"column:moniker;primaryKey" `
-	Addr         string `gorm:"column:addr;not null;index:idx_participation_date,priority:2" `
-	Participated bool   `gorm:"column:participated;not null" `
+	Date         time.Time `gorm:"column:date;primaryKey;index:idx_participation_date,priority:1" `
+	BlockHeight  int       `gorm:"column:block_height;primaryKey" `
+	Moniker      string    `gorm:"column:moniker;primaryKey" `
+	Addr         string    `gorm:"column:addr;not null;index:idx_participation_date,priority:2" `
+	Participated bool      `gorm:"column:participated;not null" `
 }
 type AlertLog struct {
 	UserID      string    `gorm:"column:user_id;primaryKey" `
@@ -66,6 +72,7 @@ type AlertLog struct {
 	StartHeight int       `gorm:"column:start_height;primaryKey;not null" `
 	EndHeight   int       `gorm:"column:end_height;primaryKey;not null" `
 	Skipped     bool      `gorm:"column:skipped;not null" `
+	Msg         string    `gorm:"column:msg" `
 	SentAt      time.Time `gorm:"column:sent_at;autoCreateTime" `
 }
 type GovDAOState struct {
@@ -82,6 +89,7 @@ type AlertSummary struct {
 	Level       string
 	StartHeight int
 	EndHeight   int
+	Msg         string
 	SentAt      time.Time
 }
 
@@ -417,7 +425,7 @@ func PruneOldParticipationData(db *gorm.DB, keepDays int) error {
 }
 
 // ====================================== ALERT LOG ======================================
-func InsertAlertlog(db *gorm.DB, userID, addr, moniker, level, url string, startheight, endheight int, skipped bool, sent time.Time) error {
+func InsertAlertlog(db *gorm.DB, userID, addr, moniker, level, url string, startheight, endheight int, skipped bool, msg string, sent time.Time) error {
 	alert := AlertLog{
 		UserID:      userID,
 		Addr:        addr,
@@ -427,6 +435,7 @@ func InsertAlertlog(db *gorm.DB, userID, addr, moniker, level, url string, start
 		StartHeight: startheight,
 		EndHeight:   endheight,
 		Skipped:     skipped,
+		Msg:         msg,
 		SentAt:      sent,
 	}
 	return db.Create(&alert).Error
@@ -436,12 +445,65 @@ func GetAlertLog(db *gorm.DB) ([]AlertSummary, error) {
 	var alerts []AlertSummary
 	result := db.
 		Model(&AlertLog{}).
-		Select("DISTINCT moniker, level, start_height, end_height,sent_at").
-		Order("sent_at desc").
+		Select("DISTINCT moniker, level, start_height, end_height,msg,sent_at").
+		Order("start_height desc").
 		Limit(10).
 		Scan(&alerts)
 
 	return alerts, result.Error
+}
+
+func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]ParticipationRate, error) {
+	log.Println("==========Start Get Participate Rate ")
+	var results []ParticipationRate
+
+	var start, end time.Time
+	now := time.Now()
+
+	switch period {
+	case "current_week":
+		today := time.Now()
+		weekday := int(today.Weekday())
+		if weekday == 0 {
+			weekday = 7 // Sunday => 7
+		}
+		start = today.AddDate(0, 0, -weekday+1) // Reculer jusqu'au lundi
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
+		end = start.AddDate(0, 0, 7)
+	case "current_month":
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(0, 1, 0)
+
+	case "current_year":
+		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(1, 0, 0)
+
+	default:
+		return nil, fmt.Errorf("invalid period: %s", period)
+	}
+
+	startStr := start.Format("2006-01-02")
+	endStr := end.Format("2006-01-02")
+	log.Printf("start %s", startStr)
+	log.Printf("end %s", endStr)
+	query := fmt.Sprintf(`
+		SELECT
+			addr,
+			moniker,
+			ROUND(SUM(participated) * 100.0 / COUNT(*), 1) AS participation_rate
+		FROM
+			daily_participations
+		WHERE
+			date >= '%s' AND date < '%s'
+		GROUP BY
+			addr, moniker
+		ORDER BY
+			participation_rate DESC;
+	`, startStr, endStr)
+
+	err := db.Raw(query).Scan(&results).Error
+
+	return results, err
 }
 
 // ====================================== ADDR MONIKER =============================

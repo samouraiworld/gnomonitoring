@@ -1,99 +1,65 @@
 package gnovalidator_test
 
 import (
-	"database/sql"
-	"fmt"
-	"os"
 	"testing"
-	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func setupTestDB(t *testing.T) *gorm.DB {
-	os.Remove("test_report.db") // Clean old file if any
-	db, err := sql.Open("sqlite3", "test_report.db")
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
+		t.Fatalf("failed to connect database: %v", err)
 	}
 
-	createTable := `
-	CREATE TABLE IF NOT EXISTS daily_participation (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		date TEXT NOT NULL,
-		block_height INTEGER NOT NULL,
-		addr TEXT NOT NULL,
-		moniker TEXT NOT NULL,
-		participated BOOLEAN NOT NULL
-	);`
-	_, err = db.Exec(createTable)
-	if err != nil {
-		t.Fatalf("Failed to create table: %v", err)
-	}
+	// Auto migrate ta struct
+	err = db.AutoMigrate(
+		&database.User{}, &database.AlertContact{}, &database.WebhookValidator{},
+		&database.WebhookGovDAO{}, &database.HourReport{}, &database.GovDAOState{},
+		&database.DailyParticipation{}, &database.AlertLog{}, &database.AddrMoniker{},
+	)
 
 	return db
 }
-
-func insertParticipationData(db *gorm.DB, date string, addr string, moniker string, participated []bool, startHeight int) error {
-	tx := db.Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-
-	stmt := `
-		INSERT INTO daily_participation (date, block_height, addr, moniker, participated)
-		VALUES (?, ?, ?, ?, ?)
-	`
-
-	for i, p := range participated {
-		blockHeight := startHeight + i
-		if err := tx.Exec(stmt, date, blockHeight, addr, moniker, p).Error; err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed at height %d: %w", blockHeight, err)
-		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func TestCalculateRate(t *testing.T) {
+func TestSaveParticipation(t *testing.T) {
 	db := setupTestDB(t)
-	defer db.Close()
 
-	date := time.Now().Format("2006-01-02")
+	// Simuler un map de participation
+	monikerMap := map[string]string{
+		"addr1": "Validator1",
+		"addr2": "Validator2",
+	}
+	participating := map[string]bool{
+		"addr1": true,
+		"addr2": false,
+	}
 
-	err := insertParticipationData(db, date, "valoper1", "validator-one", []bool{true, false, true, true}, 100)
+	// Appeler ta fonction
+	err := gnovalidator.SaveParticipation(db, 100, participating, monikerMap)
 	if err != nil {
-		t.Fatalf("Insert error: %v", err)
-	}
-	err = insertParticipationData(db, date, "valoper2", "validator-two", []bool{false, false, false, false}, 200)
-	if err != nil {
-		t.Fatalf("Insert error: %v", err)
+		t.Fatalf("SaveParticipation failed: %v", err)
 	}
 
-	rates, min, max := gnovalidator.CalculateRate(db, date)
-
-	if len(rates) != 2 {
-		t.Errorf("Expected 2 validators, got %d", len(rates))
+	// Vérifier que les données sont bien enregistrées
+	var participations []database.DailyParticipation
+	result := db.Find(&participations)
+	if result.Error != nil {
+		t.Fatalf("Error querying participations: %v", result.Error)
+	}
+	if len(participations) != 2 {
+		t.Fatalf("Expected 2 participations, got %d", len(participations))
 	}
 
-	if rate := rates["valoper1"]; rate != 75.0 {
-		t.Errorf("Expected rate 75.0 for valoper1, got %.2f", rate)
-	}
-	if rate := rates["valoper2"]; rate != 0.0 {
-		t.Errorf("Expected rate 0.0 for valoper2, got %.2f", rate)
-	}
-
-	if min != 100 {
-		t.Errorf("Expected min block 100, got %d", min)
-	}
-	if max != 203 {
-		t.Errorf("Expected max block 203, got %d", max)
+	for _, p := range participations {
+		if p.Addr == "addr1" && !p.Participated {
+			t.Errorf("Expected addr1 to have participated")
+		}
+		if p.Addr == "addr2" && p.Participated {
+			t.Errorf("Expected addr2 to not have participated")
+		}
 	}
 }

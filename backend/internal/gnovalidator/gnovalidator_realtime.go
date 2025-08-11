@@ -71,7 +71,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
 					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d since %s (%s ago)", latest, lastProgressTime.Format(time.RFC822), time.Since(lastProgressTime).Truncate(time.Second))
 					log.Println(msg)
-					internal.SendAllValidatorAlerts(msg, "", "", "", 0, 0, db)
+					internal.SendInfoValidateur(msg, "CRITICAL", db)
 
 					alertSent = true
 					restoredNotified = false
@@ -82,7 +82,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				lastProgressTime = time.Now()
 
 				if alertSent && !restoredNotified {
-					internal.SendAllValidatorAlerts("✅ **Activity Restored**: Gnoland is back to normal.", "", "", "", 0, 0, db)
+					internal.SendInfoValidateur("✅ **Activity Restored**: Gnoland is back to normal.", "INFO", db)
 					restoredNotified = true
 					alertSent = false
 				}
@@ -147,7 +147,7 @@ func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
 				if _, exists := oldMap[addr]; !exists {
 					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
 					log.Println(msg)
-					internal.SendAllValidatorAlerts(msg, "info", addr, moniker, 0, 0, db)
+					internal.SendInfoValidateur(msg, "info", db)
 				}
 			}
 			MonikerMutex.RUnlock()
@@ -178,27 +178,27 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 					continue
 				}
 
-				var level, emoji, prefix string
+				var level string
 				switch {
-				case missed >= 3:
+				case missed >= 30:
 					level = "CRITICAL"
-					emoji = "🚨"
-					prefix = "**"
-				case missed == 1:
+					// emoji = "🚨"
+					// prefix = "**"
+				case missed == 5:
 					level = "WARNING"
-					emoji = "⚠️"
-					prefix = ""
+					// emoji = "⚠️"
+					// prefix = ""
 				default:
 					continue
 				}
 
-				msg := fmt.Sprintf(
-					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				)
-				log.Println("MESSAGE:", msg)
+				// msg := fmt.Sprintf(
+				// 	"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+				// 	emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+				// )
+				// log.Println("MESSAGE:", msg)
 
-				internal.SendAllValidatorAlerts(msg, level, addr, moniker, start_height, end_height, db)
+				internal.SendAllValidatorAlerts(missed, today, level, addr, moniker, start_height, end_height, db)
 			}
 
 			rows.Close()
@@ -209,7 +209,7 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 }
 
 func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]bool, monikerMap map[string]string) error {
-	today := time.Now().Format("2006-01-02")
+	today := time.Now()
 
 	tx := db.Begin()
 	if tx.Error != nil {
