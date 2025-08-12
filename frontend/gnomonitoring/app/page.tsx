@@ -1,9 +1,20 @@
 "use client";
-
+import { Dash } from "@/app/dash";
 import { useState } from "react";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<"all" | "monthly" | "weekly">("all");
+
+  const {
+    blockHeight,
+    incidents,
+    loading,
+    error,
+    formatSentAt,
+    participationData,
+    reload: fetchBlockHeight
+
+  } = Dash(activeTab)
 
   return (
     <section className="p-4 space-y-8">
@@ -16,22 +27,63 @@ export default function Home() {
       </div>
 
       {/* Grid: Last Block + Latest Incidents */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Last block */}
-        <div className="bg-white dark:bg-neutral-800 p-4 rounded-xl shadow">
-          <h2 className="text-xl font-semibold mb-2">Block Height</h2>
-          <div className="text-sm text-gray-500 dark:text-gray-300">
-            Height : <span className="font-medium text-black dark:text-white">#123456</span><br />
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+        {/* Block Height - prend 2/5 de la largeur */}
+        <div className="md:col-span-1 bg-white dark:bg-neutral-800 p-4 rounded-xl shadow">
+          <h2 className="text-xl font-semibold mb-2 text-center">Block Height :</h2>
+          <div className="text-sm text-gray-500 dark:text-gray-300 text-center">
+            <span className="text-2xl font-medium text-black dark:text-white text-center">
+              {blockHeight !== null ? blockHeight : "loading..."}
+            </span><br />
           </div>
         </div>
 
-        {/* Latest incidents */}
-        <div className="bg-white dark:bg-neutral-800 p-4 rounded-xl shadow">
-          <h2 className="text-xl font-semibold mb-2">Latest incidents</h2>
-          <ul className="text-sm text-gray-500 dark:text-gray-300 space-y-1">
-            <li>[2025-08-07 14:59] ⚠️ Validator XYZ - Missed 3 blocks</li>
-            <li>[2025-08-07 14:45] 🔴 Validator ABC - Inactive</li>
-            <li>[2025-08-07 13:30] ⚠️ Validator LMN - Low participation</li>
+        {/* Latest incidents - prend 3/5 de la largeur */}
+        <div className="md:col-span-4 bg-white dark:bg-neutral-800 p-4 rounded-xl shadow">
+          <h2 className="text-xl font-semibold mb-4">Latest incidents</h2>
+          <ul className="space-y-3 text-sm text-gray-700 dark:text-gray-300">
+            {incidents.length === 0 && <li>No incidents found.</li>}
+            {incidents.map((incident, index) => {
+              // Choix icône & couleur selon level
+              // let icon, color;
+              // switch (incident.Level) {
+              //   case "CRITICAL":
+              //     icon = "🔴";
+              //     color = "text-red-600 dark:text-red-400";
+              //     break;
+              //   case "WARNING":
+              //     icon = "⚠️";
+              //     color = "text-yellow-600 dark:text-yellow-400";
+              //     break;
+              //   case "RESOLVED":
+              //     icon = "✅";
+              //     color = "text-green-600 dark:text-green-400";
+              //     break;
+              //   default:
+              //     icon = "ℹ️";
+              //     color = "text-gray-600 dark:text-gray-400";
+              // }
+
+              return (
+                <li key={index} className={`flex items-start space-x-2`}>
+                  <span className={`flex-shrink-0 text-lg leading-none `}>
+
+                    {/* <span className={`flex-shrink-0 text-lg leading-none ${color}`}>
+                    {icon} */}
+                  </span>
+                  <div>
+                    <span className="font-mono text-xs text-gray-400 dark:text-gray-500">
+                      [{formatSentAt(incident.SentAt)}]
+                    </span>{" "}
+                    <span className={`font-semibold`}>
+                      {incident.Msg}
+                    </span>{" "}
+
+
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </div>
       </div>
@@ -73,17 +125,26 @@ export default function Home() {
 
         {/* Tab content */}
         <div className="text-sm text-gray-700 dark:text-gray-300">
-          {activeTab === "all" && (
+          {loading && <p>Loading...</p>}
+          {!loading && participationData[activeTab] && (
             <div>
-              <p className="mb-2 font-semibold">Overall participation:</p>
+              <p className="mb-2 font-semibold">
+                {activeTab === "all"
+                  ? "Overall participation:"
+                  : activeTab === "monthly"
+                    ? "Participation this Month:"
+                    : "Participation this Week:"}
+              </p>
               <ul className="list-disc pl-5">
-                <li>Validator A : 99.5%</li>
-                <li>Validator B : 98.7%</li>
-                <li>Validator C : 97.2%</li>
+                {participationData[activeTab]!.map((val) => (
+                  <li key={val.Addr}>
+                    {val.Moniker} : {val.ParticipationRate.toFixed(1)}%
+                  </li>
+                ))}
               </ul>
             </div>
           )}
-          {activeTab === "monthly" && (
+          {/* {activeTab === "monthly" && (
             <div>
               <p className="mb-2 font-semibold">Participation this Month:</p>
               <ul className="list-disc pl-5">
@@ -102,7 +163,7 @@ export default function Home() {
                 <li>Validator C : 91.0%</li>
               </ul>
             </div>
-          )}
+          )} */}
         </div>
       </div>
 

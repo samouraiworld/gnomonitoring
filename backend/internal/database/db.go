@@ -64,17 +64,27 @@ type DailyParticipation struct {
 	Participated bool      `gorm:"column:participated;not null" `
 }
 type AlertLog struct {
-	UserID      string    `gorm:"column:user_id;primaryKey" `
 	Addr        string    `gorm:"column:addr;primaryKey" `
 	Moniker     string    `gorm:"column:moniker;not null" `
 	Level       string    `gorm:"column:level;primaryKey" `
-	URL         string    `gorm:"column:url;primaryKey" `
 	StartHeight int       `gorm:"column:start_height;primaryKey;not null" `
 	EndHeight   int       `gorm:"column:end_height;primaryKey;not null" `
 	Skipped     bool      `gorm:"column:skipped;not null" `
-	Msg         string    `gorm:"column:msg" `
 	SentAt      time.Time `gorm:"column:sent_at;autoCreateTime" `
 }
+
+//	type AlertLog struct {
+//		UserID      string    `gorm:"column:user_id;primaryKey" `
+//		Addr        string    `gorm:"column:addr;primaryKey" `
+//		Moniker     string    `gorm:"column:moniker;not null" `
+//		Level       string    `gorm:"column:level;primaryKey" `
+//		URL         string    `gorm:"column:url;primaryKey" `
+//		StartHeight int       `gorm:"column:start_height;primaryKey;not null" `
+//		EndHeight   int       `gorm:"column:end_height;primaryKey;not null" `
+//		Skipped     bool      `gorm:"column:skipped;not null" `
+//		Msg         string    `gorm:"column:msg" `
+//		SentAt      time.Time `gorm:"column:sent_at;autoCreateTime" `
+//	}
 type GovDAOState struct {
 	ID             int       `gorm:"primaryKey;check:id = 1"`
 	LastProposalID int       `gorm:"column:last_proposal_id;not null"`
@@ -131,36 +141,47 @@ func InitDB() (*gorm.DB, error) {
 // =================================== VIEW MISSING BLOCK ============================
 func CreateMissingBlocksView(db *gorm.DB) error {
 	createViewSQL := `
-	CREATE VIEW IF NOT EXISTS daily_missing_series AS
-	WITH misses AS (
-		SELECT
-			addr,
-			moniker,
-			date,
-			block_height,
-			ROW_NUMBER() OVER (PARTITION BY addr, moniker, date ORDER BY block_height) AS rn
-		FROM daily_participations
-		WHERE participated = 0
-	),
-	islands AS (
-		SELECT
-			addr,
-			moniker,
-			date,
-			block_height,
-			block_height - rn AS grp
-		FROM misses
-	)
-	SELECT
-		addr,
-		moniker,
-		date,
-		MIN(block_height) AS start_height,
-		MAX(block_height) AS end_height,
-		COUNT(*) AS missed
-	FROM islands
-	GROUP BY addr, moniker, date, grp
-	HAVING COUNT(*) > 1;
+CREATE VIEW IF NOT EXISTS daily_missing_series AS
+WITH ranked AS (
+    SELECT
+        addr,
+        moniker,
+        date,
+        block_height,
+        participated,
+        -- Vérifie si le bloc précédent était manqué
+        CASE 
+            WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) = 1
+            THEN 1
+            WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) IS NULL
+            THEN 1
+            ELSE 0
+        END AS new_seq
+    FROM daily_participations
+	WHERE date >= datetime('now', '-24 hours')
+),
+grouped AS (
+    SELECT
+        *,
+        SUM(new_seq) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) AS seq_id
+    FROM ranked
+)
+SELECT
+    addr,
+    moniker,
+    DATE(date) AS date,
+    TIME(date) AS time_block,
+    MIN(block_height) OVER (PARTITION BY addr, moniker, DATE(date), seq_id) AS start_height,
+    block_height AS end_height,
+    SUM(1) OVER (
+        PARTITION BY addr, moniker, DATE(date), seq_id
+        ORDER BY block_height
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS missed
+FROM grouped
+WHERE participated = 0
+ORDER BY addr, moniker, date, seq_id, block_height;
+
 	`
 
 	if err := db.Exec(createViewSQL).Error; err != nil {
@@ -425,17 +446,14 @@ func PruneOldParticipationData(db *gorm.DB, keepDays int) error {
 }
 
 // ====================================== ALERT LOG ======================================
-func InsertAlertlog(db *gorm.DB, userID, addr, moniker, level, url string, startheight, endheight int, skipped bool, msg string, sent time.Time) error {
+func InsertAlertlog(db *gorm.DB, addr, moniker, level string, startheight, endheight int, skipped bool, sent time.Time) error {
 	alert := AlertLog{
-		UserID:      userID,
 		Addr:        addr,
 		Moniker:     moniker,
 		Level:       level,
-		URL:         url,
 		StartHeight: startheight,
 		EndHeight:   endheight,
 		Skipped:     skipped,
-		Msg:         msg,
 		SentAt:      sent,
 	}
 	return db.Create(&alert).Error

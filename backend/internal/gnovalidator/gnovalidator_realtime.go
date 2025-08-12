@@ -9,6 +9,7 @@ import (
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
 
@@ -161,8 +162,7 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 			today := time.Now().Format("2006-01-02")
 
 			rows, err := db.Raw(`
-				SELECT addr,moniker,start_height,end_height,missed FROM daily_missing_series WHERE date = ?
-			`, today).Rows()
+				SELECT addr,moniker,start_height,end_height,missed FROM daily_missing_series`).Rows()
 			if err != nil {
 				log.Printf("❌ Error executing query: %v", err)
 				time.Sleep(checkInterval)
@@ -191,25 +191,104 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 				default:
 					continue
 				}
+				// 2. Check if alert was recently sent
+				var count int64
+				err := db.Raw(`
+						SELECT COUNT(*) FROM alert_logs 
+						WHERE addr = ? AND level = ? 
+						AND start_height= ? 
+						AND skipped = 1	
+						`, addr, level, start_height).Scan(&count).Error
 
-				// msg := fmt.Sprintf(
-				// 	"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-				// 	emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				// )
-				// log.Println("MESSAGE:", msg)
+				if err != nil {
+					log.Printf("❌ DB error checking alert_logs: %v", err)
+
+					continue
+				}
+
+				if count > 0 {
+					log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
+					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now())
+
+					continue
+				}
 
 				internal.SendAllValidatorAlerts(missed, today, level, addr, moniker, start_height, end_height, db)
+				database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now())
+
 			}
 
 			rows.Close()
-
+			SendResolveAlerts(db)
 			time.Sleep(checkInterval)
 		}
 	}()
 }
+func SendResolveAlerts(db *gorm.DB) {
+	log.Println("==========================Start resolv Alert==========00==")
+
+	type LastAlert struct {
+		Addr        string
+		Moniker     string
+		StartHeight int
+		EndHeight   int
+	}
+
+	var alerts []LastAlert
+
+	err := db.Raw(`
+		SELECT addr, moniker, max(end_height) as end_height ,start_height
+		FROM daily_missing_series
+		group by start_height
+
+	`).Scan(&alerts).Error
+	if err != nil {
+		log.Printf("❌ Error fetching last alerts: %v", err)
+		return
+	}
+	for _, a := range alerts {
+		// Check if alert send
+		var count int64
+		err := db.Raw(`
+		SELECT COUNT(*) FROM alert_logs
+		WHERE addr = ? and level = "RESOLVED"
+		AND start_height= ? AND end_height = ?
+		`, a.Addr, a.StartHeight, a.EndHeight).Scan(&count).Error
+
+		if err != nil {
+			log.Printf("❌ DB error checking alert_logs: %v", err)
+			continue
+		}
+
+		if count > 0 {
+			log.Printf("⏱️ Skipping resolve alert for %s : already sent", a.Moniker)
+			continue
+		}
+
+		// check if participation is true after end_heigt+1
+		var countparticipated int
+		err = db.Raw(`
+			SELECT participated FROM daily_participations
+			WHERE addr = ? AND block_height= (?+1)
+			`, a.Addr, a.EndHeight).Scan(&countparticipated).Error
+		if err != nil {
+			log.Printf("❌ DB error checking count participated: %v", err)
+			continue
+		}
+		if countparticipated == 0 {
+			// log.Printf("Not resolve error")
+			continue
+		}
+		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s) \n Block %d = 1", a.Moniker, a.Addr, a.EndHeight+1)
+		internal.SendInfoValidateur(resolveMsg, "RESOLVED", db)
+		database.InsertAlertlog(db, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now())
+
+	}
+
+}
 
 func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]bool, monikerMap map[string]string) error {
-	today := time.Now()
+	today := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	tx := db.Begin()
 	if tx.Error != nil {
@@ -254,4 +333,10 @@ func StartValidatorMonitoring(db *gorm.DB) {
 	WatchNewValidators(db, 5*time.Minute)
 	CollectParticipation(db, client)         // collect participant
 	WatchValidatorAlerts(db, 20*time.Second) // DB-based of alerts
+	// go func() {
+	// 	for {
+	// 		SendResolveAlerts(db)
+	// 		time.Sleep(40 * time.Second) // check if alert  resolve
+	// 	}
+	// }()
 }
