@@ -534,7 +534,7 @@ func Getblockheight(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		log.Printf("❌ Failed to get latest block height: %v", err)
 		return
 	}
-	json.NewEncoder(w).Encode(lastStored)
+	json.NewEncoder(w).Encode(map[string]int64{"last_stored": lastStored})
 }
 
 // ======================last incident ==================================
@@ -546,6 +546,29 @@ func Getlastincident(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 	json.NewEncoder(w).Encode(incident)
+}
+
+// ============================ Participation Rate ========================
+func Getarticipation(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+
+	EnableCORS(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		http.Error(w, "Missing period", http.StatusBadRequest)
+		return
+	}
+
+	part, err := database.GetCurrentPeriodParticipationRate(db, period)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get participation rate: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(part)
 }
 
 // ======================CORS=============================================
@@ -663,11 +686,25 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	http.HandleFunc("/lastest_incidents", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/latest_incidents", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
 			Getlastincident(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+	http.HandleFunc("/Participation", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			Getarticipation(w, r, db)
 		case http.MethodOptions:
 			EnableCORS(w)
 			w.WriteHeader(http.StatusOK)

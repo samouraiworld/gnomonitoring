@@ -76,19 +76,18 @@ func SendSlackAlert(msg string, webhookURL string) error {
 	}
 	return nil
 }
-func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, end_height int, db *gorm.DB) error {
+func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, start_height, end_height int, db *gorm.DB) error {
 	type Webhook struct {
 		UserID string
 		URL    string
 		Type   string
 		ID     int
 	}
-
+	var fullMsg string
 	var webhooks []Webhook
 	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
-
 	for _, wh := range webhooks {
 		// 2. Check if alert was recently sent
 		var count int64
@@ -122,23 +121,31 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 		log.Println("countparticipated", countparticipated)
 		if countparticipated == 0 {
 			log.Printf("⏱️ Skipping alert for %s (%s, %s): limit reached", moniker, wh.UserID, wh.URL)
-			database.InsertAlertlog(db, wh.UserID, addr, moniker, level, wh.URL, start_height, end_height, false, time.Now())
+			database.InsertAlertlog(db, wh.UserID, addr, moniker, level, wh.URL, start_height, end_height, false, "", time.Now())
 
 			continue
 		}
 
 		//================== Build msg ===============
 
-		fullMsg := message
+		var emoji, prefix string
 		switch wh.Type {
 		case "discord":
 			if level == "CRITICAL" {
+				emoji = "🚨"
+				prefix = "**"
+
 				type tag struct{ MentionTag string }
 				var res []tag
 				err := db.Model(&database.AlertContact{}).
 					Select("mention_tag").
 					Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
 					Find(&res).Error
+
+				fullMsg = fmt.Sprintf(
+					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+				)
 				if err != nil {
 					return fmt.Errorf("failed to fetch mentions: %w", err)
 				}
@@ -146,6 +153,16 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 					fullMsg += "\n<@" + r.MentionTag + ">"
 				}
 			}
+			if level == "WARNING" {
+				emoji = "⚠️"
+				prefix = ""
+				fullMsg = fmt.Sprintf(
+					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+				)
+
+			}
+			log.Println(fullMsg)
 			sendErr := SendDiscordAlert(fullMsg, wh.URL)
 			if sendErr != nil {
 				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
@@ -154,6 +171,9 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 
 		case "slack":
 			if level == "CRITICAL" {
+				emoji = "🚨"
+				prefix = "*"
+
 				type tag struct{ MentionTag string }
 				log.Printf("TYPE SLACK")
 				var res []tag
@@ -164,11 +184,24 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 				if err != nil {
 					return fmt.Errorf("failed to fetch mentions: %w", err)
 				}
-
+				fullMsg = fmt.Sprintf(
+					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+				)
 				for _, r := range res {
+
 					fullMsg += "\n <@" + r.MentionTag + ">"
 				}
-				log.Println(fullMsg)
+				//log.Println(fullMsg)
+				if level == "WARNING" {
+					emoji = "⚠️"
+					prefix = ""
+					fullMsg = fmt.Sprintf(
+						"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+						emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+					)
+
+				}
 			}
 			sendErr := SendSlackAlert(fullMsg, wh.URL)
 			if sendErr != nil {
@@ -180,7 +213,7 @@ func SendAllValidatorAlerts(message, level, addr, moniker string, start_height, 
 			continue
 		}
 
-		database.InsertAlertlog(db, wh.UserID, addr, moniker, level, wh.URL, start_height, end_height, true, time.Now())
+		database.InsertAlertlog(db, wh.UserID, addr, moniker, level, wh.URL, start_height, end_height, true, fullMsg, time.Now())
 
 		if err != nil {
 			log.Printf("⚠️ Failed to insert alert log for %s (%s): %v", wh.URL, wh.Type, err)
@@ -288,8 +321,43 @@ func SendResolveAlerts(db *gorm.DB) {
 		} else if strings.Contains(a.URL, "slack.com") {
 			SendSlackAlert(resolveMsg, a.URL)
 		}
-		database.InsertAlertlog(db, a.UserID, a.Addr, a.Moniker, "RESOLVED", a.URL, a.StartHeight, a.EndHeight, false, time.Now())
+		database.InsertAlertlog(db, a.UserID, a.Addr, a.Moniker, "RESOLVED", a.URL, a.StartHeight, a.EndHeight, false, resolveMsg, time.Now())
 		log.Printf("✅ Sent resolve alert for %s", a.Addr)
 	}
 
+}
+
+func SendInfoValidateur(msg string, level string, db *gorm.DB) error {
+	type Webhook struct {
+		UserID string
+		URL    string
+		Type   string
+		ID     int
+	}
+
+	var webhooks []Webhook
+	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
+		return fmt.Errorf("failed to fetch webhooks: %w", err)
+	}
+	for _, wh := range webhooks {
+		switch wh.Type {
+		case "discord":
+			sendErr := SendDiscordAlert(msg, wh.URL)
+			if sendErr != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+				continue
+			}
+
+		case "slack":
+			sendErr := SendSlackAlert(msg, wh.URL)
+			if sendErr != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+				continue
+			}
+
+		}
+		database.InsertAlertlog(db, wh.UserID, "", "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
+
+	}
+	return nil
 }
