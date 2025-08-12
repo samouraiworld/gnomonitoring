@@ -19,7 +19,7 @@ var mu sync.Mutex
 
 func StartGovDaoManager(db *gorm.DB) {
 	log.Println("GovDao manager started")
-	ticker := time.NewTicker(10 * time.Minute) // check every 10s
+	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 
 	for range ticker.C {

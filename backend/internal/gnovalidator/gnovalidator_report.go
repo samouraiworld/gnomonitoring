@@ -40,10 +40,12 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 
 func SendDailyStatsForUser(db *gorm.DB, userID string, loc *time.Location) {
 	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
+	//yesterday := time.Now().In(loc).AddDate(0, 0, 0).Format("2006-01-02")
+
 	rates, minBlock, maxBlock := CalculateRate(db, yesterday)
 
 	if len(rates) == 0 {
-		log.Printf("⚠️ No participation data found for user %s on date %s", userID, yesterday)
+		log.Printf("⚠️ No participation data found on date %s", yesterday)
 		return
 	}
 
@@ -57,7 +59,15 @@ func SendDailyStatsForUser(db *gorm.DB, userID string, loc *time.Location) {
 		}
 		emoji := "🟢"
 		if data.Rate < 95.0 {
+			emoji = "🟡"
+		}
+		if data.Rate < 70.0 {
+			emoji = "🟠"
+
+		}
+		if data.Rate < 50.0 {
 			emoji = "🔴"
+
 		}
 		buffer.WriteString(fmt.Sprintf("  %s Validator: %s addr: (%s) rate: %.2f%%\n", emoji, moniker, addr, data.Rate))
 	}
@@ -77,13 +87,13 @@ type ValidatorRate struct {
 
 func CalculateRate(db *gorm.DB, date string) (map[string]ValidatorRate, int64, int64) {
 	rates := make(map[string]ValidatorRate)
-
+	log.Println(date)
 	// Step 1: Retrieve the min/max heights
 	var minHeight, maxHeight int64
 	err := db.Raw(`
 		SELECT MIN(block_height), MAX(block_height)
 		FROM daily_participations
-		WHERE date = ?
+		WHERE date(date) = ?
 	`, date).Row().Scan(&minHeight, &maxHeight)
 
 	if err != nil {
@@ -99,7 +109,7 @@ func CalculateRate(db *gorm.DB, date string) (map[string]ValidatorRate, int64, i
 			COUNT(*) AS total_blocks,
 			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_blocks
 		FROM daily_participations
-		WHERE date = ?
+		WHERE date(date) = ?
 		GROUP BY addr, moniker
 	`, date).Rows()
 	if err != nil {
@@ -134,10 +144,20 @@ func GetLastStoredHeight(db *gorm.DB) (int64, error) {
 	var result struct {
 		MaxHeight int64
 	}
+
+	// Exécute la requête
 	err := db.Raw(`SELECT MAX(block_height) AS max_height FROM daily_participations`).Scan(&result).Error
 	if err != nil {
 		return 0, fmt.Errorf("error reading last stored block: %w", err)
 	}
-	fmt.Printf("last block: %d\n", result.MaxHeight)
-	return result.MaxHeight, nil
+
+	var height int64
+	if result.MaxHeight > 0 {
+		height = result.MaxHeight - 1
+	} else {
+		height = 0
+	}
+
+	fmt.Printf("last block: %d\n", height)
+	return height, nil
 }
