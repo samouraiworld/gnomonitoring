@@ -182,12 +182,10 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 				switch {
 				case missed >= 30:
 					level = "CRITICAL"
-					// emoji = "🚨"
-					// prefix = "**"
+
 				case missed == 5:
 					level = "WARNING"
-					// emoji = "⚠️"
-					// prefix = ""
+
 				default:
 					continue
 				}

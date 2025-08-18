@@ -10,6 +10,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+type Govdao struct {
+	Id    int    `gorm:"primaryKey;autoIncrement:false;column:id"`
+	Url   string `gorm:"column:url;" `
+	Title string `gorm:"column:title;" `
+	Tx    string `gorm:"column:tx;" `
+}
 type ParticipationRate struct {
 	Addr              string
 	Moniker           string
@@ -73,29 +79,13 @@ type AlertLog struct {
 	SentAt      time.Time `gorm:"column:sent_at;autoCreateTime" `
 }
 
-//	type AlertLog struct {
-//		UserID      string    `gorm:"column:user_id;primaryKey" `
-//		Addr        string    `gorm:"column:addr;primaryKey" `
-//		Moniker     string    `gorm:"column:moniker;not null" `
-//		Level       string    `gorm:"column:level;primaryKey" `
-//		URL         string    `gorm:"column:url;primaryKey" `
-//		StartHeight int       `gorm:"column:start_height;primaryKey;not null" `
-//		EndHeight   int       `gorm:"column:end_height;primaryKey;not null" `
-//		Skipped     bool      `gorm:"column:skipped;not null" `
-//		Msg         string    `gorm:"column:msg" `
-//		SentAt      time.Time `gorm:"column:sent_at;autoCreateTime" `
-//	}
-type GovDAOState struct {
-	ID             int       `gorm:"primaryKey;check:id = 1"`
-	LastProposalID int       `gorm:"column:last_proposal_id;not null"`
-	UpdatedAt      time.Time `gorm:"column:updated_at;autoUpdateTime"`
-}
 type AddrMoniker struct {
 	Addr    string `gorm:"column:addr;primaryKey" `
 	Moniker string `gorm:"column:moniker;not null" `
 }
 type AlertSummary struct {
 	Moniker     string
+	Addr        string
 	Level       string
 	StartHeight int
 	EndHeight   int
@@ -125,14 +115,13 @@ func InitDB() (*gorm.DB, error) {
 
 	err = db.AutoMigrate(
 		&User{}, &AlertContact{}, &WebhookValidator{},
-		&WebhookGovDAO{}, &HourReport{}, &GovDAOState{},
-		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{},
+		&WebhookGovDAO{}, &HourReport{},
+		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{}, &Govdao{},
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	InitGovDaoState(db)
 	CreateMissingBlocksView(db)
 
 	return db, nil
@@ -193,31 +182,26 @@ ORDER BY addr, moniker, date, seq_id, block_height;
 }
 
 // ===================================State GovDao=====================================
-func InitGovDaoState(db *gorm.DB) error {
-
-	state := GovDAOState{
-		ID:             1,
-		LastProposalID: -1,
+func InsertGovdao(db *gorm.DB, id int, url, title, tx string) error {
+	govdao := Govdao{
+		Id:    id,
+		Url:   url,
+		Title: title,
+		Tx:    tx,
 	}
-	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&state).Error
+	return db.Create(&govdao).Error
 
 }
-func GetLastGovDaoProposalID(db *gorm.DB) (int, error) {
-	var state GovDAOState
 
-	err := db.First(&state, "id = ?", 1).Error
-	if err != nil {
-		return 0, err
-	}
-	return state.LastProposalID, nil
-}
-func UpdateLastGovDaoProposalID(db *gorm.DB, newID int) error {
-	return db.Model(&GovDAOState{}).
-		Where("id = ?", 1).
-		Updates(map[string]interface{}{
-			"last_proposal_id": newID,
-			"updated_at":       gorm.Expr("CURRENT_TIMESTAMP"),
-		}).Error
+func GetLastGovDaoInfo(db *gorm.DB) (Govdao, error) {
+	var govdao Govdao
+
+	err := db.
+		Order("id DESC").
+		Limit(1).
+		Find(&govdao).Error
+
+	return govdao, err
 }
 
 // // ==================================== GovDao ======================================
@@ -228,6 +212,7 @@ func InsertWebhook(user_id string, url string, description, wtype string, db *go
 		Description: description,
 		Type:        wtype,
 	}
+
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&govdao).Error
 
 }
@@ -463,8 +448,8 @@ func GetAlertLog(db *gorm.DB) ([]AlertSummary, error) {
 	var alerts []AlertSummary
 	result := db.
 		Model(&AlertLog{}).
-		Select("DISTINCT moniker, level, start_height, end_height,msg,sent_at").
-		Order("start_height desc").
+		Select("DISTINCT moniker, level,addr, start_height, end_height,sent_at").
+		Order("end_height desc").
 		Limit(10).
 		Scan(&alerts)
 

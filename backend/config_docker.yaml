@@ -1,4 +1,4 @@
-interval_seconde: 1
+interval_seconde: 1200
 backend_port: "8989"
 allow_origin: "http://gnomonitoring-frontend:3000"
 rpc_endpoint: "https://test7.onbloc.xyz"

@@ -28,7 +28,7 @@ func main() {
 	go gnovalidator.StartValidatorMonitoring(db) // gnovalidator realtime
 	go scheduler.InitScheduler(db)               // for dailyreport
 
-	go govdao.StartGovDaoManager(db)
+	go govdao.StartGovDAo(db)
 
 	gnovalidator.Init()                  // init metrics prometheus
 	gnovalidator.StartMetricsUpdater(db) // update metrics prometheus / 5 min
