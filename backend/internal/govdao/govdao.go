@@ -55,7 +55,7 @@ type Transaction struct {
 }
 
 type PayloadData struct {
-	GetTransactions []Transaction `json:"getTransactions"`
+	GetTransactions Transaction `json:"getTransactions"`
 }
 
 type Payload struct {
@@ -244,9 +244,9 @@ func WebsocketGovdao(db *gorm.DB) {
 			continue
 		}
 
-		for _, tx := range msg.Payload.Data.GetTransactions {
-			ProcessProposal(tx, "socket", db)
-		}
+		tx := msg.Payload.Data.GetTransactions
+		ProcessProposal(tx, "socket", db)
+
 	}
 
 }

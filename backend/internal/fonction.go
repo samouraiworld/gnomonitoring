@@ -254,7 +254,6 @@ func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) 
 		UserID        string
 		URL           string
 		Type          string
-		TYPE          string
 		LastCheckedID int
 	}
 	var webhooks []Webhook
@@ -263,7 +262,7 @@ func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) 
 	}
 	for _, wh := range webhooks {
 
-		SendReportGovdao(id, title, urlgnoweb, urltx, wh.TYPE, wh.URL)
+		SendReportGovdao(id, title, urlgnoweb, urltx, wh.Type, wh.URL)
 
 	}
 
@@ -278,6 +277,7 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 
 		msg := fmt.Sprintf("--- \n 🗳️ ** New Proposal N° %d: %s ** -  \n 🔗source: %s \n tx: %s",
 			id, title, urlgnoweb, urltx)
+		log.Println(msg)
 		sendErr := SendDiscordAlert(msg, urlwebhook)
 		if sendErr != nil {
 			log.Printf("❌ Failed to send alert to %s (%s): %v", urlwebhook, typew, sendErr)
