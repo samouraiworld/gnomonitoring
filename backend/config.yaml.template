@@ -1,8 +1,10 @@
-interval_seconde: 1
+interval_seconde: 1200
 backend_port: "8989"
 allow_origin: "http://localhost:3000"
-rpc_endpoint: "https://rpc.test6.testnets.gno.land"
+rpc_endpoint: "https://rpc.test7.testnets.gno.land"
 windows_size: 100
 daily_report_hour: 10
 daily_report_minute: 34
 metrics_port: 8888
+gnoweb: "https://test7.testnets.gno.land"
+graphql: "indexer.test7.testnets.gno.land/graphql/query"
