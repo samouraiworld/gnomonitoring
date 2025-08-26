@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 // Type à adapter à ta réponse
 type Incident = {
     Moniker: string;
+    Addr: string;
     Level: string;
     StartHeight: number;
     EndHeight: number;

@@ -23,6 +23,7 @@ type config struct {
 	DailyReportMinute int    `yaml:"daily_report_minute"`
 	MetricsPort       int    `yaml:"metrics_port"`
 	Gnoweb            string `yaml:"gnoweb"`
+	Graphql           string `yaml:"graphql"`
 }
 
 var Config config
@@ -87,25 +88,6 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 	for _, wh := range webhooks {
-
-		//Check if in the daily participate table for an addr the column participate = 1 and the value and block_heigt > end height
-		// Then send the alert, otherwise no
-		// var countparticipated int
-		// err = db.Raw(`
-		// 	SELECT sum(participated) FROM daily_participations
-		// 	WHERE addr = ? AND block_height= (?-1)
-		// 	`, addr, start_height).Scan(&countparticipated).Error
-		// if err != nil {
-		// 	log.Printf("❌ DB error checking count participated: %v", err)
-		// 	continue
-		// }
-		// log.Println("countparticipated", countparticipated)
-		// if countparticipated == 0 {
-		// 	log.Printf("⏱️ Skipping alert for %s (%s, %s): limit reached", moniker, wh.UserID, wh.URL)
-		// 	database.InsertAlertlog(db, wh.UserID, addr, moniker, level, wh.URL, start_height, end_height, false, "", time.Now())
-
-		// 	continue
-		// }
 
 		//================== Build msg ===============
 
@@ -264,4 +246,55 @@ func SendInfoValidateur(msg string, level string, db *gorm.DB) error {
 
 	}
 	return nil
+}
+
+func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) error {
+
+	type Webhook struct {
+		UserID        string
+		URL           string
+		Type          string
+		LastCheckedID int
+	}
+	var webhooks []Webhook
+	if err := db.Model(&database.WebhookGovDAO{}).Find(&webhooks).Error; err != nil {
+		return fmt.Errorf("failed to fetch webhooks: %w", err)
+	}
+	for _, wh := range webhooks {
+
+		SendReportGovdao(id, title, urlgnoweb, urltx, wh.Type, wh.URL)
+
+	}
+
+	return nil
+
+}
+
+func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook string) error {
+
+	switch typew {
+	case "discord":
+
+		msg := fmt.Sprintf("--- \n 🗳️ ** New Proposal N° %d: %s ** -  \n 🔗source: %s \n tx: %s",
+			id, title, urlgnoweb, urltx)
+		log.Println(msg)
+		sendErr := SendDiscordAlert(msg, urlwebhook)
+		if sendErr != nil {
+			log.Printf("❌ Failed to send alert to %s (%s): %v", urlwebhook, typew, sendErr)
+
+		}
+
+	case "slack":
+		msg := fmt.Sprintf("--- \n 🗳️ * New Proposal N° %d: %s * -  \n 🔗source: %s \n tx: %s",
+			id, title, urlgnoweb, urltx)
+
+		sendErr := SendSlackAlert(msg, urlwebhook)
+		if sendErr != nil {
+			log.Printf("❌ Failed to send alert to %s (%s): %v", urlwebhook, typew, sendErr)
+
+		}
+
+	}
+	return nil
+
 }

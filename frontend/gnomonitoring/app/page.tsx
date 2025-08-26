@@ -45,24 +45,24 @@ export default function Home() {
             {incidents.length === 0 && <li>No incidents found.</li>}
             {incidents.map((incident, index) => {
               // Choix icône & couleur selon level
-              // let icon, color;
-              // switch (incident.Level) {
-              //   case "CRITICAL":
-              //     icon = "🔴";
-              //     color = "text-red-600 dark:text-red-400";
-              //     break;
-              //   case "WARNING":
-              //     icon = "⚠️";
-              //     color = "text-yellow-600 dark:text-yellow-400";
-              //     break;
-              //   case "RESOLVED":
-              //     icon = "✅";
-              //     color = "text-green-600 dark:text-green-400";
-              //     break;
-              //   default:
-              //     icon = "ℹ️";
-              //     color = "text-gray-600 dark:text-gray-400";
-              // }
+              let icon, color;
+              switch (incident.Level) {
+                case "CRITICAL":
+                  icon = "🔴";
+                  color = "text-red-600 dark:text-red-400";
+                  break;
+                case "WARNING":
+                  icon = "⚠️";
+                  color = "text-yellow-600 dark:text-yellow-400";
+                  break;
+                case "RESOLVED":
+                  icon = "✅";
+                  color = "text-green-600 dark:text-green-400";
+                  break;
+                default:
+                  icon = "ℹ️";
+                  color = "text-gray-600 dark:text-gray-400";
+              }
 
               return (
                 <li key={index} className={`flex items-start space-x-2`}>
@@ -76,7 +76,10 @@ export default function Home() {
                       [{formatSentAt(incident.SentAt)}]
                     </span>{" "}
                     <span className={`font-semibold`}>
-                      {incident.Msg}
+                      {icon} {incident.Level} {incident.Moniker}
+                    </span>{" "}
+                    <span className={`text`}>
+                      addr : {incident.Addr} missed {incident.EndHeight - incident.StartHeight}
                     </span>{" "}
 
 
@@ -136,11 +139,18 @@ export default function Home() {
                     : "Participation this Week:"}
               </p>
               <ul className="list-disc pl-5">
-                {participationData[activeTab]!.map((val) => (
-                  <li key={val.Addr}>
-                    {val.Moniker} : {val.ParticipationRate.toFixed(1)}%
-                  </li>
-                ))}
+                {participationData[activeTab]!.map((val) => {
+                  let emoji = "🟢";
+                  if (val.ParticipationRate < 95.0) emoji = "🟡";
+                  if (val.ParticipationRate < 70.0) emoji = "🟠";
+                  if (val.ParticipationRate < 50.0) emoji = "🔴";
+
+                  return (
+                    <li key={val.Addr}>
+                      {emoji} {val.Moniker} {val.Addr} : {val.ParticipationRate.toFixed(1)}%
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}
@@ -182,11 +192,20 @@ export default function Home() {
           </li>
           <li>
             <a
-              href="https://test7.testnets.gno.land/"
+              href="https://gnoweb.test7.testnets.gno.land"
               target="_blank"
               className="block px-4 py-2 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300 rounded hover:bg-green-200 dark:hover:bg-green-800 transition"
             >
               🌐 GnoWeb Interface
+            </a>
+          </li>
+          <li>
+            <a
+              href="https://gnolove.world/"
+              target="_blank"
+              className="block px-4 py-2 bg-green-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300 rounded hover:bg-blue-200 dark:hover:bg-blue-800 transition"
+            >
+              🌐 Gnolove
             </a>
           </li>
         </ul>

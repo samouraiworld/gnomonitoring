@@ -6,3 +6,4 @@ Validator/secrets/*
 **webhooks.db*
 **.db
 **schema.sql
+**govdao copy.go.back

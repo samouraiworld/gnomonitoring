@@ -1,6 +1,8 @@
 package main
 
 import (
+	"log"
+
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/api"
@@ -15,9 +17,23 @@ import (
 func main() {
 	internal.LoadConfig()
 
-	db, err := database.InitDB() // Init db
-	println(db)
-	println(err)
+	db, err := database.InitDB()
+	if err != nil {
+		log.Fatalf("❌ Failed to initialize database: %v", err)
+	}
+
+	// Vérifier la connexion
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("❌ Failed to get underlying SQL DB: %v", err)
+	}
+
+	if err := sqlDB.Ping(); err != nil {
+		log.Fatalf("❌ Database is not reachable: %v", err)
+	}
+
+	log.Println("✅ Database connection established successfully")
+
 	// database.InsertAddrMoniker(db, "g1sgr3gnr7uy5hvpqfvyvh0ld09waj86xja844lg", "Samourai")
 	// database.InsertAddrMoniker(db, "g1mxguhd5zacar64txhfm0v7hhtph5wur5hx86vs", "devX Val1")
 	// database.InsertAddrMoniker(db, "g1t9ctfa468hn6czff8kazw08crazehcxaqa2uaa", "devX Val2")
@@ -28,7 +44,7 @@ func main() {
 	go gnovalidator.StartValidatorMonitoring(db) // gnovalidator realtime
 	go scheduler.InitScheduler(db)               // for dailyreport
 
-	go govdao.StartGovDaoManager(db)
+	go govdao.StartGovDAo(db)
 
 	gnovalidator.Init()                  // init metrics prometheus
 	gnovalidator.StartMetricsUpdater(db) // update metrics prometheus / 5 min
