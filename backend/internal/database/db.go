@@ -441,7 +441,7 @@ func InsertAlertlog(db *gorm.DB, addr, moniker, level string, startheight, endhe
 		Skipped:     skipped,
 		SentAt:      sent,
 	}
-	return db.Create(&alert).Error
+	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&alert).Error
 }
 
 func GetAlertLog(db *gorm.DB) ([]AlertSummary, error) {

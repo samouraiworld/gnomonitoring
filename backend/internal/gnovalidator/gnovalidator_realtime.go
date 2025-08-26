@@ -30,7 +30,8 @@ type BlockParticipation struct {
 var MonikerMap = make(map[string]string)
 
 func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
-
+	// simulateCount := 0
+	// simulateMax := 4
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -109,6 +110,13 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				for _, precommit := range block.Block.LastCommit.Precommits {
 					if precommit != nil {
 						participating[precommit.ValidatorAddress.String()] = true
+
+						// //for test:
+
+						// if MonikerMap[precommit.ValidatorAddress.String()] == "Samourai" && simulateCount < simulateMax {
+						// 	participating[precommit.ValidatorAddress.String()] = false
+						// 	simulateCount++
+						// }
 					}
 				}
 
@@ -205,8 +213,54 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 				}
 
 				if count > 0 {
-					log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
+					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
 					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now())
+
+					continue
+				}
+
+				// 2. Check if this start_height is already covered by another alert range
+				var countint int64
+				err = db.Raw(`
+						SELECT COUNT(*) 
+						FROM alert_logs
+						WHERE addr = ?
+						AND level IN ('CRITICAL')
+						AND ? BETWEEN start_height AND end_height
+						`, addr, start_height).Scan(&countint).Error
+				if err != nil {
+					log.Printf("❌ DB error checking alert_logs: %v", err)
+
+					continue
+				}
+				if countint > 0 {
+					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
+					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now())
+
+					continue
+				}
+
+				// 3 check if addr is mute
+
+				var mute int
+				err = db.Raw(`
+					SELECT COUNT(*) FROM alert_logs
+       				WHERE addr = ? AND level = "MUTED"
+       				AND strftime('%s',sent_at) >= strftime('%s','now','-60 minutes');
+
+						`, addr).Scan(&mute).Error
+
+				if err != nil {
+					log.Printf("❌ DB error checking alert_logs: %v", err)
+
+					continue
+				}
+				if mute >= 1 {
+					// Activer un mute d'1h
+					log.Printf("🚫 Too many alerte for %s, muting for 1h", moniker)
+					// msg := fmt.Sprintf("🚫 Too many alerte for %s addr: %s, muting for 1h", moniker, addr)
+					// internal.SendInfoValidateur(msg, "info", db)
+					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now())
 
 					continue
 				}
@@ -234,10 +288,18 @@ func SendResolveAlerts(db *gorm.DB) {
 
 	var alerts []LastAlert
 
+	// err := db.Raw(`
+	// 	SELECT addr, moniker, max(end_height) as end_height ,start_height
+	// 	FROM daily_missing_series
+	// 	where missed >=5
+	// 	group by start_height
+
+	// `).Scan(&alerts).Error
 	err := db.Raw(`
-		SELECT addr, moniker, max(end_height) as end_height ,start_height
-		FROM daily_missing_series
-		group by start_height
+			SELECT addr, moniker, max(end_height) as end_height ,max(start_height)
+	FROM daily_missing_series
+		where missed >=5
+		group by addr
 
 	`).Scan(&alerts).Error
 	if err != nil {
@@ -250,8 +312,8 @@ func SendResolveAlerts(db *gorm.DB) {
 		err := db.Raw(`
 		SELECT COUNT(*) FROM alert_logs
 		WHERE addr = ? and level = "RESOLVED"
-		AND start_height= ? AND end_height = ?
-		`, a.Addr, a.StartHeight, a.EndHeight).Scan(&count).Error
+		AND  end_height = ?
+		`, a.Addr, a.EndHeight).Scan(&count).Error
 
 		if err != nil {
 			log.Printf("❌ DB error checking alert_logs: %v", err)
@@ -260,6 +322,23 @@ func SendResolveAlerts(db *gorm.DB) {
 
 		if count > 0 {
 			log.Printf("⏱️ Skipping resolve alert for %s : already sent", a.Moniker)
+			continue
+		}
+		// Backoff/mute mechanism for repeated resolves
+		var recentResolves int64
+		err = db.Raw(`
+        SELECT COUNT(*) FROM alert_logs
+        WHERE addr = ? AND level = "RESOLVED"
+       AND strftime('%s',sent_at) >= strftime('%s','now','-60 minutes');
+    `, a.Addr).Scan(&recentResolves).Error
+		if err != nil {
+			log.Printf("❌ DB error checking recent resolves: %v", err)
+			continue
+		}
+		if recentResolves >= 4 {
+			// Activer un mute d'1h
+			log.Printf("🚫 Too many resolves for %s, muting for 1h", a.Moniker)
+			database.InsertAlertlog(db, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now())
 			continue
 		}
 
@@ -331,10 +410,5 @@ func StartValidatorMonitoring(db *gorm.DB) {
 	WatchNewValidators(db, 5*time.Minute)
 	CollectParticipation(db, client)         // collect participant
 	WatchValidatorAlerts(db, 20*time.Second) // DB-based of alerts
-	// go func() {
-	// 	for {
-	// 		SendResolveAlerts(db)
-	// 		time.Sleep(40 * time.Second) // check if alert  resolve
-	// 	}
-	// }()
+
 }
