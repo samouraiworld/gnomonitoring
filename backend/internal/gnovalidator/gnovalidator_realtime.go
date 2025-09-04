@@ -31,7 +31,7 @@ var MonikerMap = make(map[string]string)
 
 func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 	// simulateCount := 0
-	// simulateMax := 4
+	// simulateMax := 4   // for test
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {

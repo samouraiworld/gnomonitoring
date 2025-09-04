@@ -70,6 +70,7 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 				Name:    m[1],
 				Address: m[2],
 			})
+			// log.Printf("name %s addr %s", m[1], m[2])
 		}
 
 		log.Printf("✅ Fetched %d valopers from valopers.Render page %d\n", len(matches), page)

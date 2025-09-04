@@ -11,10 +11,11 @@ import (
 )
 
 type Govdao struct {
-	Id    int    `gorm:"primaryKey;autoIncrement:false;column:id"`
-	Url   string `gorm:"column:url;" `
-	Title string `gorm:"column:title;" `
-	Tx    string `gorm:"column:tx;" `
+	Id     int    `gorm:"primaryKey;autoIncrement:false;column:id"`
+	Url    string `gorm:"column:url;" `
+	Title  string `gorm:"column:title;" `
+	Tx     string `gorm:"column:tx;" `
+	Status string `gorm:"column:status;" `
 }
 type ParticipationRate struct {
 	Addr              string
@@ -182,12 +183,13 @@ ORDER BY addr, moniker, date, seq_id, block_height;
 }
 
 // ===================================State GovDao=====================================
-func InsertGovdao(db *gorm.DB, id int, url, title, tx string) error {
+func InsertGovdao(db *gorm.DB, id int, url, title, tx, status string) error {
 	govdao := Govdao{
-		Id:    id,
-		Url:   url,
-		Title: title,
-		Tx:    tx,
+		Id:     id,
+		Url:    url,
+		Title:  title,
+		Tx:     tx,
+		Status: status,
 	}
 	return db.Create(&govdao).Error
 

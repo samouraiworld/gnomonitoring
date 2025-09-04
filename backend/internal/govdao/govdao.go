@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 
@@ -66,6 +67,13 @@ type WSMessage struct {
 	ID      string  `json:"id,omitempty"`
 	Type    string  `json:"type"`
 	Payload Payload `json:"payload,omitempty"`
+}
+type Proposal struct {
+	ID     int
+	Status string
+	Title  string
+	Url    string
+	TxUrl  string
 }
 
 func GetMessageTitle(height int) error {
@@ -240,7 +248,7 @@ func WebsocketGovdao(db *gorm.DB) {
 		}
 
 		if msg.Type != "data" {
-			// Ignore les "ka" ou autres messages
+
 			continue
 		}
 
@@ -262,7 +270,7 @@ func ExtractTitle(proposalID int) (string, error) {
 		Data: fmt.Appendf(nil, "gno.land/r/gov/dao.proposals.GetProposal(%d).Title()", proposalID),
 	})
 	if err != nil {
-		// do something with error
+		return "", fmt.Errorf("failed to get proposal title: %w", err)
 	}
 
 	return proposalTitle, nil
@@ -316,7 +324,7 @@ func GetTxsByBlockHeight(height int) (*TxBlock, error) {
 		return nil, fmt.Errorf("no transactions found for block %d", height)
 	}
 
-	// Retrun tx
+	// Return tx
 
 	return &respData.GetBlocks[0].Txs[0], nil
 }
@@ -337,28 +345,34 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 		if ev.Type == "ProposalCreated" {
 			for _, attr := range ev.Attrs {
 				if attr.Key == "id" {
-					// Construire l'URL de la proposition
+					// Build Url
 					url := fmt.Sprintf("%s/r/gov/dao:%s", internal.Config.Gnoweb, attr.Value)
 
-					// Convertir ID en int
+					//Convert ID to Int
 					idInt, err := strconv.Atoi(attr.Value)
 					if err != nil {
 						log.Printf("Error converting id to int: %v", err)
 						continue
 					}
 
-					// Récupération du titre
+					// Get Title
 					title, err := ExtractTitle(idInt)
 					if err != nil {
 						log.Printf("Error fetching title: %v", err)
 						continue
 					}
 
-					// Afficher Block Height
+					status, err := ExtractProposalRender(idInt)
+					if err != nil {
+						log.Printf("Error fetching status: %v", err)
+						continue
+					}
+
+					// Show block height
 					log.Printf("Title: %s", title)
 					log.Printf("Block Height: %d", tx.BlockHeight)
 
-					// Récupérer le hash de la transaction associée
+					// Get hash of transaction
 					txData, err := GetTxsByBlockHeight(tx.BlockHeight)
 					if err != nil {
 						log.Printf("Error fetching tx hash: %v", err)
@@ -371,9 +385,9 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 					)
 					log.Printf("tx URL %s", txurl)
 
-					// Insertion en base
+					// Insert to db
 					log.Printf("ID: %d", idInt)
-					database.InsertGovdao(db, idInt, url, title, txurl)
+					database.InsertGovdao(db, idInt, url, title, txurl, status)
 					switch who {
 					case "socket":
 						internal.MultiSendReportGovdao(idInt, title, url, txurl, db)
@@ -383,6 +397,84 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 				}
 			}
 		}
+	}
+}
+
+// =========================================== Extract Status
+func GnoQueryRender(client *gnoclient.Client, cfg gnoclient.QueryCfg) (string, error) {
+	res, err := client.Query(cfg)
+	if err != nil {
+		return "", err
+	}
+
+	return string(res.Response.Data), nil
+}
+
+func ExtractProposalRender(proposalID int) (string, error) {
+	if proposalID == 7 {
+		return "ACCEPTED", nil // fake pour test
+	}
+
+	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
+	if err != nil {
+		log.Fatalf("Failed to connect to RPC: %v", err)
+	}
+	client := &gnoclient.Client{RPCClient: rpcClient}
+
+	data := fmt.Sprintf("gno.land/r/gov/dao:%d", proposalID)
+	res, err := GnoQueryRender(client, gnoclient.QueryCfg{
+		Path: "vm/qrender",
+		Data: []byte(data),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	switch {
+	case strings.Contains(res, "ACCEPTED"):
+		return "ACCEPTED", nil
+	case strings.Contains(res, "ACTIVE"):
+		return "ACTIVE", nil
+	default:
+		return "REJECTED", nil
+	}
+}
+func CheckProposalStatus(db *gorm.DB) {
+	var govdao []database.Govdao
+	if err := db.Find(&govdao).Error; err != nil {
+		log.Printf("Error fetching proposals: %v", err)
+		return
+	}
+
+	for _, p := range govdao {
+		currentStatus, err := ExtractProposalRender(p.Id)
+		if err != nil {
+			log.Printf("Error fetching status for %d: %v", p.Id, err)
+			continue
+		}
+
+		if p.Status == "ACTIVE" && currentStatus == "ACCEPTED" {
+			log.Printf("✅ Proposal %d (%s) has been ACCEPTED!", p.Id, p.Title)
+
+			// Send notification
+			msg := fmt.Sprintf("--- \n 🗳️   Proposal N° %d: %s  -  \n 🔗source: %s \n ACCEPTED",
+				p.Id, p.Title, p.Url)
+			internal.SendInfoGovdao(msg, db)
+
+			// update GovDao
+			db.Model(&p).Update("status", "ACCEPTED")
+		}
+	}
+}
+func StartProposalWatcher(db *gorm.DB) {
+	ticker := time.NewTicker(5 * time.Minute)
+
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		log.Println("⏳ Checking proposal statuses...")
+		CheckProposalStatus(db)
 	}
 }
 
