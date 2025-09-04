@@ -356,7 +356,7 @@ func SendResolveAlerts(db *gorm.DB) {
 			// log.Printf("Not resolve error")
 			continue
 		}
-		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s) \n Block %d = 1", a.Moniker, a.Addr, a.EndHeight+1)
+		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s) at Block %d ", a.Moniker, a.Addr, a.EndHeight+1)
 		internal.SendInfoValidateur(resolveMsg, "RESOLVED", db)
 		database.InsertAlertlog(db, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now())
 
