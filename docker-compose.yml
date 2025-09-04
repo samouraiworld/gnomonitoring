@@ -13,8 +13,8 @@ services:
     ports:
       - 8888:8888 #metrics
       - 8989:8989 #backend
-    
     command: [ "go", "run", "main.go","--disable-report false" ]
+    
   frontend:
       build:
         context: ./frontend/gnomonitoring
