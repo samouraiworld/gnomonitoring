@@ -16,13 +16,14 @@ import (
 
 func main() {
 	internal.LoadConfig()
+	// Initialise les flags
+	internal.InitFlags()
 
 	db, err := database.InitDB()
 	if err != nil {
 		log.Fatalf("❌ Failed to initialize database: %v", err)
 	}
 
-	// Vérifier la connexion
 	sqlDB, err := db.DB()
 	if err != nil {
 		log.Fatalf("❌ Failed to get underlying SQL DB: %v", err)
@@ -34,17 +35,16 @@ func main() {
 
 	log.Println("✅ Database connection established successfully")
 
-	// database.InsertAddrMoniker(db, "g1sgr3gnr7uy5hvpqfvyvh0ld09waj86xja844lg", "Samourai")
-	// database.InsertAddrMoniker(db, "g1mxguhd5zacar64txhfm0v7hhtph5wur5hx86vs", "devX Val1")
-	// database.InsertAddrMoniker(db, "g1t9ctfa468hn6czff8kazw08crazehcxaqa2uaa", "devX Val2")
-	// database.InsertAddrMoniker(db, "g15zkeyz2gwrjluqj6eremllrh6nx7mt4tlz8f32", "Onbloc 1")
-	// database.InsertAddrMoniker(db, "g1v7wl7qlakzku5mrafmgntfuvd7xjrluhuhwewp", "Onbloc 2")
-	// database.InsertAddrMoniker(db, "g14anvsqpkgz6mlvrnjpc4x6mc9ncz7dh3vlmruk", "Berty")
-
 	go gnovalidator.StartValidatorMonitoring(db) // gnovalidator realtime
-	go scheduler.InitScheduler(db)               // for dailyreport
+
+	if !*internal.DisableReport {
+		go scheduler.InitScheduler(db)
+	} else {
+		log.Println("⚠️ Daily report scheduler disabled by flag")
+	} // for dailyreport
 
 	go govdao.StartGovDAo(db)
+	go govdao.StartProposalWatcher(db)
 
 	gnovalidator.Init()                  // init metrics prometheus
 	gnovalidator.StartMetricsUpdater(db) // update metrics prometheus / 5 min

@@ -298,3 +298,38 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 	return nil
 
 }
+
+func SendInfoGovdao(msg string, db *gorm.DB) error {
+	type Webhook struct {
+		UserID        string
+		URL           string
+		Type          string
+		LastCheckedID int
+	}
+
+	var webhooks []Webhook
+	if err := db.Model(&database.WebhookGovDAO{}).Find(&webhooks).Error; err != nil {
+		return fmt.Errorf("failed to fetch webhooks: %w", err)
+	}
+	for _, wh := range webhooks {
+		switch wh.Type {
+		case "discord":
+			sendErr := SendDiscordAlert(msg, wh.URL)
+			if sendErr != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+				continue
+			}
+
+		case "slack":
+			sendErr := SendSlackAlert(msg, wh.URL)
+			if sendErr != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+				continue
+			}
+
+		}
+		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
+
+	}
+	return nil
+}

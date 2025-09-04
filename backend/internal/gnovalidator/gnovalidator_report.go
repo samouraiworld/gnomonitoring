@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
@@ -73,11 +74,9 @@ func SendDailyStatsForUser(db *gorm.DB, userID string, loc *time.Location) {
 	}
 
 	msg := buffer.String()
+	log.Println(msg)
+	SendUserReportInChunks(userID, msg, db, 1500)
 
-	err := internal.SendUserReportAlert(userID, msg, db)
-	if err != nil {
-		log.Printf("[SendDailyStatsForUser] Send error for %s: %v", userID, err)
-	}
 }
 
 type ValidatorRate struct {
@@ -145,7 +144,6 @@ func GetLastStoredHeight(db *gorm.DB) (int64, error) {
 		MaxHeight int64
 	}
 
-	// Exécute la requête
 	err := db.Raw(`SELECT MAX(block_height) AS max_height FROM daily_participations`).Scan(&result).Error
 	if err != nil {
 		return 0, fmt.Errorf("error reading last stored block: %w", err)
@@ -160,4 +158,32 @@ func GetLastStoredHeight(db *gorm.DB) (int64, error) {
 
 	fmt.Printf("last block: %d\n", height)
 	return height, nil
+}
+func SendUserReportInChunks(userID string, fullMsg string, db *gorm.DB, maxLen int) {
+	lines := strings.Split(fullMsg, "\n")
+
+	var buffer strings.Builder
+	for _, line := range lines {
+		// +1
+		if buffer.Len()+len(line)+1 > maxLen {
+			// send chunk
+			err := internal.SendUserReportAlert(userID, buffer.String(), db)
+			if err != nil {
+				log.Printf("[SendUserReportInChunks] Send error for %s: %v", userID, err)
+			}
+			buffer.Reset()
+		}
+
+		// add line to buffer
+		buffer.WriteString(line)
+		buffer.WriteString("\n")
+	}
+
+	//send ultimate part
+	if buffer.Len() > 0 {
+		err := internal.SendUserReportAlert(userID, buffer.String(), db)
+		if err != nil {
+			log.Printf("[SendUserReportInChunks] Send error for %s: %v", userID, err)
+		}
+	}
 }
