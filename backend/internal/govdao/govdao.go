@@ -411,9 +411,9 @@ func GnoQueryRender(client *gnoclient.Client, cfg gnoclient.QueryCfg) (string, e
 }
 
 func ExtractProposalRender(proposalID int) (string, error) {
-	if proposalID == 7 {
-		return "ACCEPTED", nil // fake pour test
-	}
+	// if proposalID == 7 {
+	// 	return "ACCEPTED", nil // fake pour test
+	// }
 
 	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
 	if err != nil {
