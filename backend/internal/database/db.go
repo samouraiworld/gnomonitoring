@@ -95,8 +95,8 @@ type AlertSummary struct {
 }
 
 // CReate index
-func InitDB() (*gorm.DB, error) {
-	db, err := gorm.Open(sqlite.Open("./db/webhooks.db"), &gorm.Config{})
+func InitDB(dbPath string) (*gorm.DB, error) {
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("DB opening error: %v", err)
 	}
@@ -367,8 +367,7 @@ func UpdateHeureReport(db *gorm.DB, H, M int, T, userID string) error {
 }
 func GetHourReport(db *gorm.DB, userID string) (*HourReport, error) {
 	var hr HourReport
-	err := db.
-		Select("daily_report_hour, daily_report_minute").
+	err := db.Model(&HourReport{}).
 		Where("user_id = ?", userID).
 		First(&hr).Error
 	if err != nil {

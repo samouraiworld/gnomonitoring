@@ -1,59 +1,16 @@
 package database_test
 
 import (
-	"database/sql"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 )
 
-func setupInMemoryDB(t *testing.T) *sql.DB {
-	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("Failed to create in-memory DB: %v", err)
-	}
-
-	schema := `
-	CREATE TABLE users (
-		user_id TEXT PRIMARY KEY,
-		email TEXT,
-		nameuser TEXT,
-		daily_report_hour INTEGER,
-		daily_report_minute INTEGER
-	);
-	CREATE TABLE webhooks_govdao (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user_id TEXT,
-		url TEXT,
-		type TEXT,
-		last_checked_id INTEGER
-	);
-	CREATE TABLE webhooks_validator (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user_id TEXT,
-		url TEXT,
-		type TEXT
-	);
-	CREATE TABLE alert_contacts (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		user_id TEXT,
-		moniker TEXT,
-		namecontact TEXT,
-		mention_tag TEXT
-	);
-	`
-	_, err = db.Exec(schema)
-	if err != nil {
-		t.Fatalf("Failed to create schema: %v", err)
-	}
-	return db
-}
-
 func TestInsertAndGetUser(t *testing.T) {
-	db := setupInMemoryDB(t)
-	defer db.Close()
+	db := testoutils.NewTestDB(t)
 
 	err := database.InsertUser("user123", "test@example.com", "Alice", db)
 	if err != nil {
@@ -64,14 +21,13 @@ func TestInsertAndGetUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserById failed: %v", err)
 	}
-	if user == nil || user.EMAIL != "test@example.com" {
+	if user == nil || user.Email != "test@example.com" {
 		t.Errorf("Unexpected user result: %+v", user)
 	}
 }
 
 func TestInsertWebhookAndList(t *testing.T) {
-	db := setupInMemoryDB(t)
-	defer db.Close()
+	db := testoutils.NewTestDB(t)
 
 	err := database.InsertWebhook("user123", "https://discord.com/hook", "test discord webhook", "discord", db)
 	if err != nil {
@@ -91,8 +47,7 @@ func TestInsertWebhookAndList(t *testing.T) {
 }
 
 func TestUpdateUser(t *testing.T) {
-	db := setupInMemoryDB(t)
-	defer db.Close()
+	db := testoutils.NewTestDB(t)
 
 	err := database.InsertUser("user123", "initial@example.com", "Initial", db)
 	if err != nil {
@@ -108,7 +63,7 @@ func TestUpdateUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserById failed: %v", err)
 	}
-	if user.NAME != "UpdatedName" || user.EMAIL != "new@example.com" {
+	if user.Name != "UpdatedName" || user.Email != "new@example.com" {
 		t.Errorf("User not updated correctly: %+v", user)
 	}
 }
