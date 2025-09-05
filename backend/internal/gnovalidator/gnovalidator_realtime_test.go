@@ -1,41 +1,18 @@
 package gnovalidator
 
 import (
-	"database/sql"
 	"testing"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/testutils"
+	"github.com/stretchr/testify/require"
 )
 
-// Setup mock DB schema for tests
-func setupTestDB(t *testing.T) *sql.DB {
-	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("failed to open test DB: %v", err)
-	}
-
-	schema := `
-	CREATE TABLE IF NOT EXISTS daily_participation (
-		date TEXT NOT NULL,
-		block_height INTEGER NOT NULL,
-		moniker TEXT NOT NULL,
-		addr TEXT NOT NULL,
-		participated BOOLEAN NOT NULL,
-		PRIMARY KEY (date, block_height, moniker)
-	);
-	`
-
-	if _, err := db.Exec(schema); err != nil {
-		t.Fatalf("failed to create schema: %v", err)
-	}
-
-	return db
-}
-
 func TestSaveParticipation(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	db := testutils.NewTestDB(t)
+	//defer db.Close()
 
 	mockParticipation := map[string]bool{
 		"val1": true,
@@ -53,23 +30,20 @@ func TestSaveParticipation(t *testing.T) {
 	}
 
 	today := time.Now().Format("2006-01-02")
-	row := db.QueryRow(`SELECT participated FROM daily_participation WHERE date = ? AND addr = ?`, today, "val1")
+	//row := db.QueryRow(`SELECT participated FROM daily_participation WHERE date = ? AND addr = ?`, today, "val1")
+	var participation database.DailyParticipation
+	err = db.Model(&database.DailyParticipation{}).Where("addr = ? AND date = ?", "val1", today).First(&participation).Error
+	require.NoError(t, err)
 
-	var participated bool
-	if err := row.Scan(&participated); err != nil {
-		t.Errorf("expected record for val1, got error: %v", err)
-	}
-	if !participated {
+	if !participation.Participated {
 		t.Errorf("expected val1 to have participated")
 	}
 }
 
 func TestGetLastStoredHeight_Empty(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	db := testutils.NewTestDB(t)
 
 	height, err := GetLastStoredHeight(db)
-	if err == nil {
-		t.Errorf("expected error on empty DB, got height: %d", height)
-	}
+	require.NoError(t, err)
+	require.Equal(t, int64(0), height)
 }

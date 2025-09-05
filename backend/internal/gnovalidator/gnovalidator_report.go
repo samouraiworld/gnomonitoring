@@ -92,7 +92,7 @@ func CalculateRate(db *gorm.DB, date string) (map[string]float64, int64, int64) 
 	var minHeight, maxHeight int64
 	err := db.Raw(`
 		SELECT MIN(block_height), MAX(block_height)
-		FROM daily_participation
+		FROM daily_participations
 		WHERE date = ?
 	`, date).Row().Scan(&minHeight, &maxHeight)
 
@@ -108,7 +108,7 @@ func CalculateRate(db *gorm.DB, date string) (map[string]float64, int64, int64) 
 			moniker,
 			COUNT(*) AS total_blocks,
 			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_blocks
-		FROM daily_participation
+		FROM daily_participations
 		WHERE date = ?
 		GROUP BY addr, moniker
 	`, date).Rows()

@@ -1,40 +1,15 @@
 package gnovalidator_test
 
 import (
-	"database/sql"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/testutils"
 	"gorm.io/gorm"
 )
-
-func setupTestDB(t *testing.T) *gorm.DB {
-	os.Remove("test_report.db") // Clean old file if any
-	db, err := sql.Open("sqlite3", "test_report.db")
-	if err != nil {
-		t.Fatalf("Failed to open test DB: %v", err)
-	}
-
-	createTable := `
-	CREATE TABLE IF NOT EXISTS daily_participation (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		date TEXT NOT NULL,
-		block_height INTEGER NOT NULL,
-		addr TEXT NOT NULL,
-		moniker TEXT NOT NULL,
-		participated BOOLEAN NOT NULL
-	);`
-	_, err = db.Exec(createTable)
-	if err != nil {
-		t.Fatalf("Failed to create table: %v", err)
-	}
-
-	return db
-}
 
 func insertParticipationData(db *gorm.DB, date string, addr string, moniker string, participated []bool, startHeight int) error {
 	tx := db.Begin()
@@ -43,7 +18,7 @@ func insertParticipationData(db *gorm.DB, date string, addr string, moniker stri
 	}
 
 	stmt := `
-		INSERT INTO daily_participation (date, block_height, addr, moniker, participated)
+		INSERT INTO daily_participations (date, block_height, addr, moniker, participated)
 		VALUES (?, ?, ?, ?, ?)
 	`
 
@@ -63,8 +38,7 @@ func insertParticipationData(db *gorm.DB, date string, addr string, moniker stri
 }
 
 func TestCalculateRate(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	db := testutils.NewTestDB(t)
 
 	date := time.Now().Format("2006-01-02")
 

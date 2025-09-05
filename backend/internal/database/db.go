@@ -99,19 +99,17 @@ func InitDB() (*gorm.DB, error) {
 	_, _ = sqlDB.Exec("PRAGMA synchronous = NORMAL;")
 	_, _ = sqlDB.Exec("PRAGMA temp_store = MEMORY;")
 
-	err = db.AutoMigrate(
-		&User{}, &AlertContact{}, &WebhookValidator{},
-		&WebhookGovDAO{}, &HourReport{}, &GovDAOState{},
-		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{},
-	)
-	if err != nil {
-		return nil, err
-	}
-
 	InitGovDaoState(db)
 	CreateMissingBlocksView(db)
 
 	return db, nil
+}
+func Migrate(db *gorm.DB) error {
+	return db.AutoMigrate(
+		&User{}, &AlertContact{}, &WebhookValidator{},
+		&WebhookGovDAO{}, &HourReport{}, &GovDAOState{},
+		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{},
+	)
 }
 
 // =================================== VIEW MISSING BLOCK ============================

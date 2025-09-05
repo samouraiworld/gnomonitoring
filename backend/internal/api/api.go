@@ -51,7 +51,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 	// ✅ Check rrequire FieldVérifier les champs obligatoires
 	if webhook.UserID == "" || webhook.URL == "" || webhook.Type == "" || webhook.Description == "" {
-
+		fmt.Printf("Missing required fields: %#v", webhook)
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
@@ -75,12 +75,13 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 	// for send ultimate Govdao
-	lastid, err := database.GetLastGovDaoProposalID(db)
-	if err != nil {
-		http.Error(w, "erro get lastID GovDao: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	lastid = lastid - 1
+	//lastid, err := database.GetLastGovDaoProposalID(db)
+	//if err != nil {
+	//	http.Error(w, "erro get lastID GovDao: "+err.Error(), http.StatusInternalServerError)
+	//	return
+	//}
+	//lastid = lastid - 1
+	//What is this used for ?
 
 	// ✅ Si pas existant, on insère
 	err = database.InsertWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, db)
@@ -227,7 +228,8 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, "webhook_validators")
+	err = db.Save(&webhook).Error
+	//err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, "webhook_validators")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

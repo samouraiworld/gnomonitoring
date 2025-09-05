@@ -13,6 +13,8 @@ import (
 
 	_ "github.com/mattn/go-sqlite3" // pour sqlite
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/testutils"
+	"github.com/stretchr/testify/require"
 )
 
 // 🔧 create db for test
@@ -40,8 +42,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 
 // ============================= USER TEST ===================================================
 func TestCreateUserHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	db := testutils.NewTestDB(t)
 
 	body := `{
 		"user_id": "user123",
@@ -61,11 +62,11 @@ func TestCreateUserHandler(t *testing.T) {
 }
 
 func TestGetUserHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
+	gormDB := testutils.NewTestDB(t)
+	db, err := gormDB.DB()
+	require.NoError(t, err)
 	// Insert fake user
-	_, err := db.Exec(`INSERT INTO users (user_id, nameuser, email) VALUES (?, ?, ?)`, "user123", "Alice", "alice@example.com")
+	_, err = db.Exec(`INSERT INTO users (user_id, nameuser, email) VALUES (?, ?, ?)`, "user123", "Alice", "alice@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,27 +74,28 @@ func TestGetUserHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/users?user_id=user123", nil)
 	rr := httptest.NewRecorder()
 
-	GetUserHandler(rr, req, db)
+	GetUserHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
 	}
 
-	var user database.Users
+	var user database.User
 	err = json.NewDecoder(rr.Body).Decode(&user)
 	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if user.USER_ID != "user123" {
-		t.Errorf("expected user_id 'user123', got '%s'", user.USER_ID)
+	if user.UserID != "user123" {
+		t.Errorf("expected user_id 'user123', got '%s'", user.UserID)
 	}
 }
 
 func TestDeleteUserHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
+	db, err := gormDB.DB()
+	require.NoError(t, err)
 
-	_, err := db.Exec(`INSERT INTO users (user_id, nameuser, email) VALUES (?, ?, ?)`, "user123", "Bob", "bob@example.com")
+	_, err = db.Exec(`INSERT INTO users (user_id, nameuser, email) VALUES (?, ?, ?)`, "user123", "Bob", "bob@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,16 +103,17 @@ func TestDeleteUserHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/users?user_id=user123", nil)
 	rr := httptest.NewRecorder()
 
-	DeleteUserHandler(rr, req, db)
+	DeleteUserHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
 	}
 }
 func TestUpdateUserHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-	_, err := db.Exec(`INSERT INTO users (user_id, nameuser, email) VALUES (?, ?, ?)`, "user123", "Bob", "bob@example.com")
+	gormDB := testutils.NewTestDB(t)
+	db, err := gormDB.DB()
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO users (user_id, nameuser, email) VALUES (?, ?, ?)`, "user123", "Bob", "bob@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +126,7 @@ func TestUpdateUserHandler(t *testing.T) {
 	rr := httptest.NewRecorder()
 
 	// call handler
-	UpdateUserHandler(rr, req, db)
+	UpdateUserHandler(rr, req, gormDB)
 
 	// check http resp
 	if rr.Code != http.StatusOK {
@@ -148,32 +151,56 @@ func TestUpdateUserHandler(t *testing.T) {
 
 // ============================ GOVDAO TEST ===========================================
 func TestCreateWebhookHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	t.Run("Missing required fields", func(t *testing.T) {
+		gormDB := testutils.NewTestDB(t)
 
-	body := `{
-		"user": "user123",
-		"url": "https://example.com/webhook",
-		"type": "discord"
-	}`
+		bodyInfo := database.WebhookGovDAO{
+			UserID: "user123",
+			URL:    "https://example.com/webhook",
+			Type:   "discord",
+		}
 
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/govdao", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	log.Println(rr)
+		body, err := json.Marshal(bodyInfo)
+		require.NoError(t, err)
 
-	CreateWebhookHandler(rr, req, db)
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/govdao", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		log.Println(rr)
 
-	if rr.Code != http.StatusCreated {
-		t.Errorf("expected status 201, got %d", rr.Code)
-	}
+		CreateWebhookHandler(rr, req, gormDB)
+		require.Equal(t, http.StatusBadRequest, rr.Code)
+	})
+
+	t.Run("OK", func(t *testing.T) {
+		gormDB := testutils.NewTestDB(t)
+
+		bodyInfo := database.WebhookGovDAO{
+			UserID:      "user123",
+			URL:         "https://example.com/webhook",
+			Type:        "discord",
+			Description: "description",
+		}
+
+		body, err := json.Marshal(bodyInfo)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/govdao", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		log.Println(rr)
+
+		CreateWebhookHandler(rr, req, gormDB)
+		require.Equal(t, http.StatusCreated, rr.Code)
+	})
 }
 
 func TestListWebhooksHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
+	db, err := gormDB.DB()
+	require.NoError(t, err)
 
-	_, err := db.Exec(`INSERT INTO webhooks_govdao (user_id, url, type) VALUES (?, ?, ?)`, "user123", "https://example.com", "discord")
+	_, err = db.Exec(`INSERT INTO webhook_gov_DAOs (user_id, url, type) VALUES (?, ?, ?)`, "user123", "https://example.com", "discord")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +208,7 @@ func TestListWebhooksHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/webhooks/govdao?user_id=user123", nil)
 	rr := httptest.NewRecorder()
 
-	ListWebhooksHandler(rr, req, db)
+	ListWebhooksHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
@@ -189,10 +216,11 @@ func TestListWebhooksHandler(t *testing.T) {
 }
 
 func TestDeleteWebhookHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
+	db, err := gormDB.DB()
+	require.NoError(t, err)
 
-	_, err := db.Exec(`INSERT INTO webhooks_govdao (id, user_id, url, type) VALUES (1, ?, ?, ?)`, "user123", "https://example.com", "discord")
+	_, err = db.Exec(`INSERT INTO webhook_gov_DAOs (id, user_id, url, type) VALUES (1, ?, ?, ?)`, "user123", "https://example.com", "discord")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +228,7 @@ func TestDeleteWebhookHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/webhooks/govdao?id=1&user_id=user123", nil)
 	rr := httptest.NewRecorder()
 
-	DeleteWebhookHandler(rr, req, db)
+	DeleteWebhookHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
@@ -208,10 +236,11 @@ func TestDeleteWebhookHandler(t *testing.T) {
 }
 
 func TestUpdateWebhookHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
+	db, err := gormDB.DB()
+	require.NoError(t, err)
 
-	_, err := db.Exec(`INSERT INTO webhooks_govdao (id, user_id, url, type) VALUES (1, ?, ?, ?)`, "user123", "https://example.com", "discord")
+	_, err = db.Exec(`INSERT INTO webhook_gov_DAOs (id, user_id, url, type) VALUES (1, ?, ?, ?)`, "user123", "https://example.com", "discord")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +256,7 @@ func TestUpdateWebhookHandler(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
-	UpdateWebhookHandler(rr, req, db)
+	UpdateWebhookHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
@@ -236,20 +265,23 @@ func TestUpdateWebhookHandler(t *testing.T) {
 
 // ============================================ VALIDATOR===========================
 func TestCreateMonitoringWebhookHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
 
-	body := `{
-		"user": "user123",
-		"url": "https://example.com/validator",
-		"type": "discord"
-	}`
+	bodyInfo := database.WebhookGovDAO{
+		UserID:      "user123",
+		URL:         "https://example.com/webhook",
+		Type:        "discord",
+		Description: "description",
+	}
 
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/validator", strings.NewReader(body))
+	body, err := json.Marshal(bodyInfo)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/validator", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
-	CreateMonitoringWebhookHandler(rr, req, db)
+	CreateMonitoringWebhookHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusCreated {
 		t.Errorf("expected status 201, got %d", rr.Code)
@@ -257,18 +289,14 @@ func TestCreateMonitoringWebhookHandler(t *testing.T) {
 }
 
 func TestListMonitoringWebhooksHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	_, err := db.Exec(`INSERT INTO webhooks_validator (user_id, url, type) VALUES (?, ?, ?)`, "user123", "https://example.com/validator", "discord")
-	if err != nil {
-		t.Fatal(err)
-	}
+	gormDB := testutils.NewTestDB(t)
+	err := gormDB.Save(&database.WebhookValidator{UserID: "user123", URL: "https://example.com/validator", Type: "discord"}).Error
+	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/webhooks/validator?user_id=user123", nil)
 	rr := httptest.NewRecorder()
 
-	ListMonitoringWebhooksHandler(rr, req, db)
+	ListMonitoringWebhooksHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
@@ -276,18 +304,15 @@ func TestListMonitoringWebhooksHandler(t *testing.T) {
 }
 
 func TestDeleteMonitoringWebhookHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
 
-	_, err := db.Exec(`INSERT INTO webhooks_validator (id, user_id, url, type) VALUES (1, ?, ?, ?)`, "user123", "https://example.com/validator", "discord")
-	if err != nil {
-		t.Fatal(err)
-	}
+	err := gormDB.Save(&database.WebhookValidator{UserID: "user123", URL: "https://example.com/validator", Type: "discord"}).Error
+	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodDelete, "/webhooks/validator?id=1&user_id=user123", nil)
 	rr := httptest.NewRecorder()
 
-	DeleteMonitoringWebhookHandler(rr, req, db)
+	DeleteMonitoringWebhookHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
@@ -295,13 +320,9 @@ func TestDeleteMonitoringWebhookHandler(t *testing.T) {
 }
 
 func TestUpdateMonitoringWebhookHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-
-	_, err := db.Exec(`INSERT INTO webhooks_validator (id, user_id, url, type) VALUES (1, ?, ?, ?)`, "user123", "https://old.com", "discord")
-	if err != nil {
-		t.Fatal(err)
-	}
+	gormDB := testutils.NewTestDB(t)
+	err := gormDB.Save(&database.WebhookValidator{ID: 1, UserID: "user123", URL: "https://example.com/validator", Type: "discord"}).Error
+	require.NoError(t, err)
 
 	payload := `{
 		"id": 1,
@@ -314,17 +335,20 @@ func TestUpdateMonitoringWebhookHandler(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
-	UpdateMonitoringWebhookHandler(rr, req, db)
+	UpdateMonitoringWebhookHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
 	}
+	updatedWebhook := database.WebhookValidator{}
+	err = gormDB.Model(&database.WebhookValidator{}).Where("id = ?", 1).First(&updatedWebhook).Error
+	require.NoError(t, err)
+	require.Equal(t, "https://new.com", updatedWebhook.URL)
 }
 
 // =======================ALERT CONTACT
 func TestInsertAlertContactHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
 
 	payload := `{
 		"user_id": "user123",
@@ -337,7 +361,7 @@ func TestInsertAlertContactHandler(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
-	InsertAlertContactHandler(rr, req, db)
+	InsertAlertContactHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusCreated {
 		t.Errorf("expected status 201, got %d", rr.Code)
@@ -345,10 +369,11 @@ func TestInsertAlertContactHandler(t *testing.T) {
 }
 
 func TestGetAlertContactsHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
+	db, err := gormDB.DB()
+	require.NoError(t, err)
 
-	_, err := db.Exec(`INSERT INTO alert_contacts (user_id, moniker, namecontact, mention_tag) VALUES (?, ?, ?, ?)`, "user123", "monikerX", "contactX", "@mention")
+	_, err = db.Exec(`INSERT INTO alert_contacts (user_id, moniker, namecontact, mention_tag) VALUES (?, ?, ?, ?)`, "user123", "monikerX", "contactX", "@mention")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +381,7 @@ func TestGetAlertContactsHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/alert-contacts?user_id=user123", nil)
 	rr := httptest.NewRecorder()
 
-	GetAlertContactsHandler(rr, req, db)
+	GetAlertContactsHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
@@ -364,10 +389,11 @@ func TestGetAlertContactsHandler(t *testing.T) {
 }
 
 func TestUpdateAlertContactHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
+	db, err := gormDB.DB()
+	require.NoError(t, err)
 
-	_, err := db.Exec(`INSERT INTO alert_contacts (id, user_id, moniker, namecontact, mention_tag) VALUES (1, ?, ?, ?, ?)`, "user123", "monikerX", "contactX", "@mention")
+	_, err = db.Exec(`INSERT INTO alert_contacts (id, user_id, moniker, namecontact, mention_tag) VALUES (1, ?, ?, ?, ?)`, "user123", "monikerX", "contactX", "@mention")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +409,7 @@ func TestUpdateAlertContactHandler(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
-	UpdateAlertContactHandler(rr, req, db)
+	UpdateAlertContactHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)
@@ -391,10 +417,11 @@ func TestUpdateAlertContactHandler(t *testing.T) {
 }
 
 func TestDeleteAlertContactHandler(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
+	gormDB := testutils.NewTestDB(t)
+	db, err := gormDB.DB()
+	require.NoError(t, err)
 
-	_, err := db.Exec(`INSERT INTO alert_contacts (id, user_id, moniker, namecontact, mention_tag) VALUES (1, ?, ?, ?, ?)`, "user123", "monikerX", "contactX", "@mention")
+	_, err = db.Exec(`INSERT INTO alert_contacts (id, user_id, moniker, namecontact, mention_tag) VALUES (1, ?, ?, ?, ?)`, "user123", "monikerX", "contactX", "@mention")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +429,7 @@ func TestDeleteAlertContactHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/alert-contacts?id=1", nil)
 	rr := httptest.NewRecorder()
 
-	DeleteAlertContactHandler(rr, req, db)
+	DeleteAlertContactHandler(rr, req, gormDB)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", rr.Code)

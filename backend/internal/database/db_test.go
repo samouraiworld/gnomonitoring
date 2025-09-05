@@ -7,6 +7,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/testutils"
 )
 
 func setupInMemoryDB(t *testing.T) *sql.DB {
@@ -52,8 +53,7 @@ func setupInMemoryDB(t *testing.T) *sql.DB {
 }
 
 func TestInsertAndGetUser(t *testing.T) {
-	db := setupInMemoryDB(t)
-	defer db.Close()
+	db := testutils.NewTestDB(t)
 
 	err := database.InsertUser("user123", "test@example.com", "Alice", db)
 	if err != nil {
@@ -64,14 +64,13 @@ func TestInsertAndGetUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserById failed: %v", err)
 	}
-	if user == nil || user.EMAIL != "test@example.com" {
+	if user == nil || user.Email != "test@example.com" {
 		t.Errorf("Unexpected user result: %+v", user)
 	}
 }
 
 func TestInsertWebhookAndList(t *testing.T) {
-	db := setupInMemoryDB(t)
-	defer db.Close()
+	db := testutils.NewTestDB(t)
 
 	err := database.InsertWebhook("user123", "https://discord.com/hook", "test discord webhook", "discord", db)
 	if err != nil {
@@ -91,8 +90,7 @@ func TestInsertWebhookAndList(t *testing.T) {
 }
 
 func TestUpdateUser(t *testing.T) {
-	db := setupInMemoryDB(t)
-	defer db.Close()
+	db := testutils.NewTestDB(t)
 
 	err := database.InsertUser("user123", "initial@example.com", "Initial", db)
 	if err != nil {
@@ -108,7 +106,7 @@ func TestUpdateUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserById failed: %v", err)
 	}
-	if user.NAME != "UpdatedName" || user.EMAIL != "new@example.com" {
+	if user.Name != "UpdatedName" || user.Email != "new@example.com" {
 		t.Errorf("User not updated correctly: %+v", user)
 	}
 }
