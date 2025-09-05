@@ -531,7 +531,7 @@ func Getblockheight(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 	}
 	lastStored, err := gnovalidator.GetLastStoredHeight(db)
-	if lastStored == 0 {
+	if err != nil {
 		log.Printf("❌ Failed to get latest block height: %v", err)
 		return
 	}

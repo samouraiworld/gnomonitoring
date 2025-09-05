@@ -6,27 +6,11 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 )
 
-func setupTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("failed to connect database: %v", err)
-	}
-
-	// Auto migrate ta struct
-	err = db.AutoMigrate(
-		&database.User{}, &database.AlertContact{}, &database.WebhookValidator{},
-		&database.WebhookGovDAO{}, &database.HourReport{}, &database.GovDAOState{},
-		&database.DailyParticipation{}, &database.AlertLog{}, &database.AddrMoniker{},
-	)
-
-	return db
-}
 func TestSaveParticipation(t *testing.T) {
-	db := setupTestDB(t)
+	db := testoutils.NewTestDB(t)
 
 	// Simuler un map de participation
 	monikerMap := map[string]string{

@@ -8,39 +8,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/api"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	"github.com/stretchr/testify/require"
 )
-
-// Setup test DB and router
-func setupTestDB(t *testing.T) *gorm.DB {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	assert.NoError(t, err)
-
-	// Auto-migrate needed tables
-	err = db.AutoMigrate(
-		&database.User{}, &database.AlertContact{}, &database.WebhookValidator{},
-		&database.WebhookGovDAO{}, &database.HourReport{}, &database.GovDAOState{},
-		&database.DailyParticipation{}, &database.AlertLog{}, &database.AddrMoniker{},
-	)
-	assert.NoError(t, err)
-
-	return db
-}
 
 // ---------- TEST /webhooks ----------
 
 func TestGetWebhooks(t *testing.T) {
-	db := setupTestDB(t)
-	db.Create(&database.Webhook{Description: "Test", URL: "http://localhost", Type: "val"})
+	db := testoutils.NewTestDB(t)
+	userID := "test"
+	err := db.Create(&database.WebhookGovDAO{UserID: userID, Description: "Test", URL: "http://localhost", Type: "discord"}).Error
+	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/webhooks", nil)
+	req := httptest.NewRequest(http.MethodGet, "/webhooks?user_id="+userID, nil)
 	w := httptest.NewRecorder()
 
-	internal.GetWebhooks(db).ServeHTTP(w, req)
+	api.ListWebhooksHandler(w, req, db)
 	res := w.Result()
 	defer res.Body.Close()
 
@@ -52,7 +38,7 @@ func TestGetWebhooks(t *testing.T) {
 // ---------- TEST /alerts ----------
 
 func TestGetAlerts(t *testing.T) {
-	db := setupTestDB(t)
+	db := testoutils.NewTestDB(t)
 	db.Create(&database.AlertLog{
 		Moniker:     "Validator1",
 		Level:       "CRITICAL",
@@ -64,7 +50,7 @@ func TestGetAlerts(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/alerts", nil)
 	w := httptest.NewRecorder()
 
-	api.GetAlertLogHandler(db).ServeHTTP(w, req)
+	api.Getlastincident(w, req, db)
 	res := w.Result()
 	defer res.Body.Close()
 
@@ -76,20 +62,18 @@ func TestGetAlerts(t *testing.T) {
 // ---------- TEST /reports ----------
 
 func TestGetHourReports(t *testing.T) {
-	db := setupTestDB(t)
-	db.Create(&internal.HourReport{
-		Addr:      "addr1",
-		Moniker:   "moniker1",
-		Hour:      "2025-08-01 13:00:00",
-		Missed:    3,
-		Total:     100,
-		CreatedAt: time.Now(),
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.HourReport{
+		DailyReportHour:   13,
+		DailyReportMinute: 0,
+		UserID:            "moniker1",
+		Timezone:          "UTC",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/reports", nil)
+	req := httptest.NewRequest(http.MethodGet, "/reports?user_id=moniker1", nil)
 	w := httptest.NewRecorder()
 
-	internal.GetHourReports(db).ServeHTTP(w, req)
+	api.GetReportHourHandler(w, req, db)
 	res := w.Result()
 	defer res.Body.Close()
 
@@ -104,7 +88,7 @@ func TestGetBlockHeight(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/info/blockheight", nil)
 	w := httptest.NewRecorder()
 
-	database.GetBlockHeight().ServeHTTP(w, req)
+	api.Getblockheight(w, req, testoutils.NewTestDB(t))
 	res := w.Result()
 	defer res.Body.Close()
 
@@ -113,6 +97,7 @@ func TestGetBlockHeight(t *testing.T) {
 	var response map[string]int64
 	err := json.NewDecoder(res.Body).Decode(&response)
 	assert.NoError(t, err)
-	_, exists := response["block_height"]
+	_, exists := response["last_stored"]
+	//_, exists := response["block_height"]
 	assert.True(t, exists)
 }

@@ -19,7 +19,7 @@ func main() {
 	// Initialise les flags
 	internal.InitFlags()
 
-	db, err := database.InitDB()
+	db, err := database.InitDB("./db/webhooks.db")
 	if err != nil {
 		log.Fatalf("❌ Failed to initialize database: %v", err)
 	}
