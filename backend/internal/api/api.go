@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strconv"
 
+	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
+
+	clerk "github.com/clerk/clerk-sdk-go/v2"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
@@ -16,19 +19,26 @@ import (
 	"gorm.io/gorm"
 )
 
-func getUserIDFromRequest(r *http.Request) (string, error) {
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		return "", fmt.Errorf("missing user_id")
+// function for get userid with clerk
+func authUserIDFromContext(r *http.Request) (string, error) {
+
+	// for test without auth add X-Debug-userID in to curl
+	// if uid := r.Header.Get("X-Debug-UserID"); uid != "" {
+	// 	return uid, nil
+	// }
+	claims, ok := clerk.SessionClaimsFromContext(r.Context())
+	if !ok {
+		return "", fmt.Errorf("unauthorized: missing session claims")
 	}
-	return userID, nil
+
+	return claims.Subject, nil
 }
 
 // ========== GOVDAO ==========
 
 func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
-	userID, err := getUserIDFromRequest(r)
+	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -51,6 +61,12 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	webhook.UserID = userID
 
 	if webhook.UserID == "" || webhook.URL == "" || webhook.Type == "" || webhook.Description == "" {
 
@@ -100,7 +116,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	idStr := r.URL.Query().Get("id")
-	userID, err := getUserIDFromRequest(r)
+	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -128,6 +144,14 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	webhook.UserID = userID
+
 	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, "webhook_gov_daos")
 	if err != nil {
 		log.Println(err)
@@ -141,7 +165,7 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
-	userID, err := getUserIDFromRequest(r)
+	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -163,6 +187,13 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// here
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	webhook.UserID = userID
 
 	// ✅ Check Required fileds
 	if webhook.UserID == "" || webhook.URL == "" || webhook.Type == "" {
@@ -202,7 +233,8 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
 	idStr := r.URL.Query().Get("id")
-	userID, err := getUserIDFromRequest(r)
+	// for get userid with apiclerk
+	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -230,6 +262,14 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// for get userid with apiclerk
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	webhook.UserID = userID
+
 	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, "webhook_validators")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -248,12 +288,18 @@ func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// for get userid with apiclerk
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, "Missing or invalid user_id", http.StatusBadRequest)
+		return
+	}
 
 	// check if user exist
 	var exists bool
 	err = db.Model(&database.User{}).
 		Select("count(*) > 0").
-		Where("user_id = ?", users.UserID).
+		Where("user_id = ?", userID).
 		Find(&exists).Error
 
 	if err != nil {
@@ -267,7 +313,7 @@ func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	}
 
 	// Insertion
-	err = database.InsertUser(users.UserID, users.Email, users.Name, db)
+	err = database.InsertUser(userID, users.Email, users.Name, db)
 	if err != nil {
 		http.Error(w, "Insert error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -282,8 +328,8 @@ func DeleteUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	userID, err := getUserIDFromRequest(r)
+	// for get userid with apiclerk
+	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, "Missing or invalid user_id", http.StatusBadRequest)
 		return
@@ -303,7 +349,7 @@ func GetUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
+	// for get userid with apiclerk
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
 		http.Error(w, "Missing user_id", http.StatusBadRequest)
@@ -340,8 +386,8 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	userID, err := getUserIDFromRequest(r)
+	// for get userid with apiclerk
+	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
 		return
@@ -375,8 +421,14 @@ func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	// for get userid with apiclerk
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
 
-	err = database.UpdateHeureReport(db, payload.Hour, payload.Minute, payload.Timezone, payload.UserID)
+	err = database.UpdateHeureReport(db, payload.Hour, payload.Minute, payload.Timezone, userID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to update report hour: %v", err), http.StatusInternalServerError)
 		return
@@ -390,9 +442,10 @@ func GetReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		http.Error(w, "Missing user_id", http.StatusBadRequest)
+	// for get userid with apiclerk
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
 	hr, err := database.GetHourReport(db, userID)
@@ -424,13 +477,19 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-
+	// for get userid with apiclerk
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	input.UserID = userID
 	if input.UserID == "" || input.Moniker == "" || input.NameContact == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
-	err := database.InsertAlertContact(db, input.UserID, input.Moniker, input.NameContact, input.MentionTag, input.IDwebhook)
+	err = database.InsertAlertContact(db, input.UserID, input.Moniker, input.NameContact, input.MentionTag, input.IDwebhook)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to insert alert contact: %v", err), http.StatusInternalServerError)
 		return
@@ -446,10 +505,10 @@ func GetAlertContactsHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		http.Error(w, "Missing user_id", http.StatusBadRequest)
+	// for get userid with apiclerk
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -484,7 +543,13 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
-	err := database.UpdateAlertContact(db, data.ID, data.UserID, data.Moniker, data.NameContact, data.MentionTag, data.IDwebhook)
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = database.UpdateAlertContact(db, data.ID, userID, data.Moniker, data.NameContact, data.MentionTag, data.IDwebhook)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to update alert contact: %v", err), http.StatusInternalServerError)
 		return
@@ -575,14 +640,19 @@ func Getarticipation(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 // ======================CORS=============================================
 func EnableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", internal.Config.AllowOrigin)
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Forwarded-Proto, X-Forwarded-Host")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 }
 
 // ======================== Start API =====================================
 func StartWebhookAPI(db *gorm.DB) {
+	clerk.SetKey(internal.Config.ClerkSecretKey)
+	mux := http.NewServeMux()
+	protected := clerkhttp.RequireHeaderAuthorization()
+
 	// Webhooks GOVDAO
-	http.HandleFunc("/webhooks/govdao", func(w http.ResponseWriter, r *http.Request) {
+	// http.HandleFunc("/webhooks/govdao", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/webhooks/govdao", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -599,9 +669,10 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})
+	})))
+
 	// Webhooks VALIDATOR
-	http.HandleFunc("/webhooks/validator", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/webhooks/validator", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			ListMonitoringWebhooksHandler(w, r, db)
@@ -617,9 +688,12 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})
+	})))
+
 	// USER
-	http.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
+	//http.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/users", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
 		switch r.Method {
 
 		case http.MethodGet:
@@ -638,10 +712,11 @@ func StartWebhookAPI(db *gorm.DB) {
 
 		}
 
-	})
+	})))
 	// ===================Alert Contact
 
-	http.HandleFunc("/alert-contacts", func(w http.ResponseWriter, r *http.Request) {
+	// http.HandleFunc("/alert-contacts", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/alert-contacts", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			InsertAlertContactHandler(w, r, db)
@@ -654,9 +729,10 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})
+	})))
 	// ==================Update hour of report =======================
-	http.HandleFunc("/usersH", func(w http.ResponseWriter, r *http.Request) {
+	//http.HandleFunc("/usersH", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/usersH", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodPut:
@@ -671,9 +747,9 @@ func StartWebhookAPI(db *gorm.DB) {
 
 		}
 
-	})
+	})))
 	// ====================== Dashboard =================
-	http.HandleFunc("/block_height", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/block_height", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -687,7 +763,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	http.HandleFunc("/latest_incidents", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/latest_incidents", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -701,7 +777,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	http.HandleFunc("/Participation", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/Participation", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -720,9 +796,13 @@ func StartWebhookAPI(db *gorm.DB) {
 
 	log.Printf("Starting Webhook API server on %s\n", addr)
 
-	err := http.ListenAndServe(addr, nil)
-	if err != nil {
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Failed to start HTTP server: %v", err)
 	}
+
+	// err := http.ListenAndServe(addr, nil)
+	// if err != nil {
+	// 	log.Fatalf("Failed to start HTTP server: %v", err)
+	// }
 
 }

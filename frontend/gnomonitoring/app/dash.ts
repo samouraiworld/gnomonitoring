@@ -17,10 +17,16 @@ type ParticipationRate = {
     ParticipationRate: number;
 };
 // ⚡ Cache mémoire (global au module)
+
+
 const memoryCache: {
     blockHeight?: { data: number; timestamp: number };
     incidents?: { data: Incident[]; timestamp: number };
 } = {};
+
+const incidents: Incident[] = memoryCache.incidents?.data ?? [];
+const blockHeight: number = memoryCache.blockHeight?.data ?? 0;
+
 
 const CACHE_DURATION_MS = 10_000; // 10s de validité
 
