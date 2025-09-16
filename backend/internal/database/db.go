@@ -445,12 +445,44 @@ func InsertAlertlog(db *gorm.DB, addr, moniker, level string, startheight, endhe
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&alert).Error
 }
 
-func GetAlertLog(db *gorm.DB) ([]AlertSummary, error) {
+func GetAlertLog(db *gorm.DB, period string) ([]AlertSummary, error) {
 	var alerts []AlertSummary
+
+	var start, end time.Time
+	now := time.Now()
+
+	switch period {
+	case "current_week":
+		today := time.Now()
+		weekday := int(today.Weekday())
+		if weekday == 0 {
+			weekday = 7 // Sunday => 7
+		}
+		start = today.AddDate(0, 0, -weekday+1) // Return to last Monday
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
+		end = start.AddDate(0, 0, 7)
+	case "current_month":
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(0, 1, 0)
+
+	case "current_year":
+		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(1, 0, 0)
+
+	default:
+		return nil, fmt.Errorf("invalid period: %s", period)
+	}
+
+	startStr := start.Format("2006-01-02")
+	endStr := end.Format("2006-01-02")
+	log.Printf("start %s", startStr)
+	log.Printf("end %s", endStr)
+
 	result := db.
 		Model(&AlertLog{}).
 		Select("DISTINCT moniker, level,addr, start_height, end_height,sent_at").
 		Order("end_height desc").
+		Where("sent_at BETWEEN ? AND ?", startStr, endStr).
 		Limit(10).
 		Scan(&alerts)
 
@@ -471,7 +503,7 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 		if weekday == 0 {
 			weekday = 7 // Sunday => 7
 		}
-		start = today.AddDate(0, 0, -weekday+1) // Reculer jusqu'au lundi
+		start = today.AddDate(0, 0, -weekday+1) // Return to last Monday
 		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
 		end = start.AddDate(0, 0, 7)
 	case "current_month":
