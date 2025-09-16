@@ -24,6 +24,7 @@ type config struct {
 	MetricsPort       int    `yaml:"metrics_port"`
 	Gnoweb            string `yaml:"gnoweb"`
 	Graphql           string `yaml:"graphql"`
+	ClerkSecretKey    string `yaml:"clerk_secret_key"`
 }
 
 var Config config

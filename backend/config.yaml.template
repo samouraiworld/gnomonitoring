@@ -8,3 +8,4 @@ daily_report_minute: 34
 metrics_port: 8888
 gnoweb: "https://test7.testnets.gno.land"
 graphql: "indexer.test7.testnets.gno.land/graphql/query"
+clerk_secret_key: "sk_test...." #change me
