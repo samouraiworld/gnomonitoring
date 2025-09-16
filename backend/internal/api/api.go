@@ -605,8 +605,18 @@ func Getblockheight(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 // ======================last incident ==================================
 func Getlastincident(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		http.Error(w, "Missing period", http.StatusBadRequest)
+		return
+	}
 
-	incident, err := database.GetAlertLog(db)
+	incident, err := database.GetAlertLog(db, period)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
