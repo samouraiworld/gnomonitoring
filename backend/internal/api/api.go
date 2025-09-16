@@ -800,9 +800,4 @@ func StartWebhookAPI(db *gorm.DB) {
 		log.Fatalf("Failed to start HTTP server: %v", err)
 	}
 
-	// err := http.ListenAndServe(addr, nil)
-	// if err != nil {
-	// 	log.Fatalf("Failed to start HTTP server: %v", err)
-	// }
-
 }
