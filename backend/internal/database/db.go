@@ -263,6 +263,9 @@ func InsertMonitoringWebhook(userID, url, description, typ string, db *gorm.DB) 
 		Description: description,
 		Type:        typ,
 	}
+
+	createHourReport(db, userID)
+
 	return db.Create(&wh).Error
 }
 
