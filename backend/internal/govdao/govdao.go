@@ -239,7 +239,7 @@ func WebsocketGovdao(db *gorm.DB) {
 			log.Println("Read error:", err)
 			return
 		}
-		log.Println("Message reçu:", string(message))
+		log.Println("Message sent:", string(message))
 
 		var msg WSMessage
 		if err := json.Unmarshal(message, &msg); err != nil {
@@ -296,6 +296,7 @@ func parseGnoStringResponse(bz []byte) (string, error) {
 	s = strings.TrimSuffix(s, " string)")
 	return strconv.Unquote(s)
 }
+
 func GetTxsByBlockHeight(height int) (*TxBlock, error) {
 	URLgraphql := "https://" + internal.Config.Graphql
 	client := graphql.NewClient(URLgraphql)
@@ -328,6 +329,7 @@ func GetTxsByBlockHeight(height int) (*TxBlock, error) {
 
 	return &respData.GetBlocks[0].Txs[0], nil
 }
+
 func InitGovdao(db *gorm.DB) {
 	Trans, err := FetchGovDAOEvents()
 	if err != nil {
@@ -436,6 +438,7 @@ func ExtractProposalRender(proposalID int) (string, error) {
 		return "REJECTED", nil
 	}
 }
+
 func CheckProposalStatus(db *gorm.DB) {
 	var govdao []database.Govdao
 	if err := db.Find(&govdao).Error; err != nil {
@@ -463,6 +466,7 @@ func CheckProposalStatus(db *gorm.DB) {
 		}
 	}
 }
+
 func StartProposalWatcher(db *gorm.DB) {
 	ticker := time.NewTicker(5 * time.Minute)
 
@@ -476,9 +480,6 @@ func StartProposalWatcher(db *gorm.DB) {
 }
 
 func StartGovDAo(db *gorm.DB) {
-
 	InitGovdao(db)
-
 	WebsocketGovdao(db)
-
 }

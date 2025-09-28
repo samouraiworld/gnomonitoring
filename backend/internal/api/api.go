@@ -21,11 +21,15 @@ import (
 
 // function for get userid with clerk
 func authUserIDFromContext(r *http.Request) (string, error) {
+	// Development mode: allow bypassing auth when explicitly enabled
+	if internal.Config.DevMode {
+		if uid := r.Header.Get("X-Debug-UserID"); uid != "" {
+			return uid, nil
+		}
+		// If no debug header provided, use a default local user ID
+		return "local-dev-user", nil
+	}
 
-	// for test without auth add X-Debug-userID in to curl
-	// if uid := r.Header.Get("X-Debug-UserID"); uid != "" {
-	// 	return uid, nil
-	// }
 	claims, ok := clerk.SessionClaimsFromContext(r.Context())
 	if !ok {
 		return "", fmt.Errorf("unauthorized: missing session claims")
@@ -74,7 +78,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	//Check if webhhok exist
+	// Check if webhook exist
 	var exists bool
 	err = db.Model(&database.WebhookGovDAO{}).
 		Select("count(*) > 0").
@@ -87,7 +91,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	}
 
 	if exists {
-		// webhook exist → retunr 409
+		// webhook exist → return 409
 		w.WriteHeader(http.StatusConflict)
 		w.Write([]byte("Webhook already exists"))
 		return

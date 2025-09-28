@@ -25,6 +25,7 @@ type config struct {
 	Gnoweb            string `yaml:"gnoweb"`
 	Graphql           string `yaml:"graphql"`
 	ClerkSecretKey    string `yaml:"clerk_secret_key"`
+	DevMode           bool   `yaml:"dev_mode"`
 }
 
 var Config config
