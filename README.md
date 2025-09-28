@@ -32,7 +32,7 @@ nano config.yaml
 2. Configure your validator address and (optionally) the RPC endpoint:
 
 ```yaml
-rpc_endpoint: "https://rpc.test6.testnets.gno.land"
+rpc_endpoint: "https://rpc.test8.testnets.gno.land"
 validator_address: "replace with your validator address"
 port: 8888
 ```
@@ -67,7 +67,7 @@ This backend service monitors both GovDAO proposals and validator participation.
 ### 🧾 GovDAO Proposal Detection
 
 Sends Discord alerts when a new proposal is detected on:
-<https://test6.testnets.gno.land/r/gov/dao>
+<https://test8.testnets.gno.land/r/gov/dao>
 
 ### 🛠️ Setup
 
@@ -92,7 +92,7 @@ nano config.yaml
 interval_seconde: 1
 backend_port: "8989"
 allow_origin: "http://localhost:3000"
-rpc_endpoint: "https://rpc.test6.testnets.gno.land"
+rpc_endpoint: "https://rpc.test8.testnets.gno.land"
 windows_size: 100
 daily_report_hour: 10 #hour of daily report
 daily_report_minute: 34 # minute of daily report 
