@@ -42,7 +42,7 @@ func LoadConfig() {
 		log.Fatalf("Error parsing config file: %v", err)
 	}
 
-	log.Printf("Config loaded: %+v", Config)
+	log.Printf("DevMode value: %v", Config.DevMode)
 }
 func SendDiscordAlert(msg string, webhookURL string) error {
 	payload := map[string]string{"content": msg}

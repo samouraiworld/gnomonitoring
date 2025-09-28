@@ -53,6 +53,12 @@ func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	if len(webhooks) == 0 {
+		json.NewEncoder(w).Encode(map[string]string{"message": "no webhook found"})
+		return
+	}
+
 	json.NewEncoder(w).Encode(webhooks)
 }
 
@@ -179,6 +185,12 @@ func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *g
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	if len(webhooks) == 0 {
+		json.NewEncoder(w).Encode(map[string]string{"message": "no webhook found"})
+		return
+	}
+
 	json.NewEncoder(w).Encode(webhooks)
 }
 
@@ -662,13 +674,10 @@ func EnableCORS(w http.ResponseWriter) {
 func StartWebhookAPI(db *gorm.DB) {
 	clerk.SetKey(internal.Config.ClerkSecretKey)
 	mux := http.NewServeMux()
-	protected := clerkhttp.RequireHeaderAuthorization()
 
-	// Webhooks GOVDAO
-	// http.HandleFunc("/webhooks/govdao", func(w http.ResponseWriter, r *http.Request) {
-	mux.Handle("/webhooks/govdao", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create handler wrapper function
+	webhookGovDAOHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
-
 		case http.MethodGet:
 			ListWebhooksHandler(w, r, db)
 		case http.MethodPost:
@@ -683,10 +692,18 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})))
+	})
 
-	// Webhooks VALIDATOR
-	mux.Handle("/webhooks/validator", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	if internal.Config.DevMode {
+		// In development mode, don't use Clerk protection
+		mux.Handle("/webhooks/govdao", webhookGovDAOHandler)
+	} else {
+		// In production mode, use Clerk protection
+		protected := clerkhttp.RequireHeaderAuthorization()
+		mux.Handle("/webhooks/govdao", protected(webhookGovDAOHandler))
+	}
+
+	webhookValidatorHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			ListMonitoringWebhooksHandler(w, r, db)
@@ -702,14 +719,10 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})))
+	})
 
-	// USER
-	//http.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
-	mux.Handle("/users", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
+	userHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
-
 		case http.MethodGet:
 			GetUserHandler(w, r, db)
 		case http.MethodDelete:
@@ -723,14 +736,10 @@ func StartWebhookAPI(db *gorm.DB) {
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		}
+	})
 
-	})))
-	// ===================Alert Contact
-
-	// http.HandleFunc("/alert-contacts", func(w http.ResponseWriter, r *http.Request) {
-	mux.Handle("/alert-contacts", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	alertContactsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			InsertAlertContactHandler(w, r, db)
@@ -743,12 +752,10 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})))
-	// ==================Update hour of report =======================
-	//http.HandleFunc("/usersH", func(w http.ResponseWriter, r *http.Request) {
-	mux.Handle("/usersH", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
+	})
 
+	usersHHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
 		case http.MethodPut:
 			UpdateReportHourHandler(w, r, db)
 		case http.MethodGet:
@@ -758,10 +765,24 @@ func StartWebhookAPI(db *gorm.DB) {
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		}
+	})
 
-	})))
+	if internal.Config.DevMode {
+		// In development mode, don't use Clerk protection
+		mux.Handle("/webhooks/validator", webhookValidatorHandler)
+		mux.Handle("/users", userHandler)
+		mux.Handle("/alert-contacts", alertContactsHandler)
+		mux.Handle("/usersH", usersHHandler)
+	} else {
+		// In production mode, use Clerk protection
+		protected := clerkhttp.RequireHeaderAuthorization()
+		mux.Handle("/webhooks/validator", protected(webhookValidatorHandler))
+		mux.Handle("/users", protected(userHandler))
+		mux.Handle("/alert-contacts", protected(alertContactsHandler))
+		mux.Handle("/usersH", protected(usersHHandler))
+	}
+
 	// ====================== Dashboard =================
 	mux.HandleFunc("/block_height", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
