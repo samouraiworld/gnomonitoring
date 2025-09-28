@@ -4,7 +4,7 @@ allow_origin: "http://localhost:3000"
 rpc_endpoint: "https://rpc.test8.testnets.gno.land"
 windows_size: 100
 daily_report_hour: 10
-daily_report_minute: 34
+daily_report_minute: 58
 metrics_port: 8888
 gnoweb: "https://test8.testnets.gno.land"
 graphql: "indexer.test8.testnets.gno.land/graphql/query"
