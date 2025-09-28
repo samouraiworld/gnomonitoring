@@ -2,13 +2,15 @@
 
 Comprehensive monitoring service for Gno blockchain validators with Discord/Slack alerts, governance monitoring, and Prometheus metrics.
 
-## Quick Start
+## Quick Start (In local)
 
 1. **Configure**
 ```bash
 cp config.yaml.template config.yaml
 nano config.yaml
 ```
+
+Set `dev_mode: true` in `config.yaml` to bypass Clerk authentication.
 
 2. **Run with Docker**
 ```bash
@@ -19,7 +21,7 @@ docker compose up -d
 - **API**: http://localhost:8989
 - **Metrics**: http://localhost:8888/metrics
 
-4. **Test API without authentication:**
+4. **Test API in local without authentication (GovDAO):**
 ```bash
 # Create webhook (uses default "local-dev-user")
 curl -X POST http://localhost:8989/webhooks/govdao \
@@ -39,11 +41,25 @@ curl -X POST http://localhost:8989/webhooks/govdao \
     "type": "discord",
     "description": "Alice's webhook"
   }'
+
+# List the available webhooks
+curl http://localhost:8989/webhooks/govdao
+
+# Delete a webhook
+curl -X DELETE "http://localhost:8989/webhooks/govdao?id=1"
 ```
+
+Also available for validators with the endpoint `/webhooks/validator`.
 
 ## API Reference
 
 ### 🔐 Authentication
+
+**Production Mode**: Most endpoints require Clerk authentication. Include your Clerk session token in the `Authorization` header:
+```bash
+curl -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
+     http://localhost:8989/endpoint
+```
 
 **Development Mode**: When `dev_mode: true` is set in config, authentication is bypassed:
 ```bash
@@ -53,12 +69,6 @@ curl http://localhost:8989/webhooks/govdao
 # Or specify custom user ID
 curl -H "X-Debug-UserID: my-test-user" \
      http://localhost:8989/webhooks/govdao
-```
-
-**Production Mode**: Most endpoints require Clerk authentication. Include your Clerk session token in the `Authorization` header:
-```bash
-curl -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
-     http://localhost:8989/endpoint
 ```
 
 ### 📊 Public Dashboard Endpoints
