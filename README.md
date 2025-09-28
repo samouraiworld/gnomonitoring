@@ -89,14 +89,18 @@ nano config.yaml
 2. Customize parameters as needed. For example:
 
 ```yaml
-interval_seconde: 1
+interval_seconde: 1200
 backend_port: "8989"
 allow_origin: "http://localhost:3000"
 rpc_endpoint: "https://rpc.test8.testnets.gno.land"
 windows_size: 100
-daily_report_hour: 10 #hour of daily report
-daily_report_minute: 34 # minute of daily report 
-metrics_port: 8888 #port for metrics of prometheus 
+daily_report_hour: 16
+daily_report_minute: 58
+metrics_port: 8888
+gnoweb: "https://test8.testnets.gno.land"
+graphql: "indexer.test8.testnets.gno.land/graphql/query"
+clerk_secret_key: "sk_test...." #change me
+dev_mode: false # Set to true for local development without Clerk auth
 ```
 
 3. Start the backend:
