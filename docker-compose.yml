@@ -6,7 +6,7 @@ services:
     container_name: gnomonitoring-backend
     volumes:
       - ./backend/main.go:/root/main.go
-      - ./backend/config_docker.yaml:/root/config.yaml
+      - ./backend/config.yaml:/root/config.yaml
       - ./backend/go.mod:/root/go.mod
       - ./backend/go.sum:/root/go.sum 
       - ./backend/db/:/root/db/
@@ -23,7 +23,7 @@ services:
       ports:
         - "9191:3000"
       volumes:
-        - ./frontend/gnomonitoring/.env_docker.local:/app/.env.local
+        - ./frontend/gnomonitoring/.env.local:/app/.env.local
       env_file:
-        - ./frontend/gnomonitoring/.env_docker.local
+        - ./frontend/gnomonitoring/.env.local
       restart: unless-stopped
