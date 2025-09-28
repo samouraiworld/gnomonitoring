@@ -76,7 +76,7 @@ Sends Discord alerts when a new proposal is detected on:
 - [Docker](https://www.docker.com/)
 - [Docker Compose](https://docs.docker.com/compose/)
 
-![Discord alert dayli ](assets/discord_view.png)
+![Discord alert daily](assets/discord_view.png)
 
 1. Copy the configuration template and edit it:
 
@@ -109,12 +109,12 @@ docker compose up -d
 
 ### 🔗 Webhook Management (Discord / Slack)
 
-Manage webhooks for alert delivery. Choose between gnovalidator or webhookgovdao depending on the type.
+Manage webhooks for alert delivery. Choose between validator or govdao depending on the type.
 
 **➕ Add a webhook**
 
 ```bash
-curl -X POST http://localhost:8080/[gnovalidator | webhookgovdao]\
+curl -X POST http://localhost:8989/webhooks/[validator / govdao]\
   -H "Content-Type: application/json" \
   -d '{"user": "username","url": "URL_WEBHOOK", "type": ["discord"/"slack"}'
 ```
@@ -122,13 +122,13 @@ curl -X POST http://localhost:8080/[gnovalidator | webhookgovdao]\
 **📋 List webhooks**
 
 ```bash
-curl http://localhost:8989/[gnovalidator / webhooksgovdao]
+curl http://localhost:8989/webhooks/[validator / govdao]
 ```
 
 **❌ Delete a webhook**
 
 ```bash
- curl -X DELETE "http://localhost:8080/[gnovalidator / webhooksgovdao]?id=x"
+ curl -X DELETE "http://localhost:8989/webhooks/[validator / govdao]?id=x"
 ```
 
 ---
