@@ -14,18 +14,14 @@ import (
 )
 
 type config struct {
-	IntervallSecond   int    `yaml:"interval_seconde"`
-	BackendPort       string `yaml:"backend_port"`
-	AllowOrigin       string `yaml:"allow_origin"`
-	RPCEndpoint       string `yaml:"rpc_endpoint"`
-	WindowSize        int    `yaml:"windows_size"`
-	DailyReportHour   int    `yaml:"daily_report_hour"`
-	DailyReportMinute int    `yaml:"daily_report_minute"`
-	MetricsPort       int    `yaml:"metrics_port"`
-	Gnoweb            string `yaml:"gnoweb"`
-	Graphql           string `yaml:"graphql"`
-	ClerkSecretKey    string `yaml:"clerk_secret_key"`
-	DevMode           bool   `yaml:"dev_mode"`
+	BackendPort    string `yaml:"backend_port"`
+	AllowOrigin    string `yaml:"allow_origin"`
+	RPCEndpoint    string `yaml:"rpc_endpoint"`
+	MetricsPort    int    `yaml:"metrics_port"`
+	Gnoweb         string `yaml:"gnoweb"`
+	Graphql        string `yaml:"graphql"`
+	ClerkSecretKey string `yaml:"clerk_secret_key"`
+	DevMode        bool   `yaml:"dev_mode"`
 }
 
 var Config config

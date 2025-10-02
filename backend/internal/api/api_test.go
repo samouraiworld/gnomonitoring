@@ -101,3 +101,27 @@ func TestGetBlockHeight(t *testing.T) {
 	//_, exists := response["block_height"]
 	assert.True(t, exists)
 }
+func TestGetUptime(t *testing.T) {
+	// Arrange
+	req := httptest.NewRequest(http.MethodGet, "/uptime", nil)
+	w := httptest.NewRecorder()
+	db := testoutils.NewTestDB(t)
+
+	// Act
+	api.GetUptime(w, req, db)
+
+	// Assert
+	res := w.Result()
+	defer res.Body.Close()
+
+	require.Equal(t, http.StatusOK, res.StatusCode)
+
+	var payload []database.UptimeMetrics
+	err := json.NewDecoder(res.Body).Decode(&payload)
+	require.NoError(t, err)
+
+	require.Greater(t, len(payload), 0, "no empty list")
+	require.NotEmpty(t, payload[0].Addr)
+
+	require.InDelta(t, 0.0, payload[0].UptimePct, 100.0) // check posible nunmber
+}

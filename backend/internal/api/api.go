@@ -663,6 +663,28 @@ func Getarticipation(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	json.NewEncoder(w).Encode(part)
 }
 
+// =========================== Get uptime metrics =============================
+func GetUptime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+
+	}
+	uptime, err := database.UptimeMetricsaddr(db)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get Uptime metrics: %v", err), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(uptime)
+
+}
+
 // ======================CORS=============================================
 func EnableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", internal.Config.AllowOrigin)
@@ -817,6 +839,20 @@ func StartWebhookAPI(db *gorm.DB) {
 
 		case http.MethodGet:
 			Getarticipation(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+	mux.HandleFunc("/uptime", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			GetUptime(w, r, db)
 		case http.MethodOptions:
 			EnableCORS(w)
 			w.WriteHeader(http.StatusOK)
