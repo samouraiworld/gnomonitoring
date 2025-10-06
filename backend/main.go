@@ -5,8 +5,11 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/api"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/govdao"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
 )
 
 func main() {
@@ -38,25 +41,25 @@ func main() {
 
 	// ==================== Scheduler for hour report =============================== //
 
-	// if !*internal.DisableReport {
-	// 	go scheduler.InitScheduler(db)
-	// } else {
-	// 	log.Println("⚠️ Daily report scheduler disabled by flag")
-	// } // for dailyreport
+	if !*internal.DisableReport {
+		go scheduler.InitScheduler(db)
+	} else {
+		log.Println("⚠️ Daily report scheduler disabled by flag")
+	} // for dailyreport
 
 	// ====================== Gov Dao Proposal ====================================== //
 
-	// go govdao.StartGovDAo(db)
-	// go govdao.StartProposalWatcher(db)
+	go govdao.StartGovDAo(db)
+	go govdao.StartProposalWatcher(db)
 
 	// ====================== Metrics for prometheus =============================== //
 
-	// gnovalidator.Init()                  // init metrics prometheus
-	// gnovalidator.StartMetricsUpdater(db) // update metrics prometheus / 5 min
-	// go gnovalidator.StartPrometheusServer(internal.Config.MetricsPort)
+	gnovalidator.Init()                  // init metrics prometheus
+	gnovalidator.StartMetricsUpdater(db) // update metrics prometheus / 5 min
+	go gnovalidator.StartPrometheusServer(internal.Config.MetricsPort)
 
 	// ====================== Run API ============================================== //
 
-	// api.StartWebhookAPI(db) //API
+	api.StartWebhookAPI(db) //API
 	select {}
 }

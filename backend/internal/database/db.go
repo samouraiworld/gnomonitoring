@@ -95,10 +95,11 @@ type AlertSummary struct {
 	SentAt      time.Time
 }
 type UptimeMetrics struct {
-	Addr         string  `gorm:"column:addr"`
-	UpDays       int     `gorm:"column:up_days"`
-	ObservedDays int     `gorm:"column:observed_days"`
-	UptimePct    float64 `gorm:"column:uptime_pct"`
+	Moniker      string  `gorm:"column:moniker"        json:"moniker"`
+	Addr         string  `gorm:"column:addr"           json:"addr"`
+	LastDownDate string  `gorm:"column:last_down_date" json:"lastDownDate"`
+	LastUpDate   string  `gorm:"column:last_up_date"   json:"lastUpDate"`
+	DaysDiff     float64 `gorm:"column:days_diff"      json:"daysDiff"`
 }
 
 // CReate index
@@ -552,26 +553,35 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 	return results, err
 }
 
-// ====================================== Up Time Metrics ==========================
+// ====================================== Up Time / tx_contrib Metrics ==========================
 func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
 	var results []UptimeMetrics
 
-	err := db.
-		Table("daily_participations").
-		Select(`
-		Moniker,
-        addr,
-        SUM(participated)                AS up_days,
-        COUNT(*)                         AS observed_days,
-        ROUND(100.0*AVG(participated),2) AS uptime_pct
-    `).
-		Group("addr").
-		Scan(&results).Error
+	query := `
+					SELECT
+					Moniker,
+				dp.addr,
+				
+				MAX(dp.date) AS last_down_date,
+				(
+					SELECT MAX(date)
+					FROM daily_participations AS d2
+					WHERE d2.addr = dp.addr AND d2.participated = 1
+				) AS last_up_date,
+				julianday((
+					SELECT MAX(date)
+					FROM daily_participations AS d2
+					WHERE d2.addr = dp.addr AND d2.participated = 1
+				)) - julianday(MAX(dp.date)) AS days_diff
+				FROM daily_participations AS dp
+				WHERE dp.participated = 0
+				GROUP BY dp.addr; `
 
-	if err != nil {
-		log.Fatal(err)
+	if err := db.Raw(query).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
-	return results, err
+
+	return results, nil
 }
 
 // ====================================== ADDR MONIKER =============================
