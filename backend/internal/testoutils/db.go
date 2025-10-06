@@ -3,6 +3,7 @@ package testoutils
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,28 @@ func NewTestDB(t *testing.T) *gorm.DB {
 	// connect gorm to sqlite temp file
 	db, err := database.InitDB(tmpfile.Name())
 	require.NoError(t, err)
+	FakeData(t, db)
 
 	return db
+}
+func FakeData(t *testing.T, db *gorm.DB) {
+	t.Helper()
+
+	// Insert
+	rows := []database.DailyParticipation{
+		{Addr: "g1abc", Date: mustParseDate("2025-09-15 18:14:06"), Participated: true},
+		{Addr: "g1abc", Date: mustParseDate("2025-10-01 18:14:06"), Participated: true},
+		{Addr: "g1abc", Date: mustParseDate("2025-10-02 18:14:06"), Participated: false},
+	}
+	if err := db.Create(&rows).Error; err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+}
+func mustParseDate(value string) time.Time {
+	layout := "2006-01-02 15:04:05"
+	t, err := time.Parse(layout, value)
+	if err != nil {
+		panic(err) // ok pour des seeds/tests
+	}
+	return t
 }

@@ -30,7 +30,7 @@ func TestSaveParticipation(t *testing.T) {
 
 	// Vérifier que les données sont bien enregistrées
 	var participations []database.DailyParticipation
-	result := db.Find(&participations)
+	result := db.Where("block_height = ?", 100).Find(&participations)
 	if result.Error != nil {
 		t.Fatalf("Error querying participations: %v", result.Error)
 	}

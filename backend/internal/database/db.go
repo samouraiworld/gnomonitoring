@@ -93,6 +93,12 @@ type AlertSummary struct {
 	Msg         string
 	SentAt      time.Time
 }
+type UptimeMetrics struct {
+	Addr         string  `gorm:"column:addr"`
+	UpDays       int     `gorm:"column:up_days"`
+	ObservedDays int     `gorm:"column:observed_days"`
+	UptimePct    float64 `gorm:"column:uptime_pct"`
+}
 
 // CReate index
 func InitDB(dbPath string) (*gorm.DB, error) {
@@ -542,6 +548,28 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 
 	err := db.Raw(query).Scan(&results).Error
 
+	return results, err
+}
+
+// ====================================== Up Time Metrics ==========================
+func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
+	var results []UptimeMetrics
+
+	err := db.
+		Table("daily_participations").
+		Select(`
+		Moniker,
+        addr,
+        SUM(participated)                AS up_days,
+        COUNT(*)                         AS observed_days,
+        ROUND(100.0*AVG(participated),2) AS uptime_pct
+    `).
+		Group("addr").
+		Scan(&results).Error
+
+	if err != nil {
+		log.Fatal(err)
+	}
 	return results, err
 }
 
