@@ -2,6 +2,7 @@ package gnovalidator_test
 
 import (
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
@@ -9,7 +10,7 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 )
 
-func TestSaveParticipation(t *testing.T) {
+func TestSaveParticipation2(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
 	// Simuler un map de participation
@@ -17,18 +18,21 @@ func TestSaveParticipation(t *testing.T) {
 		"addr1": "Validator1",
 		"addr2": "Validator2",
 	}
-	participating := map[string]bool{
-		"addr1": true,
-		"addr2": false,
+
+	blockTime := time.Date(2025, 10, 1, 12, 0, 0, 0, time.UTC)
+
+	participating := map[string]gnovalidator.Participation{
+		"addr1": {Participated: true, Timestamp: blockTime, TxContribution: true},
+		"addr2": {Participated: false, Timestamp: blockTime, TxContribution: false},
 	}
 
-	// Appeler ta fonction
-	err := gnovalidator.SaveParticipation(db, 100, participating, monikerMap)
+	// call SavePArticipation
+	err := gnovalidator.SaveParticipation(db, 100, participating, monikerMap, blockTime)
 	if err != nil {
 		t.Fatalf("SaveParticipation failed: %v", err)
 	}
 
-	// Vérifier que les données sont bien enregistrées
+	// Check data save
 	var participations []database.DailyParticipation
 	result := db.Where("block_height = ?", 100).Find(&participations)
 	if result.Error != nil {

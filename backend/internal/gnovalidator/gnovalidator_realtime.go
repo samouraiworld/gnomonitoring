@@ -29,6 +29,12 @@ type BlockParticipation struct {
 
 var MonikerMap = make(map[string]string)
 
+type Participation struct {
+	Participated   bool
+	Timestamp      time.Time
+	TxContribution bool
+}
+
 func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 	// simulateCount := 0
 	// simulateMax := 4   // for test
@@ -108,17 +114,17 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				}
 
 				// ================================ Get Participation and date ==================== //
-				type Participation struct {
-					Participated   bool
-					Timestamp      time.Time
-					TxContribution bool
-				}
+
 				// == IF in json return section Data, have a tx and get proposer of tx
 				var txProposer string
 				if len(block.Block.Data.Txs) > 0 {
 					txProposer = block.Block.Header.ProposerAddress.String()
 
 				}
+				// === Get Timestamp ==
+
+				timeStp := block.Block.Header.Time
+
 				log.Printf("Block %v prop: %s", h, txProposer)
 
 				participating := make(map[string]Participation)
@@ -134,7 +140,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 
 						participating[precommit.ValidatorAddress.String()] = Participation{
 							Participated:   true,
-							Timestamp:      precommit.Timestamp,
+							Timestamp:      timeStp,
 							TxContribution: tx,
 						}
 
@@ -148,10 +154,10 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				}
 				log.Printf("participating = %+v /n", participating)
 
-				// err = SaveParticipation(db, h, participating, MonikerMap)
-				// if err != nil {
-				// 	log.Printf("❌ Failed to save participation at height %d: %v", h, err)
-				// }
+				err = SaveParticipation(db, h, participating, MonikerMap, timeStp)
+				if err != nil {
+					log.Printf("❌ Failed to save participation at height %d: %v", h, err)
+				}
 			}
 
 			currentHeight = latest
@@ -392,8 +398,8 @@ func SendResolveAlerts(db *gorm.DB) {
 
 }
 
-func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]bool, monikerMap map[string]string) error {
-	today := time.Now().UTC().Format("2006-01-02 15:04:05")
+func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]Participation, monikerMap map[string]string, timeStp time.Time) error {
+	// today := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	tx := db.Begin()
 	if tx.Error != nil {
@@ -403,14 +409,14 @@ func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]
 
 	stmt := `
 		INSERT OR REPLACE INTO daily_participations
-		(date, block_height, moniker, addr, participated)
-		VALUES (?, ?, ?, ?, ?)
+		(date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES (?, ?, ?, ?, ?,?)
 	`
 
 	for valAddr, moniker := range monikerMap {
 		participated := participating[valAddr] // false if not find
 
-		if err := tx.Exec(stmt, today, blockHeight, moniker, valAddr, participated).Error; err != nil {
+		if err := tx.Exec(stmt, timeStp, blockHeight, moniker, valAddr, participated.Participated, participated.TxContribution).Error; err != nil {
 			log.Printf("❌ Error saving participation for %s: %v", valAddr, err)
 			tx.Rollback()
 			return err
