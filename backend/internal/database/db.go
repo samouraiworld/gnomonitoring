@@ -95,11 +95,16 @@ type AlertSummary struct {
 	SentAt      time.Time
 }
 type UptimeMetrics struct {
-	Moniker      string  `gorm:"column:moniker"        json:"moniker"`
-	Addr         string  `gorm:"column:addr"           json:"addr"`
-	LastDownDate string  `gorm:"column:last_down_date" json:"lastDownDate"`
-	LastUpDate   string  `gorm:"column:last_up_date"   json:"lastUpDate"`
-	DaysDiff     float64 `gorm:"column:days_diff"      json:"daysDiff"`
+	Moniker      string  `json:"moniker"`
+	Addr         string  `json:"addr"`
+	LastDownDate string  `json:"lastDownDate"`
+	LastUpDate   string  `json:"lastUpDate"`
+	DaysDiff     float64 `json:"uptime"`
+}
+type TxContribMetrics struct {
+	Moniker   string  ` json:"moniker"`
+	Addr      string  `json:"addr"`
+	TxContrib float64 `json:"tx_contrib"`
 }
 
 // CReate index
@@ -568,17 +573,33 @@ func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
 					FROM daily_participations AS d2
 					WHERE d2.addr = dp.addr AND d2.participated = 1
 				) AS last_up_date,
-				julianday((
+				round(julianday((
 					SELECT MAX(date)
 					FROM daily_participations AS d2
 					WHERE d2.addr = dp.addr AND d2.participated = 1
-				)) - julianday(MAX(dp.date)) AS days_diff
+				)) - julianday(MAX(dp.date)),1) AS days_diff
 				FROM daily_participations AS dp
 				WHERE dp.participated = 0
 				GROUP BY dp.addr; `
 
 	if err := db.Raw(query).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
+	}
+
+	return results, nil
+}
+func TxContrib(db *gorm.DB) ([]TxContribMetrics, error) {
+	var results []TxContribMetrics
+
+	query := `
+		select 
+		moniker,
+		addr,
+			round((SUM(tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations)),1) AS tx_contrib
+		from daily_participations
+		group by addr;  `
+	if err := db.Raw(query).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
 	}
 
 	return results, nil

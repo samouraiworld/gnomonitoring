@@ -685,6 +685,28 @@ func GetUptime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 }
 
+// ========================= Get tx_contrib
+func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+
+	}
+	txcontrib, err := database.TxContrib(db)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get TxContrib metrics: %v", err), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(txcontrib)
+
+}
+
 // =========================Info of  rpc gnoweb use ====================
 
 func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
@@ -876,6 +898,21 @@ func StartWebhookAPI(db *gorm.DB) {
 
 		case http.MethodGet:
 			GetUptime(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+
+	mux.HandleFunc("/tx_contrib", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			GetTxContrib(w, r, db)
 		case http.MethodOptions:
 			EnableCORS(w)
 			w.WriteHeader(http.StatusOK)
