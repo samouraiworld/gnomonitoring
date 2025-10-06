@@ -64,11 +64,12 @@ type WebhookValidator struct {
 	Type        string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
 }
 type DailyParticipation struct {
-	Date         time.Time `gorm:"column:date;primaryKey;index:idx_participation_date,priority:1" `
-	BlockHeight  int       `gorm:"column:block_height;primaryKey" `
-	Moniker      string    `gorm:"column:moniker;primaryKey" `
-	Addr         string    `gorm:"column:addr;not null;index:idx_participation_date,priority:2" `
-	Participated bool      `gorm:"column:participated;not null" `
+	Date           time.Time `gorm:"column:date;primaryKey;index:idx_participation_date,priority:1" `
+	BlockHeight    int       `gorm:"column:block_height;primaryKey" `
+	Moniker        string    `gorm:"column:moniker;primaryKey" `
+	Addr           string    `gorm:"column:addr;not null;index:idx_participation_date,priority:2" `
+	Participated   bool      `gorm:"column:participated;not null" `
+	TxContribution bool      `gorm:"column:tx_contribution;not null" `
 }
 type AlertLog struct {
 	Addr        string    `gorm:"column:addr;primaryKey" `

@@ -5,19 +5,16 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
-	"github.com/samouraiworld/gnomonitoring/backend/internal/api"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
-	"github.com/samouraiworld/gnomonitoring/backend/internal/govdao"
-	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
 )
-
-// var db *sql.DB
 
 func main() {
 	internal.LoadConfig()
-	// Initialise les flags
+	//========================Init Flags ==================== //
 	internal.InitFlags()
+
+	//======================== Init DB ==================== //
 
 	db, err := database.InitDB("./db/webhooks.db")
 	if err != nil {
@@ -35,21 +32,31 @@ func main() {
 
 	log.Println("✅ Database connection established successfully")
 
+	// ==================== Parse and save pareticipation and tx contribution =============== //
+
 	go gnovalidator.StartValidatorMonitoring(db) // gnovalidator realtime
 
-	if !*internal.DisableReport {
-		go scheduler.InitScheduler(db)
-	} else {
-		log.Println("⚠️ Daily report scheduler disabled by flag")
-	} // for dailyreport
+	// ==================== Scheduler for hour report =============================== //
 
-	go govdao.StartGovDAo(db)
-	go govdao.StartProposalWatcher(db)
+	// if !*internal.DisableReport {
+	// 	go scheduler.InitScheduler(db)
+	// } else {
+	// 	log.Println("⚠️ Daily report scheduler disabled by flag")
+	// } // for dailyreport
 
-	gnovalidator.Init()                  // init metrics prometheus
-	gnovalidator.StartMetricsUpdater(db) // update metrics prometheus / 5 min
-	go gnovalidator.StartPrometheusServer(internal.Config.MetricsPort)
+	// ====================== Gov Dao Proposal ====================================== //
 
-	api.StartWebhookAPI(db) //API
+	// go govdao.StartGovDAo(db)
+	// go govdao.StartProposalWatcher(db)
+
+	// ====================== Metrics for prometheus =============================== //
+
+	// gnovalidator.Init()                  // init metrics prometheus
+	// gnovalidator.StartMetricsUpdater(db) // update metrics prometheus / 5 min
+	// go gnovalidator.StartPrometheusServer(internal.Config.MetricsPort)
+
+	// ====================== Run API ============================================== //
+
+	// api.StartWebhookAPI(db) //API
 	select {}
 }

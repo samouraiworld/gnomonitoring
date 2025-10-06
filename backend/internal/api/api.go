@@ -685,6 +685,29 @@ func GetUptime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 }
 
+// =========================Info of  rpc gnoweb use ====================
+
+func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	type InfoResponse struct {
+		Gnoweb      string `json:"gnoweb"`
+		RPCEndpoint string `json:"rpc"`
+	}
+	info := InfoResponse{
+		Gnoweb:      internal.Config.Gnoweb,
+		RPCEndpoint: internal.Config.RPCEndpoint,
+	}
+	json.NewEncoder(w).Encode(info)
+}
+
 // ======================CORS=============================================
 func EnableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", internal.Config.AllowOrigin)
@@ -853,6 +876,21 @@ func StartWebhookAPI(db *gorm.DB) {
 
 		case http.MethodGet:
 			GetUptime(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			GetInfo(w, r, db)
 		case http.MethodOptions:
 			EnableCORS(w)
 			w.WriteHeader(http.StatusOK)

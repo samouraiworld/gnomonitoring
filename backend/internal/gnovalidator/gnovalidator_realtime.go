@@ -44,7 +44,8 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 		println("return lastStored:", lastStored)
 		if lastStored == 0 {
 			log.Printf("⚠️ Database empty get last block: %v", err)
-			lastStored, err = client.LatestBlockHeight()
+			lastStored = 0
+			// lastStored, err = client.LatestBlockHeight()
 			if err != nil {
 				log.Printf("❌ Failed to get latest block height: %v", err)
 				return
@@ -99,17 +100,43 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 
 			// log.Println("last block ", latest)
 
-			for h := currentHeight + 1; h <= latest; h++ {
+			for h := currentHeight; h <= latest; h++ {
 				block, err := client.Block(h)
 				if err != nil || block == nil || block.Block == nil || block.Block.LastCommit == nil {
 					log.Printf("Erreur bloc %d: %v", h, err)
 					continue
 				}
 
-				participating := make(map[string]bool)
+				// ================================ Get Participation and date ==================== //
+				type Participation struct {
+					Participated   bool
+					Timestamp      time.Time
+					TxContribution bool
+				}
+				// == IF in json return section Data, have a tx and get proposer of tx
+				var txProposer string
+				if len(block.Block.Data.Txs) > 0 {
+					txProposer = block.Block.Header.ProposerAddress.String()
+
+				}
+				log.Printf("Block %v prop: %s", h, txProposer)
+
+				participating := make(map[string]Participation)
 				for _, precommit := range block.Block.LastCommit.Precommits {
 					if precommit != nil {
-						participating[precommit.ValidatorAddress.String()] = true
+						var tx bool
+
+						if precommit.ValidatorAddress.String() == txProposer {
+							tx = true
+						} else {
+							tx = false
+						}
+
+						participating[precommit.ValidatorAddress.String()] = Participation{
+							Participated:   true,
+							Timestamp:      precommit.Timestamp,
+							TxContribution: tx,
+						}
 
 						// //for test:
 
@@ -119,11 +146,12 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 						// }
 					}
 				}
+				log.Printf("participating = %+v /n", participating)
 
-				err = SaveParticipation(db, h, participating, MonikerMap)
-				if err != nil {
-					log.Printf("❌ Failed to save participation at height %d: %v", h, err)
-				}
+				// err = SaveParticipation(db, h, participating, MonikerMap)
+				// if err != nil {
+				// 	log.Printf("❌ Failed to save participation at height %d: %v", h, err)
+				// }
 			}
 
 			currentHeight = latest
