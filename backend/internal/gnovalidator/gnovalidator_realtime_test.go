@@ -22,8 +22,8 @@ func TestSaveParticipation(t *testing.T) {
 	}
 
 	mockMonikers := map[string]string{
-		"val1": "Validator One",
-		"val2": "Validator Two",
+		"addr1": "Validator One",
+		"addr2": "Validator Two",
 	}
 
 	err := gnovalidator.SaveParticipation(db, 123, mockParticipation, mockMonikers, blockTime)
@@ -31,9 +31,8 @@ func TestSaveParticipation(t *testing.T) {
 		t.Fatalf("SaveParticipation failed: %v", err)
 	}
 
-	// today := time.Now().Format("2006-01-02")
 	participation := database.DailyParticipation{}
-	err = db.Model(&participation).Where("DATE(date) = ? AND addr = ? AND block_height = 123", blockTime, "val1").First(&participation).Error
+	err = db.Model(&participation).Where("date = ? AND addr = ? AND block_height = 123", blockTime, "addr1").First(&participation).Error
 	require.NoError(t, err)
 
 	if !participation.Participated {
