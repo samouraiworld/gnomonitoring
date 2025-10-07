@@ -29,6 +29,12 @@ type BlockParticipation struct {
 
 var MonikerMap = make(map[string]string)
 
+type Participation struct {
+	Participated   bool
+	Timestamp      time.Time
+	TxContribution bool
+}
+
 func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 	// simulateCount := 0
 	// simulateMax := 4   // for test
@@ -44,7 +50,8 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 		println("return lastStored:", lastStored)
 		if lastStored == 0 {
 			log.Printf("⚠️ Database empty get last block: %v", err)
-			lastStored, err = client.LatestBlockHeight()
+			lastStored = 0
+			// lastStored, err = client.LatestBlockHeight()
 			if err != nil {
 				log.Printf("❌ Failed to get latest block height: %v", err)
 				return
@@ -99,17 +106,43 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 
 			// log.Println("last block ", latest)
 
-			for h := currentHeight + 1; h <= latest; h++ {
+			for h := currentHeight; h <= latest; h++ {
 				block, err := client.Block(h)
 				if err != nil || block == nil || block.Block == nil || block.Block.LastCommit == nil {
 					log.Printf("Erreur bloc %d: %v", h, err)
 					continue
 				}
 
-				participating := make(map[string]bool)
+				// ================================ Get Participation and date ==================== //
+
+				// == IF in json return section Data, have a tx and get proposer of tx
+				var txProposer string
+				if len(block.Block.Data.Txs) > 0 {
+					txProposer = block.Block.Header.ProposerAddress.String()
+
+				}
+				// === Get Timestamp ==
+
+				timeStp := block.Block.Header.Time
+
+				// log.Printf("Block %v prop: %s", h, txProposer)
+
+				participating := make(map[string]Participation)
 				for _, precommit := range block.Block.LastCommit.Precommits {
 					if precommit != nil {
-						participating[precommit.ValidatorAddress.String()] = true
+						var tx bool
+
+						if precommit.ValidatorAddress.String() == txProposer {
+							tx = true
+						} else {
+							tx = false
+						}
+
+						participating[precommit.ValidatorAddress.String()] = Participation{
+							Participated:   true,
+							Timestamp:      timeStp,
+							TxContribution: tx,
+						}
 
 						// //for test:
 
@@ -119,8 +152,9 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 						// }
 					}
 				}
+				// log.Printf("participating = %+v \n", participating)
 
-				err = SaveParticipation(db, h, participating, MonikerMap)
+				err = SaveParticipation(db, h, participating, MonikerMap, timeStp)
 				if err != nil {
 					log.Printf("❌ Failed to save participation at height %d: %v", h, err)
 				}
@@ -364,8 +398,8 @@ func SendResolveAlerts(db *gorm.DB) {
 
 }
 
-func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]bool, monikerMap map[string]string) error {
-	today := time.Now().UTC().Format("2006-01-02 15:04:05")
+func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]Participation, monikerMap map[string]string, timeStp time.Time) error {
+	// today := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	tx := db.Begin()
 	if tx.Error != nil {
@@ -375,14 +409,14 @@ func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]
 
 	stmt := `
 		INSERT OR REPLACE INTO daily_participations
-		(date, block_height, moniker, addr, participated)
-		VALUES (?, ?, ?, ?, ?)
+		(date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES (?, ?, ?, ?, ?,?)
 	`
 
 	for valAddr, moniker := range monikerMap {
 		participated := participating[valAddr] // false if not find
 
-		if err := tx.Exec(stmt, today, blockHeight, moniker, valAddr, participated).Error; err != nil {
+		if err := tx.Exec(stmt, timeStp, blockHeight, moniker, valAddr, participated.Participated, participated.TxContribution).Error; err != nil {
 			log.Printf("❌ Error saving participation for %s: %v", valAddr, err)
 			tx.Rollback()
 			return err
