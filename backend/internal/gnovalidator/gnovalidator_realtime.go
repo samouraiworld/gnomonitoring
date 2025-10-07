@@ -125,7 +125,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 
 				timeStp := block.Block.Header.Time
 
-				log.Printf("Block %v prop: %s", h, txProposer)
+				// log.Printf("Block %v prop: %s", h, txProposer)
 
 				participating := make(map[string]Participation)
 				for _, precommit := range block.Block.LastCommit.Precommits {
@@ -152,7 +152,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 						// }
 					}
 				}
-				log.Printf("participating = %+v /n", participating)
+				// log.Printf("participating = %+v \n", participating)
 
 				err = SaveParticipation(db, h, participating, MonikerMap, timeStp)
 				if err != nil {
