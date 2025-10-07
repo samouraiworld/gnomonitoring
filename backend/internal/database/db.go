@@ -64,13 +64,22 @@ type WebhookValidator struct {
 	Type        string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
 }
 type DailyParticipation struct {
-	Date           time.Time `gorm:"column:date;primaryKey;index:idx_participation_date,priority:1" `
-	BlockHeight    int       `gorm:"column:block_height;primaryKey" `
-	Moniker        string    `gorm:"column:moniker;primaryKey" `
-	Addr           string    `gorm:"column:addr;not null;index:idx_participation_date,priority:2" `
-	Participated   bool      `gorm:"column:participated;not null" `
-	TxContribution bool      `gorm:"column:tx_contribution;not null" `
+	Date           time.Time `gorm:"column:date"`
+	BlockHeight    int64     `gorm:"column:block_height;uniqueIndex:uniq_addr_height,priority:2"`
+	Moniker        string    `gorm:"column:moniker"`
+	Addr           string    `gorm:"column:addr;not null;uniqueIndex:uniq_addr_height,priority:1"`
+	Participated   bool      `gorm:"column:participated;not null"`
+	TxContribution bool      `gorm:"column:tx_contribution;not null"`
 }
+
+//	type DailyParticipation struct {
+//		Date           time.Time `gorm:"column:date" `
+//		BlockHeight    int64     `gorm:"column:block_height;primaryKey;index:idx_participation_date,priority:1" `
+//		Moniker        string    `gorm:"column:moniker;primaryKey" `
+//		Addr           string    `gorm:"column:addr;not null;;primaryKey;index:idx_participation_date,priority:2" `
+//		Participated   bool      `gorm:"column:participated;not null" `
+//		TxContribution bool      `gorm:"column:tx_contribution;not null" `
+//	}
 type AlertLog struct {
 	Addr        string    `gorm:"column:addr;primaryKey" `
 	Moniker     string    `gorm:"column:moniker;not null" `
