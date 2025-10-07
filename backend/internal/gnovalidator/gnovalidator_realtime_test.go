@@ -31,9 +31,9 @@ func TestSaveParticipation(t *testing.T) {
 		t.Fatalf("SaveParticipation failed: %v", err)
 	}
 
-	today := time.Now().Format("2006-01-02")
+	// today := time.Now().Format("2006-01-02")
 	participation := database.DailyParticipation{}
-	err = db.Model(&participation).Where("DATE(date) = ? AND addr = ?", today, "val1").First(&participation).Error
+	err = db.Model(&participation).Where("DATE(date) = ? AND addr = ? AND block_height = 123", blockTime, "val1").First(&participation).Error
 	require.NoError(t, err)
 
 	if !participation.Participated {
