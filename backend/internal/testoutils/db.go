@@ -38,14 +38,15 @@ func FakeData(t *testing.T, db *gorm.DB) {
 
 	// Insert
 	rows := []database.DailyParticipation{
-		{Addr: "g1abc", Date: mustParseDate("2025-09-15 18:14:06"), Participated: true},
-		{Addr: "g1abc", Date: mustParseDate("2025-10-01 18:14:06"), Participated: true},
-		{Addr: "g1abc", Date: mustParseDate("2025-10-02 18:14:06"), Participated: false},
+		{Addr: "g1abc", BlockHeight: 50, Date: mustParseDate("2025-09-15 18:14:06"), Participated: true, TxContribution: false},
+		{Addr: "g1abc", BlockHeight: 51, Date: mustParseDate("2025-10-01 18:14:06"), Participated: true, TxContribution: true},
+		{Addr: "g1abc", BlockHeight: 52, Date: mustParseDate("2025-10-02 18:14:06"), Participated: false, TxContribution: false},
 	}
 	if err := db.Create(&rows).Error; err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
 }
+
 func mustParseDate(value string) time.Time {
 	layout := "2006-01-02 15:04:05"
 	t, err := time.Parse(layout, value)
