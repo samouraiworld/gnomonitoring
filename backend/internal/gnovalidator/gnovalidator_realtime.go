@@ -103,7 +103,26 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				time.Sleep(3 * time.Second)
 				continue
 			}
-
+			// *** RATTRAPAGE BLOQUANT SI GROS RETARD ***
+			if latest-currentHeight > 500 {
+				// on rattrape jusqu’à latest-200 pour laisser un tampon
+				// (évite la course avec le flux temps réel ensuite)
+				stop := latest - 200
+				if stop < currentHeight {
+					stop = latest // au pire, rattrape tout
+				}
+				log.Printf("⏳ Backfill [%d..%d] (gap=%d)", currentHeight, stop, latest-currentHeight)
+				if err := BackfillParallel(db, client, currentHeight, stop, MonikerMap); err != nil {
+					log.Printf("❌ backfill error: %v", err)
+					// si backfill échoue, on ne bloque pas indéfiniment
+				} else {
+					// on saute directement à la fin du backfill
+					currentHeight = stop + 1
+					log.Printf("✅ Backfill done up to %d, switch to realtime", stop)
+				}
+				// on ne passe pas au “temps réel” tant que l’écart reste gros
+				continue
+			}
 			// log.Println("last block ", latest)
 
 			for h := currentHeight; h <= latest; h++ {
@@ -144,12 +163,6 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 							TxContribution: tx,
 						}
 
-						// //for test:
-
-						// if MonikerMap[precommit.ValidatorAddress.String()] == "Samourai" && simulateCount < simulateMax {
-						// 	participating[precommit.ValidatorAddress.String()] = false
-						// 	simulateCount++
-						// }
 					}
 				}
 				// log.Printf("participating = %+v \n", participating)

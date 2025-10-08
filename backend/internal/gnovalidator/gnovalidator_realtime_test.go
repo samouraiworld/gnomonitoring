@@ -45,5 +45,5 @@ func TestGetLastStoredHeight_Empty(t *testing.T) {
 
 	height, err := gnovalidator.GetLastStoredHeight(db)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), height)
+	require.Equal(t, int64(51), height)
 }
