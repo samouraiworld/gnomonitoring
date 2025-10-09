@@ -4,9 +4,9 @@ services:
     restart: on-failure
     container_name: gnomonitoring-backend
     volumes:
-      - ./config.yaml:/app/config.yaml   # si tu veux monter un fichier config externe
-      -  ./db/:/app/db/     # si ton app utilise la DB sqlite locale
+      - ./config_docker.yaml:/app/config.yaml
+      - ./db/:/app/db/
     ports:
-      - "8888:8888"
-      - "8989:8989"
+      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:8989:8989"
     command: ["./server"]

@@ -24,4 +24,4 @@ RUN apt-get update && apt-get install -y libsqlite3-0 && rm -rf /var/lib/apt/lis
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/server .
-COPY config.yaml ./config.yaml
+# COPY config.yaml ./config.yaml

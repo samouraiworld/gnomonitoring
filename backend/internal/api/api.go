@@ -761,15 +761,6 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 	})
 
-	if internal.Config.DevMode {
-		// In development mode, don't use Clerk protection
-		mux.Handle("/webhooks/govdao", webhookGovDAOHandler)
-	} else {
-		// In production mode, use Clerk protection
-		protected := clerkhttp.RequireHeaderAuthorization()
-		mux.Handle("/webhooks/govdao", protected(webhookGovDAOHandler))
-	}
-
 	webhookValidatorHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -837,6 +828,7 @@ func StartWebhookAPI(db *gorm.DB) {
 
 	if internal.Config.DevMode {
 		// In development mode, don't use Clerk protection
+		mux.Handle("/webhooks/govdao", webhookGovDAOHandler)
 		mux.Handle("/webhooks/validator", webhookValidatorHandler)
 		mux.Handle("/users", userHandler)
 		mux.Handle("/alert-contacts", alertContactsHandler)
@@ -844,6 +836,7 @@ func StartWebhookAPI(db *gorm.DB) {
 	} else {
 		// In production mode, use Clerk protection
 		protected := clerkhttp.RequireHeaderAuthorization()
+		mux.Handle("/webhooks/govdao", protected(webhookGovDAOHandler))
 		mux.Handle("/webhooks/validator", protected(webhookValidatorHandler))
 		mux.Handle("/users", protected(userHandler))
 		mux.Handle("/alert-contacts", protected(alertContactsHandler))
