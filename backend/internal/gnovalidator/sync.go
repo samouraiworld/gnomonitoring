@@ -51,10 +51,6 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 		return nil
 	}
 
-	// if err := db.Exec("BEGIN IMMEDIATE;").Error; err != nil {
-	// 	return err
-	// }error database is locked
-
 	q := `
       INSERT INTO daily_participations
         (date, block_height, moniker, addr, participated, tx_contribution)
@@ -74,12 +70,6 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 	    participated = excluded.participated,
 	    tx_contribution = excluded.tx_contribution
 	`
-	// use gorm because error database locked
-	// if err := db.Exec(q, args...).Error; err != nil {
-	// 	_ = db.Exec("ROLLBACK;")
-	// 	return err
-	// }
-	// return db.Exec("COMMIT;").Error
 
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(q, args...).Error; err != nil {
@@ -91,8 +81,8 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 
 // sequentielle 42hours approx for 1 month
 func BackfillRange(db *gorm.DB, client gnoclient.Client, from, to int64, monikerMap map[string]string) error {
-	const chunk = int64(1000)   // nombre de blocs par tranche
-	const flushThreshold = 3000 // nombre de lignes avant flush
+	const chunk = int64(1000)   // number of blocks per tranche
+	const flushThreshold = 3000 // number row before row flush
 
 	buf := make([]dpRow, 0, flushThreshold)
 
@@ -102,7 +92,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, from, to int64, moniker
 			end = to
 		}
 
-		// Télécharger séquentiellement
+		//Sequential download
 		for h := start; h <= end; h++ {
 			block, err := client.Block(h)
 			if err != nil || block == nil || block.Block == nil || block.Block.LastCommit == nil {
