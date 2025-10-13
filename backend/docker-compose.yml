@@ -7,6 +7,6 @@ services:
       - ./config_docker.yaml:/app/config.yaml   # si tu veux monter un fichier config externe
       -  ./db/:/app/db/     # si ton app utilise la DB sqlite locale
     ports:
-      - "8888:8888"
+      - "8880:8888"
       - "8989:8989"
     command: ["./server"]
