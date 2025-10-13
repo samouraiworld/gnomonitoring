@@ -116,8 +116,7 @@ func GetMessageTitle(height int) error {
 }
 
 func FetchGovDAOEvents() ([]Transaction, error) {
-	URLgraphql := internal.Config.Graphql
-	client := graphql.NewClient(URLgraphql)
+	client := graphql.NewClient(internal.Config.Graphql)
 	req := graphql.NewRequest(`
 			query getEvents {
 			getTransactions(
