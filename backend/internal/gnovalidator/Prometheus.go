@@ -58,6 +58,7 @@ func Init() {
 	prometheus.MustRegister(MissedBlocks)
 	prometheus.MustRegister(ConsecutiveMissedBlocks)
 }
+
 func StartPrometheusServer(port int) {
 
 	// Exposure Prometheus
@@ -71,6 +72,7 @@ func StartPrometheusServer(port int) {
 		}
 	}()
 }
+
 func UpdatePrometheusMetricsFromDB(db *gorm.DB) error {
 	// ValidatorParticipation
 	stats, err := CalculateValidatorRates(db)

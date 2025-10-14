@@ -12,12 +12,12 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
 )
 
-// var db *sql.DB
-
 func main() {
 	internal.LoadConfig()
-	// Initialise les flags
+	//========================Init Flags ==================== //
 	internal.InitFlags()
+
+	//======================== Init DB ==================== //
 
 	db, err := database.InitDB("./db/webhooks.db")
 	if err != nil {
@@ -35,7 +35,11 @@ func main() {
 
 	log.Println("✅ Database connection established successfully")
 
+	// ==================== Parse and save pareticipation and tx contribution =============== //
+
 	go gnovalidator.StartValidatorMonitoring(db) // gnovalidator realtime
+
+	// ==================== Scheduler for hour report =============================== //
 
 	if !*internal.DisableReport {
 		go scheduler.InitScheduler(db)
@@ -43,12 +47,18 @@ func main() {
 		log.Println("⚠️ Daily report scheduler disabled by flag")
 	} // for dailyreport
 
+	// ====================== Gov Dao Proposal ====================================== //
+
 	go govdao.StartGovDAo(db)
 	go govdao.StartProposalWatcher(db)
+
+	// ====================== Metrics for prometheus =============================== //
 
 	gnovalidator.Init()                  // init metrics prometheus
 	gnovalidator.StartMetricsUpdater(db) // update metrics prometheus / 5 min
 	go gnovalidator.StartPrometheusServer(internal.Config.MetricsPort)
+
+	// ====================== Run API ============================================== //
 
 	api.StartWebhookAPI(db) //API
 	select {}

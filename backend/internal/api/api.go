@@ -21,11 +21,15 @@ import (
 
 // function for get userid with clerk
 func authUserIDFromContext(r *http.Request) (string, error) {
+	// Development mode: allow bypassing auth when explicitly enabled
+	if internal.Config.DevMode {
+		if uid := r.Header.Get("X-Debug-UserID"); uid != "" {
+			return uid, nil
+		}
+		// If no debug header provided, use a default local user ID
+		return "local-dev-user", nil
+	}
 
-	// for test without auth add X-Debug-userID in to curl
-	// if uid := r.Header.Get("X-Debug-UserID"); uid != "" {
-	// 	return uid, nil
-	// }
 	claims, ok := clerk.SessionClaimsFromContext(r.Context())
 	if !ok {
 		return "", fmt.Errorf("unauthorized: missing session claims")
@@ -49,6 +53,12 @@ func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	if len(webhooks) == 0 {
+		json.NewEncoder(w).Encode(map[string]string{"message": "no webhook found"})
+		return
+	}
+
 	json.NewEncoder(w).Encode(webhooks)
 }
 
@@ -74,7 +84,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	//Check if webhhok exist
+	// Check if webhook exist
 	var exists bool
 	err = db.Model(&database.WebhookGovDAO{}).
 		Select("count(*) > 0").
@@ -87,7 +97,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	}
 
 	if exists {
-		// webhook exist → retunr 409
+		// webhook exist → return 409
 		w.WriteHeader(http.StatusConflict)
 		w.Write([]byte("Webhook already exists"))
 		return
@@ -175,6 +185,12 @@ func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *g
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	if len(webhooks) == 0 {
+		json.NewEncoder(w).Encode(map[string]string{"message": "no webhook found"})
+		return
+	}
+
 	json.NewEncoder(w).Encode(webhooks)
 }
 
@@ -647,6 +663,73 @@ func Getarticipation(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	json.NewEncoder(w).Encode(part)
 }
 
+// =========================== Get uptime metrics =============================
+func GetUptime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+
+	}
+	uptime, err := database.UptimeMetricsaddr(db)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get Uptime metrics: %v", err), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(uptime)
+
+}
+
+// ========================= Get tx_contrib
+func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+
+	}
+	txcontrib, err := database.TxContrib(db)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get TxContrib metrics: %v", err), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(txcontrib)
+
+}
+
+// =========================Info of  rpc gnoweb use ====================
+
+func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	type InfoResponse struct {
+		Gnoweb      string `json:"gnoweb"`
+		RPCEndpoint string `json:"rpc"`
+	}
+	info := InfoResponse{
+		Gnoweb:      internal.Config.Gnoweb,
+		RPCEndpoint: internal.Config.RPCEndpoint,
+	}
+	json.NewEncoder(w).Encode(info)
+}
+
 // ======================CORS=============================================
 func EnableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", internal.Config.AllowOrigin)
@@ -658,13 +741,10 @@ func EnableCORS(w http.ResponseWriter) {
 func StartWebhookAPI(db *gorm.DB) {
 	clerk.SetKey(internal.Config.ClerkSecretKey)
 	mux := http.NewServeMux()
-	protected := clerkhttp.RequireHeaderAuthorization()
 
-	// Webhooks GOVDAO
-	// http.HandleFunc("/webhooks/govdao", func(w http.ResponseWriter, r *http.Request) {
-	mux.Handle("/webhooks/govdao", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Create handler wrapper function
+	webhookGovDAOHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
-
 		case http.MethodGet:
 			ListWebhooksHandler(w, r, db)
 		case http.MethodPost:
@@ -679,10 +759,9 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})))
+	})
 
-	// Webhooks VALIDATOR
-	mux.Handle("/webhooks/validator", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	webhookValidatorHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			ListMonitoringWebhooksHandler(w, r, db)
@@ -698,14 +777,10 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})))
+	})
 
-	// USER
-	//http.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
-	mux.Handle("/users", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
+	userHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
-
 		case http.MethodGet:
 			GetUserHandler(w, r, db)
 		case http.MethodDelete:
@@ -719,14 +794,10 @@ func StartWebhookAPI(db *gorm.DB) {
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		}
+	})
 
-	})))
-	// ===================Alert Contact
-
-	// http.HandleFunc("/alert-contacts", func(w http.ResponseWriter, r *http.Request) {
-	mux.Handle("/alert-contacts", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	alertContactsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			InsertAlertContactHandler(w, r, db)
@@ -739,12 +810,10 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
-	})))
-	// ==================Update hour of report =======================
-	//http.HandleFunc("/usersH", func(w http.ResponseWriter, r *http.Request) {
-	mux.Handle("/usersH", protected(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
+	})
 
+	usersHHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
 		case http.MethodPut:
 			UpdateReportHourHandler(w, r, db)
 		case http.MethodGet:
@@ -754,10 +823,26 @@ func StartWebhookAPI(db *gorm.DB) {
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-
 		}
+	})
 
-	})))
+	if internal.Config.DevMode {
+		// In development mode, don't use Clerk protection
+		mux.Handle("/webhooks/govdao", webhookGovDAOHandler)
+		mux.Handle("/webhooks/validator", webhookValidatorHandler)
+		mux.Handle("/users", userHandler)
+		mux.Handle("/alert-contacts", alertContactsHandler)
+		mux.Handle("/usersH", usersHHandler)
+	} else {
+		// In production mode, use Clerk protection
+		protected := clerkhttp.RequireHeaderAuthorization()
+		mux.Handle("/webhooks/govdao", protected(webhookGovDAOHandler))
+		mux.Handle("/webhooks/validator", protected(webhookValidatorHandler))
+		mux.Handle("/users", protected(userHandler))
+		mux.Handle("/alert-contacts", protected(alertContactsHandler))
+		mux.Handle("/usersH", protected(usersHHandler))
+	}
+
 	// ====================== Dashboard =================
 	mux.HandleFunc("/block_height", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -792,6 +877,50 @@ func StartWebhookAPI(db *gorm.DB) {
 
 		case http.MethodGet:
 			Getarticipation(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+	mux.HandleFunc("/uptime", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			GetUptime(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+
+	mux.HandleFunc("/tx_contrib", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			GetTxContrib(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			GetInfo(w, r, db)
 		case http.MethodOptions:
 			EnableCORS(w)
 			w.WriteHeader(http.StatusOK)

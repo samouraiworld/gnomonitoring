@@ -64,12 +64,22 @@ type WebhookValidator struct {
 	Type        string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
 }
 type DailyParticipation struct {
-	Date         time.Time `gorm:"column:date;primaryKey;index:idx_participation_date,priority:1" `
-	BlockHeight  int       `gorm:"column:block_height;primaryKey" `
-	Moniker      string    `gorm:"column:moniker;primaryKey" `
-	Addr         string    `gorm:"column:addr;not null;index:idx_participation_date,priority:2" `
-	Participated bool      `gorm:"column:participated;not null" `
+	Date           time.Time `gorm:"column:date"`
+	BlockHeight    int64     `gorm:"column:block_height;uniqueIndex:uniq_addr_height,priority:2"`
+	Moniker        string    `gorm:"column:moniker"`
+	Addr           string    `gorm:"column:addr;not null;uniqueIndex:uniq_addr_height,priority:1"`
+	Participated   bool      `gorm:"column:participated;not null"`
+	TxContribution bool      `gorm:"column:tx_contribution;not null"`
 }
+
+//	type DailyParticipation struct {
+//		Date           time.Time `gorm:"column:date" `
+//		BlockHeight    int64     `gorm:"column:block_height;primaryKey;index:idx_participation_date,priority:1" `
+//		Moniker        string    `gorm:"column:moniker;primaryKey" `
+//		Addr           string    `gorm:"column:addr;not null;;primaryKey;index:idx_participation_date,priority:2" `
+//		Participated   bool      `gorm:"column:participated;not null" `
+//		TxContribution bool      `gorm:"column:tx_contribution;not null" `
+//	}
 type AlertLog struct {
 	Addr        string    `gorm:"column:addr;primaryKey" `
 	Moniker     string    `gorm:"column:moniker;not null" `
@@ -92,6 +102,18 @@ type AlertSummary struct {
 	EndHeight   int
 	Msg         string
 	SentAt      time.Time
+}
+type UptimeMetrics struct {
+	Moniker      string  `json:"moniker"`
+	Addr         string  `json:"addr"`
+	LastDownDate string  `json:"lastDownDate"`
+	LastUpDate   string  `json:"lastUpDate"`
+	DaysDiff     float64 `json:"uptime"`
+}
+type TxContribMetrics struct {
+	Moniker   string  ` json:"moniker"`
+	Addr      string  `json:"addr"`
+	TxContrib float64 `json:"tx_contrib"`
 }
 
 // CReate index
@@ -543,6 +565,53 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 	err := db.Raw(query).Scan(&results).Error
 
 	return results, err
+}
+
+// ====================================== Up Time / tx_contrib Metrics ==========================
+func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
+	var results []UptimeMetrics
+
+	query := `
+					SELECT
+					Moniker,
+				dp.addr,
+				
+				MAX(dp.date) AS last_down_date,
+				(
+					SELECT MAX(date)
+					FROM daily_participations AS d2
+					WHERE d2.addr = dp.addr AND d2.participated = 1
+				) AS last_up_date,
+				round(julianday((
+					SELECT MAX(date)
+					FROM daily_participations AS d2
+					WHERE d2.addr = dp.addr AND d2.participated = 1
+				)) - julianday(MAX(dp.date)),1) AS days_diff
+				FROM daily_participations AS dp
+				WHERE dp.participated = 0
+				GROUP BY dp.addr; `
+
+	if err := db.Raw(query).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in the request Uptime: %s", err)
+	}
+
+	return results, nil
+}
+func TxContrib(db *gorm.DB) ([]TxContribMetrics, error) {
+	var results []TxContribMetrics
+
+	query := `
+		select 
+		moniker,
+		addr,
+			round((SUM(tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations)),1) AS tx_contrib
+		from daily_participations
+		group by addr;  `
+	if err := db.Raw(query).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
+	}
+
+	return results, nil
 }
 
 // ====================================== ADDR MONIKER =============================

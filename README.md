@@ -32,7 +32,7 @@ nano config.yaml
 2. Configure your validator address and (optionally) the RPC endpoint:
 
 ```yaml
-rpc_endpoint: "https://rpc.test6.testnets.gno.land"
+rpc_endpoint: "https://rpc.test8.testnets.gno.land"
 validator_address: "replace with your validator address"
 port: 8888
 ```
@@ -67,7 +67,7 @@ This backend service monitors both GovDAO proposals and validator participation.
 ### 🧾 GovDAO Proposal Detection
 
 Sends Discord alerts when a new proposal is detected on:
-<https://test6.testnets.gno.land/r/gov/dao>
+<https://test8.testnets.gno.land/r/gov/dao>
 
 ### 🛠️ Setup
 
@@ -76,7 +76,7 @@ Sends Discord alerts when a new proposal is detected on:
 - [Docker](https://www.docker.com/)
 - [Docker Compose](https://docs.docker.com/compose/)
 
-![Discord alert dayli ](assets/discord_view.png)
+![Discord alert daily](assets/discord_view.png)
 
 1. Copy the configuration template and edit it:
 
@@ -89,14 +89,18 @@ nano config.yaml
 2. Customize parameters as needed. For example:
 
 ```yaml
-interval_seconde: 1
+interval_seconde: 1200
 backend_port: "8989"
 allow_origin: "http://localhost:3000"
-rpc_endpoint: "https://rpc.test6.testnets.gno.land"
+rpc_endpoint: "https://rpc.test8.testnets.gno.land"
 windows_size: 100
-daily_report_hour: 10 #hour of daily report
-daily_report_minute: 34 # minute of daily report 
-metrics_port: 8888 #port for metrics of prometheus 
+daily_report_hour: 16
+daily_report_minute: 58
+metrics_port: 8888
+gnoweb: "https://test8.testnets.gno.land"
+graphql: "indexer.test8.testnets.gno.land/graphql/query"
+clerk_secret_key: "sk_test...." #change me
+dev_mode: false # Set to true for local development without Clerk auth
 ```
 
 3. Start the backend:
@@ -109,12 +113,12 @@ docker compose up -d
 
 ### 🔗 Webhook Management (Discord / Slack)
 
-Manage webhooks for alert delivery. Choose between gnovalidator or webhookgovdao depending on the type.
+Manage webhooks for alert delivery. Choose between validator or govdao depending on the type.
 
 **➕ Add a webhook**
 
 ```bash
-curl -X POST http://localhost:8080/[gnovalidator | webhookgovdao]\
+curl -X POST http://localhost:8989/webhooks/[validator / govdao]\
   -H "Content-Type: application/json" \
   -d '{"user": "username","url": "URL_WEBHOOK", "type": ["discord"/"slack"}'
 ```
@@ -122,13 +126,13 @@ curl -X POST http://localhost:8080/[gnovalidator | webhookgovdao]\
 **📋 List webhooks**
 
 ```bash
-curl http://localhost:8989/[gnovalidator / webhooksgovdao]
+curl http://localhost:8989/webhooks/[validator / govdao]
 ```
 
 **❌ Delete a webhook**
 
 ```bash
- curl -X DELETE "http://localhost:8080/[gnovalidator / webhooksgovdao]?id=x"
+ curl -X DELETE "http://localhost:8989/webhooks/[validator / govdao]?id=x"
 ```
 
 ---
