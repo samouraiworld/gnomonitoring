@@ -7,3 +7,8 @@ Validator/secrets/*
 **.db
 **schema.sql
 **govdao copy.go.back
+**backup.sh
+**restore.sh
+**.csv
+**.tar.gz
+**config_docker.yaml
