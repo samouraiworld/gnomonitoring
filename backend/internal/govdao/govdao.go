@@ -143,7 +143,7 @@ func FetchGovDAOEvents() ([]Transaction, error) {
 				events {
 					... on GnoEvent {
 					type
-					func
+					
 					attrs {
 						key
 						value

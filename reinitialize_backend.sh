@@ -1,7 +1,7 @@
 #!/bin/bash
 
 DB_FILE="./backend/db/webhooks.db"
-TABLES=("daily_participations" "alert_logs" "govados" "addr_monikers" )
+TABLES=("daily_participations" "alert_logs" "govdos" "addr_monikers" )
 CONFIG_FILE="./backend/config_docker.yaml"
 
 
