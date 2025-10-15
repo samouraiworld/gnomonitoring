@@ -7,6 +7,6 @@ services:
       - ./config_docker.yaml:/app/config.yaml
       - ./db/:/app/db/
     ports:
-      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:8880:8888"
       - "127.0.0.1:8989:8989"
     command: ["./server"]

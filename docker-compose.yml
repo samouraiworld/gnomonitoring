@@ -11,7 +11,7 @@ services:
       - ./backend/go.sum:/root/go.sum 
       - ./backend/db/:/root/db/
     ports:
-      - 8888:8888 #metrics
+      - 8880:8888 #metrics
       - 8989:8989 #backend
     command: [ "go", "run", "main.go","--disable-report" ]
 
