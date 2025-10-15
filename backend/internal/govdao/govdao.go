@@ -116,8 +116,7 @@ func GetMessageTitle(height int) error {
 }
 
 func FetchGovDAOEvents() ([]Transaction, error) {
-	URLgraphql := "https://" + internal.Config.Graphql
-	client := graphql.NewClient(URLgraphql)
+	client := graphql.NewClient(internal.Config.Graphql)
 	req := graphql.NewRequest(`
 			query getEvents {
 			getTransactions(
@@ -298,7 +297,7 @@ func parseGnoStringResponse(bz []byte) (string, error) {
 }
 
 func GetTxsByBlockHeight(height int) (*TxBlock, error) {
-	URLgraphql := "https://" + internal.Config.Graphql
+	URLgraphql := internal.Config.Graphql
 	client := graphql.NewClient(URLgraphql)
 
 	req := graphql.NewRequest(`
