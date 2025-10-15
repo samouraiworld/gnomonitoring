@@ -449,7 +449,7 @@ func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB
 		http.Error(w, fmt.Sprintf("Failed to update report hour: %v", err), http.StatusInternalServerError)
 		return
 	}
-	scheduler.Schedulerinstance.ReloadForUser(payload.UserID, db)
+	scheduler.Schedulerinstance.ReloadForUser(userID, db)
 	w.WriteHeader(http.StatusOK)
 }
 func GetReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {

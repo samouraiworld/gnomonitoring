@@ -182,7 +182,8 @@ func ExtractGovDAOIDs(txs []Transaction) []string {
 }
 
 func WebsocketGovdao(db *gorm.DB) {
-	wsURL := "wss://" + internal.Config.Graphql
+	wsURL := strings.Replace(internal.Config.Graphql, "http", "ws", 1)
+	log.Println(wsURL)
 
 	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {

@@ -44,7 +44,8 @@ func SendDailyStatsForUser(db *gorm.DB, userID string, loc *time.Location) {
 	//yesterday := time.Now().In(loc).AddDate(0, 0, 0).Format("2006-01-02")
 
 	rates, minBlock, maxBlock := CalculateRate(db, yesterday)
-
+	//rates, minBlock, maxBlock := CalculateRate(db, "2025-15-10")
+	log.Println(">MERDE ")
 	if len(rates) == 0 {
 		log.Printf("⚠️ No participation data found on date %s", yesterday)
 		return
