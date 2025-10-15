@@ -59,7 +59,6 @@ func (s *Scheduler) StartForUser(userID string, hour, minute int, timezone strin
 	// New reload channel
 	reload := make(chan struct{})
 	s.reloadChans[userID] = reload
-	log.Printf("USER %s", userID)
 	go func() {
 		gnovalidator.SheduleUserReport(userID, hour, minute, timezone, db, reload)
 	}()
