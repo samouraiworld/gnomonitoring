@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"time"
@@ -18,9 +19,9 @@ type Govdao struct {
 	Status string `gorm:"column:status;" `
 }
 type ParticipationRate struct {
-	Addr              string
-	Moniker           string
-	ParticipationRate float64
+	Addr              string  `json:"addr"`
+	Moniker           string  `json:"moniker"`
+	ParticipationRate float64 `json:"participationRate"`
 }
 
 type User struct {
@@ -95,13 +96,13 @@ type AddrMoniker struct {
 	Moniker string `gorm:"column:moniker;not null" `
 }
 type AlertSummary struct {
-	Moniker     string
-	Addr        string
-	Level       string
-	StartHeight int
-	EndHeight   int
-	Msg         string
-	SentAt      time.Time
+	Moniker     string    `json:"moniker"`
+	Addr        string    `json:"addr"`
+	Level       string    `json:"level"`
+	StartHeight int       `json:"startHeight"`
+	EndHeight   int       `json:"endHeight"`
+	Msg         string    `json:"msg"`
+	SentAt      time.Time `json:"sentAt"`
 }
 type UptimeMetrics struct {
 	Moniker      string  `json:"moniker"`
@@ -113,7 +114,12 @@ type UptimeMetrics struct {
 type TxContribMetrics struct {
 	Moniker   string  ` json:"moniker"`
 	Addr      string  `json:"addr"`
-	TxContrib float64 `json:"tx_contrib"`
+	TxContrib float64 `json:"txContrib"`
+}
+type MissingBlockMetrics struct {
+	Moniker      string ` json:"moniker"`
+	Addr         string `json:"addr"`
+	MissingBlock int    `json:"missingBlock"`
 }
 
 // CReate index
@@ -494,6 +500,27 @@ func GetAlertLog(db *gorm.DB, period string) ([]AlertSummary, error) {
 		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 		end = start.AddDate(1, 0, 0)
 
+	case "all_time":
+		var minS, maxS sql.NullString
+		const layout = "2006-01-02 15:04:05.999999999-07:00"
+		db.Raw(`
+				SELECT
+					MIN(sent_at),
+					MAX(sent_at)
+				FROM alert_logs
+				`).Row().Scan(&minS, &maxS)
+
+		startf, err := time.Parse(layout, minS.String)
+		if err != nil {
+			return nil, fmt.Errorf("error get date max alertLog %w", err)
+		}
+		start = startf
+		endf, err := time.Parse(layout, maxS.String)
+		if err != nil {
+			return nil, fmt.Errorf("error get date min alertLog %w", err)
+		}
+		end = endf.AddDate(1, 0, 0)
+
 	default:
 		return nil, fmt.Errorf("invalid period: %s", period)
 	}
@@ -519,6 +546,7 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 	var results []ParticipationRate
 
 	var start, end time.Time
+	var startStr, endStr string
 	now := time.Now()
 
 	switch period {
@@ -531,22 +559,29 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 		start = today.AddDate(0, 0, -weekday+1) // Return to last Monday
 		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
 		end = start.AddDate(0, 0, 7)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
 	case "current_month":
 		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 		end = start.AddDate(0, 1, 0)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
 
 	case "current_year":
 		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 		end = start.AddDate(1, 0, 0)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+
+	case "all_time":
+
+		startStr = `(select min(date) from daily_participations)`
+		endStr = `(select max(date) from daily_participations)`
 
 	default:
 		return nil, fmt.Errorf("invalid period: %s", period)
 	}
 
-	startStr := start.Format("2006-01-02")
-	endStr := end.Format("2006-01-02")
-	log.Printf("start %s", startStr)
-	log.Printf("end %s", endStr)
 	query := fmt.Sprintf(`
 		SELECT
 			addr,
@@ -555,7 +590,7 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 		FROM
 			daily_participations
 		WHERE
-			date >= '%s' AND date < '%s'
+			date >= %s AND date < %s
 		GROUP BY
 			addr, moniker
 		ORDER BY
@@ -563,6 +598,7 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 	`, startStr, endStr)
 
 	err := db.Raw(query).Scan(&results).Error
+	log.Println(results)
 
 	return results, err
 }
@@ -597,16 +633,114 @@ func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
 
 	return results, nil
 }
-func TxContrib(db *gorm.DB) ([]TxContribMetrics, error) {
+func TxContrib(db *gorm.DB, period string) ([]TxContribMetrics, error) {
 	var results []TxContribMetrics
 
-	query := `
+	var start, end time.Time
+	var startStr, endStr string
+	now := time.Now()
+
+	switch period {
+	case "current_week":
+		today := time.Now()
+		weekday := int(today.Weekday())
+		if weekday == 0 {
+			weekday = 7 // Sunday => 7
+		}
+		start = today.AddDate(0, 0, -weekday+1) // Return to last Monday
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
+		end = start.AddDate(0, 0, 7)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+	case "current_month":
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(0, 1, 0)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+
+	case "current_year":
+		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(1, 0, 0)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+
+	case "all_time":
+
+		startStr = `(select min(date) from daily_participations)`
+		endStr = `(select max(date) from daily_participations)`
+
+	default:
+		return nil, fmt.Errorf("invalid period: %s", period)
+	}
+
+	query := fmt.Sprintf(`
 		select 
 		moniker,
 		addr,
 			round((SUM(tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations)),1) AS tx_contrib
 		from daily_participations
-		group by addr;  `
+		WHERE
+			date >= %s AND date < %s
+		group by addr;  `, startStr, endStr)
+
+	if err := db.Raw(query).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
+	}
+
+	return results, nil
+}
+
+// ===================================== MISSING BLOCK =============================
+func MissingBlock(db *gorm.DB, period string) ([]MissingBlockMetrics, error) {
+	var results []MissingBlockMetrics
+
+	var start, end time.Time
+	var startStr, endStr string
+	now := time.Now()
+
+	switch period {
+	case "current_week":
+		today := time.Now()
+		weekday := int(today.Weekday())
+		if weekday == 0 {
+			weekday = 7 // Sunday => 7
+		}
+		start = today.AddDate(0, 0, -weekday+1) // Return to last Monday
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
+		end = start.AddDate(0, 0, 7)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+	case "current_month":
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(0, 1, 0)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+
+	case "current_year":
+		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(1, 0, 0)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+
+	case "all_time":
+
+		startStr = `(select min(date) from daily_participations)`
+		endStr = `(select max(date) from daily_participations)`
+
+	default:
+		return nil, fmt.Errorf("invalid period: %s", period)
+	}
+
+	query := fmt.Sprintf(`
+		select 
+		moniker,
+		addr,
+		SUM(CASE WHEN participated = 0 THEN 1 ELSE 0 END) AS missing_block
+		from daily_participations
+		WHERE
+			date >= %s AND date < %s
+		group by addr;  `, startStr, endStr)
+
 	if err := db.Raw(query).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
 	}
