@@ -116,6 +116,11 @@ type TxContribMetrics struct {
 	Addr      string  `json:"addr"`
 	TxContrib float64 `json:"txContrib"`
 }
+type MissingBlockMetrics struct {
+	Moniker      string ` json:"moniker"`
+	Addr         string `json:"addr"`
+	MissingBlock int    `json:"missingBlock"`
+}
 
 // CReate index
 func InitDB(dbPath string) (*gorm.DB, error) {
@@ -673,6 +678,64 @@ func TxContrib(db *gorm.DB, period string) ([]TxContribMetrics, error) {
 		moniker,
 		addr,
 			round((SUM(tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations)),1) AS tx_contrib
+		from daily_participations
+		WHERE
+			date >= %s AND date < %s
+		group by addr;  `, startStr, endStr)
+
+	if err := db.Raw(query).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
+	}
+
+	return results, nil
+}
+
+// ===================================== MISSING BLOCK =============================
+func MissingBlock(db *gorm.DB, period string) ([]MissingBlockMetrics, error) {
+	var results []MissingBlockMetrics
+
+	var start, end time.Time
+	var startStr, endStr string
+	now := time.Now()
+
+	switch period {
+	case "current_week":
+		today := time.Now()
+		weekday := int(today.Weekday())
+		if weekday == 0 {
+			weekday = 7 // Sunday => 7
+		}
+		start = today.AddDate(0, 0, -weekday+1) // Return to last Monday
+		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
+		end = start.AddDate(0, 0, 7)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+	case "current_month":
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(0, 1, 0)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+
+	case "current_year":
+		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		end = start.AddDate(1, 0, 0)
+		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
+		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+
+	case "all_time":
+
+		startStr = `(select min(date) from daily_participations)`
+		endStr = `(select max(date) from daily_participations)`
+
+	default:
+		return nil, fmt.Errorf("invalid period: %s", period)
+	}
+
+	query := fmt.Sprintf(`
+		select 
+		moniker,
+		addr,
+		SUM(CASE WHEN participated = 0 THEN 1 ELSE 0 END) AS missing_block
 		from daily_participations
 		WHERE
 			date >= %s AND date < %s
