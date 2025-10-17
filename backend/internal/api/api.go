@@ -693,12 +693,17 @@ func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		http.Error(w, "Missing period", http.StatusBadRequest)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 
 	}
-	txcontrib, err := database.TxContrib(db)
+	txcontrib, err := database.TxContrib(db, period)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get TxContrib metrics: %v", err), http.StatusInternalServerError)
 		return
