@@ -20,7 +20,7 @@ type Govdao struct {
 type ParticipationRate struct {
 	Addr              string  `json:"addr"`
 	Moniker           string  `json:"moniker"`
-	ParticipationRate float64 `json:"participationrate"`
+	ParticipationRate float64 `json:"participationRate"`
 }
 
 type User struct {
@@ -95,13 +95,13 @@ type AddrMoniker struct {
 	Moniker string `gorm:"column:moniker;not null" `
 }
 type AlertSummary struct {
-	Moniker     string
-	Addr        string
-	Level       string
-	StartHeight int
-	EndHeight   int
-	Msg         string
-	SentAt      time.Time
+	Moniker     string    `json:"moniker"`
+	Addr        string    `json:"addr"`
+	Level       string    `json:"level"`
+	StartHeight int       `json:"startHeight"`
+	EndHeight   int       `json:"endHeight"`
+	Msg         string    `json:"msg"`
+	SentAt      time.Time `json:"sentAt"`
 }
 type UptimeMetrics struct {
 	Moniker      string  `json:"moniker"`
@@ -113,7 +113,7 @@ type UptimeMetrics struct {
 type TxContribMetrics struct {
 	Moniker   string  ` json:"moniker"`
 	Addr      string  `json:"addr"`
-	TxContrib float64 `json:"tx_contrib"`
+	TxContrib float64 `json:"txContrib"`
 }
 
 // CReate index
@@ -551,7 +551,7 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 		SELECT
 			addr,
 			moniker,
-			ROUND(SUM(participated) * 100.0 / COUNT(*), 1) AS participationrate
+			ROUND(SUM(participated) * 100.0 / COUNT(*), 1) AS participationRate
 		FROM
 			daily_participations
 		WHERE
@@ -559,7 +559,7 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 		GROUP BY
 			addr, moniker
 		ORDER BY
-			participationrate DESC;
+			participationRate DESC;
 	`, startStr, endStr)
 
 	err := db.Raw(query).Scan(&results).Error
