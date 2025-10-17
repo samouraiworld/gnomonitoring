@@ -45,7 +45,7 @@ func main() {
 		go scheduler.InitScheduler(db)
 	} else {
 		log.Println("⚠️ Daily report scheduler disabled by flag")
-	} // for dailyreport
+	}
 
 	// ====================== Gov Dao Proposal ====================================== //
 
