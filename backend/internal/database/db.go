@@ -18,6 +18,11 @@ type Govdao struct {
 	Tx     string `gorm:"column:tx;" `
 	Status string `gorm:"column:status;" `
 }
+type Telegram struct {
+	Id     int    `gorm:"primaryKey;autoIncrement:false;column:id"`
+	ChatID string `gorm:"column:chat_id;" `
+	Type   string `gorm:"column:type;not null;check:type IN ('govdao','validator')" `
+}
 type ParticipationRate struct {
 	Addr              string  `json:"addr"`
 	Moniker           string  `json:"moniker"`
@@ -715,4 +720,19 @@ func Period(period string) (startStr, endStr string, err error) {
 		return "", "", fmt.Errorf("invalid period: %s", period)
 	}
 	return startStr, endStr, nil
+}
+
+// ============================ Telegram =============================================
+
+func InsertChatID(db *gorm.DB, chatID string, chatType string) error {
+	chat := Telegram{
+		ChatID: chatID,
+		Type:   chatType,
+	}
+	return db.Create(&chat).Error
+}
+
+// If error during send delete chatid
+func DeleteChatByID(db *gorm.DB, chatID string) error {
+	return db.Where("chat_id = ?", chatID).Delete(&Telegram{}).Error
 }

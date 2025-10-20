@@ -14,14 +14,16 @@ import (
 )
 
 type config struct {
-	BackendPort    string `yaml:"backend_port"`
-	AllowOrigin    string `yaml:"allow_origin"`
-	RPCEndpoint    string `yaml:"rpc_endpoint"`
-	MetricsPort    int    `yaml:"metrics_port"`
-	Gnoweb         string `yaml:"gnoweb"`
-	Graphql        string `yaml:"graphql"`
-	ClerkSecretKey string `yaml:"clerk_secret_key"`
-	DevMode        bool   `yaml:"dev_mode"`
+	BackendPort            string `yaml:"backend_port"`
+	AllowOrigin            string `yaml:"allow_origin"`
+	RPCEndpoint            string `yaml:"rpc_endpoint"`
+	MetricsPort            int    `yaml:"metrics_port"`
+	Gnoweb                 string `yaml:"gnoweb"`
+	Graphql                string `yaml:"graphql"`
+	ClerkSecretKey         string `yaml:"clerk_secret_key"`
+	DevMode                bool   `yaml:"dev_mode"`
+	TokenTelegramValidator string `yaml:"token_telegram_validator"`
+	TokenTelegramGovdao    string `yaml:"token_telegram_govdao"`
 }
 
 var Config config

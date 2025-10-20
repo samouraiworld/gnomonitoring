@@ -78,7 +78,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 			// Stagnation detection
 			if lastProgressHeight != -1 && latest == lastProgressHeight {
 				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
-					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d since %s (%s ago)", latest, lastProgressTime.Format(time.RFC822), time.Since(lastProgressTime).Truncate(time.Second))
+					msg := fmt.Sprintf("📢❗🚨💥 CRITICAL : Blockchain stuck at height %d since %s (%s ago)", latest, lastProgressTime.Format(time.RFC822), time.Since(lastProgressTime).Truncate(time.Second))
 					log.Println(msg)
 					internal.SendInfoValidateur(msg, "CRITICAL", db)
 
