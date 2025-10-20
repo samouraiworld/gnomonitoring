@@ -712,6 +712,34 @@ func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 }
 
+// =========================== Missing Block
+// ========================= Get tx_contrib
+func GetMissingBlock(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		http.Error(w, "Missing period", http.StatusBadRequest)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+
+	}
+	txcontrib, err := database.MissingBlock(db, period)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get Missing Block metrics: %v", err), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(txcontrib)
+
+}
+
 // =========================Info of  rpc gnoweb use ====================
 
 func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
@@ -911,6 +939,20 @@ func StartWebhookAPI(db *gorm.DB) {
 
 		case http.MethodGet:
 			GetTxContrib(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+	mux.HandleFunc("/missing_block", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			GetMissingBlock(w, r, db)
 		case http.MethodOptions:
 			EnableCORS(w)
 			w.WriteHeader(http.StatusOK)
