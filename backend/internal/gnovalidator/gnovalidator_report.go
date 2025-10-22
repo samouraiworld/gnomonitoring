@@ -46,7 +46,7 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 func SheduleTelegramReport(chat_id int64, hour, minute int, timezone string, db *gorm.DB, reload <-chan struct{}) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		log.Printf("⚠️ Invalid timezone for user %s: %s, defaulting to UTC", chat_id, timezone)
+		log.Printf("⚠️ Invalid timezone for user %d: %s, defaulting to UTC", chat_id, timezone)
 		loc = time.UTC
 	}
 
@@ -65,7 +65,7 @@ func SheduleTelegramReport(chat_id int64, hour, minute int, timezone string, db 
 			log.Printf("⏰ Sending report for user %d", chat_id)
 			SendDailyStatsForUser(db, nil, &chat_id, loc)
 		case <-reload:
-			log.Printf("♻️ Reloading schedule for user %s", chat_id)
+			log.Printf("♻️ Reloading schedule for user %d", chat_id)
 			return
 		}
 	}
