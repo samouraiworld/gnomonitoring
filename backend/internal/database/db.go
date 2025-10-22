@@ -19,9 +19,14 @@ type Govdao struct {
 	Status string `gorm:"column:status;" `
 }
 type Telegram struct {
-	Id     int    `gorm:"primaryKey;autoIncrement:false;column:id"`
-	ChatID string `gorm:"column:chat_id;" `
-	Type   string `gorm:"column:type;not null;check:type IN ('govdao','validator')" `
+	ChatID int64  `gorm:"primaryKey;column:chat_id;" `
+	Type   string `gorm:"primaryKey;olumn:type;not null;check:type IN ('govdao','validator')" `
+}
+type TelegramHourReport struct {
+	ChatID            int64  `gorm:"primaryKey;column:chat_id;" `
+	DailyReportHour   int    `gorm:"column:daily_report_hour;default:9" json:"daily_report_hour"`
+	DailyReportMinute int    `gorm:"column:daily_report_minute;default:0" json:"daily_report_minute"`
+	Timezone          string `gorm:"column:timezone;default:Europe/Paris" `
 }
 type ParticipationRate struct {
 	Addr              string  `json:"addr"`
@@ -90,8 +95,8 @@ type AlertLog struct {
 	Addr        string    `gorm:"column:addr;primaryKey" `
 	Moniker     string    `gorm:"column:moniker;not null" `
 	Level       string    `gorm:"column:level;primaryKey" `
-	StartHeight int       `gorm:"column:start_height;primaryKey;not null" `
-	EndHeight   int       `gorm:"column:end_height;primaryKey;not null" `
+	StartHeight int64     `gorm:"column:start_height;primaryKey;not null" `
+	EndHeight   int64     `gorm:"column:end_height;primaryKey;not null" `
 	Skipped     bool      `gorm:"column:skipped;not null" `
 	SentAt      time.Time `gorm:"column:sent_at;autoCreateTime" `
 }
@@ -104,8 +109,8 @@ type AlertSummary struct {
 	Moniker     string    `json:"moniker"`
 	Addr        string    `json:"addr"`
 	Level       string    `json:"level"`
-	StartHeight int       `json:"startHeight"`
-	EndHeight   int       `json:"endHeight"`
+	StartHeight int64     `json:"startHeight"`
+	EndHeight   int64     `json:"endHeight"`
 	Msg         string    `json:"msg"`
 	SentAt      time.Time `json:"sentAt"`
 }
@@ -150,7 +155,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	err = db.AutoMigrate(
 		&User{}, &AlertContact{}, &WebhookValidator{},
 		&WebhookGovDAO{}, &HourReport{},
-		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{}, &Govdao{},
+		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{}, &Govdao{}, &Telegram{}, &TelegramHourReport{},
 	)
 	if err != nil {
 		return nil, err
@@ -468,7 +473,7 @@ func PruneOldParticipationData(db *gorm.DB, keepDays int) error {
 }
 
 // ====================================== ALERT LOG ======================================
-func InsertAlertlog(db *gorm.DB, addr, moniker, level string, startheight, endheight int, skipped bool, sent time.Time) error {
+func InsertAlertlog(db *gorm.DB, addr, moniker, level string, startheight, endheight int64, skipped bool, sent time.Time) error {
 	alert := AlertLog{
 		Addr:        addr,
 		Moniker:     moniker,
@@ -724,15 +729,75 @@ func Period(period string) (startStr, endStr string, err error) {
 
 // ============================ Telegram =============================================
 
-func InsertChatID(db *gorm.DB, chatID string, chatType string) error {
+func InsertChatID(db *gorm.DB, chatID int64, chatType string) (bool, error) {
 	chat := Telegram{
 		ChatID: chatID,
 		Type:   chatType,
 	}
-	return db.Create(&chat).Error
+
+	if chatType == "validator" {
+		createHourReportTelegram(db, chatID)
+
+	}
+
+	tx := db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "chat_id"}, {Name: "type"}},
+		DoNothing: true,
+	}).Create(&chat)
+
+	if tx.Error != nil {
+		return false, tx.Error
+	}
+	inserted := tx.RowsAffected > 0
+	return inserted, nil
+
 }
 
 // If error during send delete chatid
-func DeleteChatByID(db *gorm.DB, chatID string) error {
+func DeleteChatByID(db *gorm.DB, chatID int64) error {
 	return db.Where("chat_id = ?", chatID).Delete(&Telegram{}).Error
+}
+func GetAllChatIDs(db *gorm.DB, TypeChatid string) ([]int64, error) {
+	var chats []Telegram
+
+	if err := db.Where("type = ?", TypeChatid).Find(&chats).Error; err != nil {
+		return nil, err
+	}
+
+	var ids []int64
+	for _, c := range chats {
+		ids = append(ids, c.ChatID)
+	}
+	return ids, nil
+}
+
+// ================== Telegram hours report ================================
+
+func UpdateTelegramHeureReport(db *gorm.DB, H, M int, T string, chatid int64) error {
+	// Validate timezone
+	if _, err := time.LoadLocation(T); err != nil {
+		log.Printf("Invalid timezone '%s', defaulting to UTC", T)
+		T = "UTC"
+	}
+	return db.
+		Model(&TelegramHourReport{}).
+		Where("chat_id = ?", chatid).
+		Updates(map[string]interface{}{
+			"daily_report_hour":   H,
+			"daily_report_minute": M,
+			"timezone":            T,
+		}).Error
+}
+func GetHourTelegramReport(db *gorm.DB, chatid int64) (*TelegramHourReport, error) {
+	var hr TelegramHourReport
+	err := db.Model(&TelegramHourReport{}).
+		Where("chat_id = ?", chatid).
+		First(&hr).Error
+	if err != nil {
+		return nil, err
+	}
+	return &hr, nil
+}
+func createHourReportTelegram(db *gorm.DB, chatid int64) error {
+	return db.Create(&TelegramHourReport{ChatID: chatid}).Error
 }
