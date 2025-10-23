@@ -14,18 +14,21 @@ import (
 
 // BuildTelegramHandlers retourne la map de handlers
 func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, string) {
+	period_default := "current_month"
+
+	limit_default := int64(10)
 	return map[string]func(int64, string){
 
 		"/status": func(chatID int64, args string) {
 			params := parseParams(args)
 			period := params["period"]
 			if period == "" {
-				period = "current_month"
+				period = period_default
 			}
 			limit, err := strconv.ParseInt(params["limit"], 10, 64)
 			if err != nil {
 				log.Printf("error conversion limit: %v", err)
-				limit = 10
+				limit = limit_default
 			}
 			limitint := int(limit)
 
@@ -41,7 +44,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			limit, err := strconv.ParseInt(params["limit"], 10, 64)
 			if err != nil {
 				log.Printf("error conversion limit: %v", err)
-				limit = 10
+				limit = limit_default
 			}
 			limitint := int(limit)
 
@@ -55,12 +58,12 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			params := parseParams(args)
 			period := params["period"]
 			if period == "" {
-				period = "current_month"
+				period = period_default
 			}
 			limit, err := strconv.ParseInt(params["limit"], 10, 64)
 			if err != nil {
 				log.Printf("error conversion limit: %v", err)
-				limit = 10
+				limit = limit_default
 			}
 			limitint := int(limit)
 
@@ -76,12 +79,12 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 
 			period := params["period"]
 			if period == "" {
-				period = "current_month"
+				period = period_default
 			}
 			limit, err := strconv.ParseInt(params["limit"], 10, 64)
 			if err != nil {
 				log.Printf("error conversion limit: %v", err)
-				limit = 10
+				limit = limit_default
 			}
 			limitint := int(limit)
 
@@ -276,28 +279,29 @@ func formatHelp() string {
 
 	b.WriteString("📡 <b>Commands</b>\n")
 
-	b.WriteString("<code>/status [period=...]</code>\n")
+	b.WriteString("<code>/status [period=...] [limit=N]</code>\n")
 	b.WriteString("Shows the participation rate of validators for a given period.\n")
 	b.WriteString("Examples:\n")
-	b.WriteString("• <code>/status</code> (default: current_week)\n")
-	b.WriteString("• <code>/status period=current_month</code>\n\n")
+	b.WriteString("• <code>/status</code> (defaults: period=current_month, limit=10)\n")
+	b.WriteString("• <code>/status period=current_month limit=5</code>\n\n")
 
-	b.WriteString("<code>/uptime</code>\n")
+	b.WriteString("<code>/uptime [limit=N]</code>\n")
 	b.WriteString("Displays uptime statistics of validator.\n")
 	b.WriteString("Examples:\n")
-	b.WriteString("• <code>/uptime</code>\n\n")
+	b.WriteString("• <code>/uptime</code> (default: limit=10)\n")
+	b.WriteString("• <code>/uptime limit=3</code>\n\n")
 
-	b.WriteString("<code>/tx_contrib [period=...]</code>\n")
+	b.WriteString("<code>/tx_contrib [period=...] [limit=N]</code>\n")
 	b.WriteString("Shows each validator’s contribution to transaction inclusion.\n")
 	b.WriteString("Examples:\n")
-	b.WriteString("• <code>/tx_contrib</code>\n")
-	b.WriteString("• <code>/tx_contrib period=current_year</code>\n\n")
+	b.WriteString("• <code>/tx_contrib</code> (defaults: period=current_month, limit=10)\n")
+	b.WriteString("• <code>/tx_contrib period=current_year limit=20</code>\n\n")
 
-	b.WriteString("<code>/missing [period=...]</code>\n")
+	b.WriteString("<code>/missing [period=...] [limit=N]</code>\n")
 	b.WriteString("Displays how many blocks each validator missed for a given period.\n")
 	b.WriteString("Examples:\n")
-	b.WriteString("• <code>/missing</code>\n")
-	b.WriteString("• <code>/missing period=all_time</code>\n\n")
+	b.WriteString("• <code>/missing</code> (defaults: period=current_month, limit=10)\n")
+	b.WriteString("• <code>/missing period=all_time limit=50</code>\n\n")
 
 	b.WriteString("ℹ️ Parameters must be written as <code>key=value</code> (e.g. <code>period=current_week</code>).\n")
 
