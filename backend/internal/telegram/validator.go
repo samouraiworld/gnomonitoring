@@ -179,7 +179,7 @@ func formatUptime(db *gorm.DB, limit int) (msg string, err error) {
 	}
 
 	// Sort by  (desc)
-	sort.Slice(results, func(i, j int) bool { return results[i].DaysDiff > results[j].DaysDiff })
+	sort.Slice(results, func(i, j int) bool { return results[i].Uptime > results[j].Uptime })
 
 	var builder strings.Builder
 	builder.WriteString("🕘 <b>Uptime metrics </b>\n\n")
@@ -194,9 +194,22 @@ func formatUptime(db *gorm.DB, limit int) (msg string, err error) {
 			break
 		}
 
+		emoji := "🟢"
+		if r.Uptime < 95.0 {
+			emoji = "🟡"
+		}
+		if r.Uptime < 70.0 {
+			emoji = "🟠"
+
+		}
+		if r.Uptime < 50.0 {
+			emoji = "🔴"
+
+		}
+
 		builder.WriteString(fmt.Sprintf(
-			"<b> %s </b> \n addr: %s \n uptime : %.2f days \n\n",
-			html.EscapeString(r.Moniker), html.EscapeString(r.Addr), r.DaysDiff,
+			"%s <b> %s </b> \n addr: %s \n uptime : %.2f%%\n\n",
+			emoji, html.EscapeString(r.Moniker), html.EscapeString(r.Addr), r.Uptime,
 		))
 
 	}

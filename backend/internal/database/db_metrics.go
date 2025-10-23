@@ -120,8 +120,8 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 }
 
 // ====================================== Up Time / tx_contrib Metrics ==========================
-func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
-	var results []UptimeMetrics
+func OperationTimeMetricsaddr(db *gorm.DB) ([]OperationTimeMetrics, error) {
+	var results []OperationTimeMetrics
 
 	query := `
 					SELECT
@@ -149,6 +149,45 @@ func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
 
 	return results, nil
 }
+func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
+
+	var results []UptimeMetrics
+
+	query := `
+					WITH
+						bounds AS (
+							SELECT (SELECT MAX(block_height) AS max_height FROM daily_participations) AS latest,
+							 500 AS window, 
+							 ((SELECT MAX(block_height) AS max_height FROM daily_participations)- 500+ 1) AS start_h,
+							  (SELECT MAX(block_height) AS max_height FROM daily_participations) AS end_h
+						),
+						base AS (
+							SELECT
+							p.moniker,
+							p.addr,
+							SUM(CASE WHEN p.participated THEN 1 ELSE 0 END) AS ok,
+							COUNT(*) AS total
+							FROM daily_participations p
+							JOIN bounds b
+							ON p.block_height BETWEEN b.start_h AND b.end_h
+							GROUP BY p.addr
+						)
+						SELECT
+						moniker,
+						addr,
+					
+					
+						100.0 * ok / total AS uptime
+						FROM base
+						ORDER BY uptime ASC;`
+
+	if err := db.Raw(query).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in the request Uptime: %s", err)
+	}
+
+	return results, nil
+}
+
 func TxContrib(db *gorm.DB, period string) ([]TxContribMetrics, error) {
 	var results []TxContribMetrics
 
