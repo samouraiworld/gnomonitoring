@@ -60,7 +60,25 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 				log.Printf("send %s failed: %v", "/uptime", err)
 			}
 
-		}, "/tx_contrib": func(chatID int64, args string) {
+		}, "/operation_time": func(chatID int64, args string) {
+			params := parseParams(args)
+			limit, err := strconv.ParseInt(params["limit"], 10, 64)
+			if err != nil {
+				log.Printf("error conversion limit: %v", err)
+				limit = limit_default
+			}
+			limitint := int(limit)
+
+			msg, err := formatOperationTime(db, limitint)
+			if err != nil {
+				log.Printf("error get uptime metrics: %s", err)
+			}
+			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+				log.Printf("send %s failed: %v", "/uptime", err)
+			}
+
+		},
+		"/tx_contrib": func(chatID int64, args string) {
 			params := parseParams(args)
 			period := params["period"]
 			if period == "" {
@@ -210,6 +228,42 @@ func formatUptime(db *gorm.DB, limit int) (msg string, err error) {
 		builder.WriteString(fmt.Sprintf(
 			"%s <b> %s </b> \n addr: %s \n uptime : %.2f%%\n\n",
 			emoji, html.EscapeString(r.Moniker), html.EscapeString(r.Addr), r.Uptime,
+		))
+
+	}
+
+	return builder.String(), err
+}
+func formatOperationTime(db *gorm.DB, limit int) (msg string, err error) {
+
+	results, err := database.OperationTimeMetricsaddr(db)
+	if err != nil {
+		return "", fmt.Errorf("failed to get operation time  metrics: %v", err)
+
+	}
+	if len(results) == 0 {
+		return "🕘 <b>Update Metrics</b>\nNo data.", nil
+	}
+
+	// Sort by  (desc)
+	sort.Slice(results, func(i, j int) bool { return results[i].DaysDiff > results[j].DaysDiff })
+
+	var builder strings.Builder
+	builder.WriteString("🕘 <b>Uptime metrics </b>\n\n")
+
+	// limit
+	if len(results) < limit {
+		limit = len(results)
+	}
+
+	for i, r := range results {
+		if i >= limit {
+			break
+		}
+
+		builder.WriteString(fmt.Sprintf(
+			" <b> %s </b> \n addr: %s \n Operation Time : %.2f days\n\n",
+			html.EscapeString(r.Moniker), html.EscapeString(r.Addr), r.DaysDiff,
 		))
 
 	}
