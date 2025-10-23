@@ -49,82 +49,6 @@ type tgEntity struct {
 	Length int    `json:"length"`
 }
 
-func GetChatIDs(botToken, TypeChatid string, db *gorm.DB) (nextOffset int, err error) {
-	u := "https://api.telegram.org/bot" + url.PathEscape(botToken) + "/getUpdates"
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(u)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode/100 != 2 {
-		return 0, fmt.Errorf("telegram HTTP %d", resp.StatusCode)
-	}
-
-	var p updatesResp
-	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
-		return 0, err
-	}
-	if !p.Ok {
-		return 0, fmt.Errorf("ok=false")
-	}
-
-	seen := make(map[int64]struct{})
-	last := -1
-	for _, up := range p.Result {
-		if up.UpdateID > last {
-			last = up.UpdateID
-		}
-		for _, m := range []*message{up.Message, up.ChannelPost} {
-			if m == nil || m.Chat.ID == 0 {
-				continue
-			}
-			if _, ok := seen[m.Chat.ID]; !ok {
-				seen[m.Chat.ID] = struct{}{}
-				insert, err := database.InsertChatID(db, m.Chat.ID, TypeChatid)
-				if err != nil {
-					return 0, fmt.Errorf("error  insert chatid to db %w", err)
-				}
-				if insert && TypeChatid == "govdao" {
-					//for send ultimate Govdao
-					log.Println("Send ultimate govdao telegram")
-					govdaolist, err := database.GetLastGovDaoInfo(db)
-					if err != nil {
-						return 0, fmt.Errorf("error get lastid govdao%s ", err)
-
-					}
-					SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, botToken, m.Chat.ID)
-
-				}
-
-			}
-		}
-	}
-	if last >= 0 {
-		nextOffset = last + 1
-	}
-	return nextOffset, nil
-}
-
-func StartTelegramWatcher(botToken, chatType string, db *gorm.DB) {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			next, err := GetChatIDs(botToken, chatType, db)
-			if err != nil {
-				log.Printf("❌ erreur GetChatIDs: %v", err)
-				continue
-			}
-			log.Printf("✅ Check Telegram OK (nextOffset=%d)", next)
-		}
-	}
-}
-
 func SendMessageTelegram(botToken string, chatID int64, text string) error {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 
@@ -209,13 +133,11 @@ func extractCommand(msg *message) (cmd, args string, ok bool) {
 	return
 }
 
-// ---- Boucle de commandes ----
-
-// StartCommandLoop lit en continu getUpdates et appelle les handlers.
+// StartCommandLoop continuously reads getUpdates and calls the handlers.
 // - token: ton bot token
-// - stopCtx: pour arrêter proprement (SIGINT/SIGTERM)
-// - handlers: map "/status" -> func(chatID, args) ; "*" est un fallback
-func StartCommandLoop(stopCtx context.Context, token string, handlers map[string]func(int64, string)) error {
+// - stopCtx: to shut down properly (SIGINT/SIGTERM)
+
+func StartCommandLoop(stopCtx context.Context, token string, handlers map[string]func(int64, string), TypeChatid string, db *gorm.DB) error {
 	base := "https://api.telegram.org/bot" + url.PathEscape(token) + "/getUpdates"
 	offset := 0
 	httpClient := &http.Client{Timeout: 50 * time.Second}
@@ -256,27 +178,44 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 			if up.Message == nil || up.Message.Chat.ID == 0 {
 				continue
 			}
+			// For save Chat ID into db
+			insert, err := database.InsertChatID(db, up.Message.Chat.ID, TypeChatid)
+			if err != nil {
+				return fmt.Errorf("error  insert chatid to db %w", err)
+			}
+			if insert && TypeChatid == "govdao" {
+				//for send ultimate Govdao
+				log.Println("Send ultimate govdao telegram")
+				govdaolist, err := database.GetLastGovDaoInfo(db)
+				if err != nil {
+					return fmt.Errorf("error get lastid govdao%s ", err)
+
+				}
+				SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, up.Message.Chat.ID)
+			}
+			//========================
 			cmd, args, ok := extractCommand(up.Message)
 			if !ok {
 				continue
 			}
 			if h, found := handlers[cmd]; found {
-				go h(up.Message.Chat.ID, args) // async pour ne pas bloquer
+				go h(up.Message.Chat.ID, args) // async to not to block
 			} else if h, found := handlers["*"]; found {
 				go h(up.Message.Chat.ID, cmd+" "+args)
 			}
 		}
 	}
 }
+
 func parseParams(args string) map[string]string {
 	out := map[string]string{}
-	for _, tok := range strings.Fields(args) { // split par espaces
-		// supporte "key=value" et "--key=value"
+	for _, tok := range strings.Fields(args) { // split by spaces
+
 		tok = strings.TrimPrefix(tok, "--")
 		kv := strings.SplitN(tok, "=", 2)
 		if len(kv) == 2 {
 			k := strings.ToLower(strings.TrimSpace(kv[0]))
-			v := strings.Trim(kv[1], `"'`) // enlève guillemets éventuels
+			v := strings.Trim(kv[1], `"'`)
 			out[k] = v
 		}
 	}

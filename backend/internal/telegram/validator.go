@@ -25,9 +25,10 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			if period == "" {
 				period = period_default
 			}
+
 			limit, err := strconv.ParseInt(params["limit"], 10, 64)
 			if err != nil {
-				log.Printf("error conversion limit: %v", err)
+				log.Printf("error conversion limit value : %v", err)
 				limit = limit_default
 			}
 			limitint := int(limit)
@@ -37,7 +38,10 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 				log.Printf("error get particpate Rate%s", err)
 			}
 
-			_ = SendMessageTelegram(token, chatID, msg)
+			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+				log.Printf("send %s failed: %v", "/status", err)
+			}
+
 		},
 		"/uptime": func(chatID int64, args string) {
 			params := parseParams(args)
@@ -52,7 +56,9 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			if err != nil {
 				log.Printf("error get uptime metrics: %s", err)
 			}
-			_ = SendMessageTelegram(token, chatID, msg)
+			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+				log.Printf("send %s failed: %v", "/uptime", err)
+			}
 
 		}, "/tx_contrib": func(chatID int64, args string) {
 			params := parseParams(args)
@@ -72,7 +78,10 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 				log.Printf("error get tx_contribe%s", err)
 			}
 
-			_ = SendMessageTelegram(token, chatID, msg)
+			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+				log.Printf("send %s failed: %v", "/tx_contrib", err)
+			}
+
 		},
 		"/missing": func(chatID int64, args string) {
 			params := parseParams(args)
@@ -93,7 +102,10 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 				log.Printf("error get missingg block%s", err)
 			}
 
-			_ = SendMessageTelegram(token, chatID, msg)
+			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+				log.Printf("send %s failed: %v", "/missing", err)
+			}
+
 		},
 
 		"/help": func(chatID int64, _ string) {
@@ -103,8 +115,10 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 		},
 
 		"*": func(chatID int64, _ string) {
-			_ = SendMessageTelegram(token, chatID,
-				"Unknow command ❓ try /help")
+			if err := SendMessageTelegram(token, chatID,
+				"Unknown command ❓ try /help"); err != nil {
+				log.Printf("send %s failed: %v", "/status", err)
+			}
 		},
 	}
 }
@@ -146,7 +160,7 @@ func formatParticipationRAte(db *gorm.DB, period string, limit int) (msg string,
 		}
 		builder.WriteString(fmt.Sprintf(
 			"%s  <b>%s </b> \n addr:  %s \n %.2f%%\n\n",
-			emoji, html.EscapeString(r.Moniker), r.Addr, r.ParticipationRate,
+			emoji, html.EscapeString(r.Moniker), html.EscapeString(r.Addr), r.ParticipationRate,
 		))
 
 	}
@@ -181,8 +195,8 @@ func formatUptime(db *gorm.DB, limit int) (msg string, err error) {
 		}
 
 		builder.WriteString(fmt.Sprintf(
-			"<b> %s </b> \n addr: %s \n uptime : %.2f%% days \n\n",
-			html.EscapeString(r.Moniker), r.Addr, r.DaysDiff,
+			"<b> %s </b> \n addr: %s \n uptime : %.2f days \n\n",
+			html.EscapeString(r.Moniker), html.EscapeString(r.Addr), r.DaysDiff,
 		))
 
 	}
@@ -217,7 +231,7 @@ func FormatTxcontrib(db *gorm.DB, period string, limit int) (msg string, err err
 
 		builder.WriteString(fmt.Sprintf(
 			"<b> %s </b> \n addr %s  \n contrib : %.2f%%\n\n",
-			html.EscapeString(r.Moniker), r.Addr, r.TxContrib,
+			html.EscapeString(r.Moniker), html.EscapeString(r.Addr), r.TxContrib,
 		))
 
 	}

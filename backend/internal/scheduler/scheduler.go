@@ -54,6 +54,7 @@ func (s *Scheduler) StartAllTelegram(db *gorm.DB) {
 	rows, err := db.Raw(`
 		SELECT chat_id, daily_report_hour, daily_report_minute, timezone 
 		FROM telegram_hour_reports
+		WHERE activate = true
 	`).Rows()
 	if err != nil {
 		log.Fatalf("❌ Failed to fetch report hours: %v", err)

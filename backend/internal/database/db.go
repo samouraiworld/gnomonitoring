@@ -24,8 +24,9 @@ type Telegram struct {
 }
 type TelegramHourReport struct {
 	ChatID            int64  `gorm:"primaryKey;column:chat_id;" `
-	DailyReportHour   int    `gorm:"column:daily_report_hour;default:9" json:"daily_report_hour"`
-	DailyReportMinute int    `gorm:"column:daily_report_minute;default:0" json:"daily_report_minute"`
+	DailyReportHour   int    `gorm:"column:daily_report_hour;default:9"`
+	DailyReportMinute int    `gorm:"column:daily_report_minute;default:0"`
+	Activate          bool   `gorm:"column:activate;default:true"`
 	Timezone          string `gorm:"column:timezone;default:Europe/Paris" `
 }
 type ParticipationRate struct {

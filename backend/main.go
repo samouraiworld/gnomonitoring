@@ -53,9 +53,6 @@ func main() {
 
 	go govdao.StartGovDAo(db)
 	go govdao.StartProposalWatcher(db)
-	// ====================== Sync Telegram chatid ================================= //
-	go telegram.StartTelegramWatcher(internal.Config.TokenTelegramValidator, "validator", db)
-	go telegram.StartTelegramWatcher(internal.Config.TokenTelegramGovdao, "govdao", db)
 
 	//======================= Telegram bot validator
 	ctx, cancel := context.WithCancel(context.Background())
@@ -64,7 +61,7 @@ func main() {
 	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db)
 
 	go func() {
-		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers); err != nil {
+		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, "validator", db); err != nil {
 			log.Fatalf("command loop error: %v", err)
 		}
 	}()
