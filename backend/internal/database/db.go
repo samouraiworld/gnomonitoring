@@ -571,7 +571,7 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 		GROUP BY
 			addr, moniker
 		ORDER BY
-			participation_rate DESC;
+			participation_rate ASC;
 	`, startStr, endStr)
 
 	err = db.Raw(query).Scan(&results).Error
