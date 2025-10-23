@@ -1,6 +1,7 @@
 package database
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -69,6 +70,31 @@ func UpdateTelegramHeureReport(db *gorm.DB, H, M int, T string, chatid int64) er
 			"timezone":            T,
 		}).Error
 }
+
+func ActivateTelegramReport(db *gorm.DB, IsActivate bool, chatid int64) error {
+	// Validate timezone
+
+	return db.
+		Model(&TelegramHourReport{}).
+		Where("chat_id = ?", chatid).
+		Updates(map[string]interface{}{
+			"activate": IsActivate,
+		}).Error
+}
+
+func GetTelegramReportStatus(db *gorm.DB, chatID int64) (bool, error) {
+	var activate bool
+	err := db.Model(&TelegramHourReport{}).
+		Select("activate").
+		Where("chat_id = ?", chatID).
+		Scan(&activate).Error
+
+	if err != nil {
+		return false, fmt.Errorf("failed to get status for chat_id=%d: %w", chatID, err)
+	}
+	return activate, nil
+}
+
 func GetHourTelegramReport(db *gorm.DB, chatid int64) (*TelegramHourReport, error) {
 	var hr TelegramHourReport
 	err := db.Model(&TelegramHourReport{}).
