@@ -78,11 +78,33 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 			// Stagnation detection
 			if lastProgressHeight != -1 && latest == lastProgressHeight {
 				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
-					msg := fmt.Sprintf("📢❗🚨💥 CRITICAL : Blockchain stuck at height %d since %s (%s ago)", latest, lastProgressTime.Format(time.RFC822), time.Since(lastProgressTime).Truncate(time.Second))
-					database.InsertAlertlog(db, "all", "", "CRITICAL", latest, latest, false, time.Now())
+
+					blockTime, err := database.GetTimeOfBlock(db, latest)
+					if err != nil {
+						log.Printf("⚠️ Impossible de récupérer la date du block %d: %v", latest, err)
+						return
+					}
+					elapsed := time.Since(blockTime).Truncate(time.Second)
+
+					msg := fmt.Sprintf(
+						"🚨 CRITICAL : Blockchain stuck at height %d since %s (%s ago)",
+						latest,
+						blockTime.Format(time.RFC822),
+						elapsed,
+					)
 
 					log.Println(msg)
-					internal.SendInfoValidator(msg, "CRITICAL", db)
+
+					send_at, err := database.GetTimeOfAlert(db, latest)
+					if err != nil {
+						log.Printf("⚠️ Impossible de récupérer la date du block %d: %v", latest, err)
+						return
+					}
+					if send_at.IsZero() {
+
+						internal.SendInfoValidator(msg, "CRITICAL", db)
+						database.InsertAlertlog(db, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg)
+					}
 
 					alertSent = true
 					restoredNotified = false
@@ -93,7 +115,9 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				lastProgressTime = time.Now()
 
 				if alertSent && !restoredNotified {
-					internal.SendInfoValidator("✅ Activity Restored: Gno.land is back to normal.", "INFO", db)
+					msg := "✅ Activity Restored: Gno.land is back to normal."
+					internal.SendInfoValidator(msg, "INFO", db)
+					database.InsertAlertlog(db, "all", "all", "RESOLVED", latest, latest, false, time.Now(), msg)
 					restoredNotified = true
 					alertSent = false
 				}
@@ -264,7 +288,7 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 
 				if count > 0 {
 					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
-					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now())
+					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now(), "")
 
 					continue
 				}
@@ -285,7 +309,7 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 				}
 				if countint > 0 {
 					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
-					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now())
+					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now(), "")
 
 					continue
 				}
@@ -310,13 +334,13 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 					log.Printf("🚫 Too many alerte for %s, muting for 1h", moniker)
 					// msg := fmt.Sprintf("🚫 Too many alerte for %s addr: %s, muting for 1h", moniker, addr)
 					// internal.SendInfoValidator(msg, "info", db)
-					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now())
+					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now(), "")
 
 					continue
 				}
 
 				internal.SendAllValidatorAlerts(missed, today, level, addr, moniker, start_height, end_height, db)
-				database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now())
+				database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now(), "")
 
 			}
 
@@ -388,7 +412,7 @@ func SendResolveAlerts(db *gorm.DB) {
 		if recentResolves >= 4 {
 			// Activer un mute d'1h
 			log.Printf("🚫 Too many resolves for %s, muting for 1h", a.Moniker)
-			database.InsertAlertlog(db, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now())
+			database.InsertAlertlog(db, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now(), "")
 			continue
 		}
 
@@ -408,7 +432,7 @@ func SendResolveAlerts(db *gorm.DB) {
 		}
 		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s) at Block %d ", a.Moniker, a.Addr, a.EndHeight+1)
 		internal.SendInfoValidator(resolveMsg, "RESOLVED", db)
-		database.InsertAlertlog(db, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now())
+		database.InsertAlertlog(db, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), "")
 
 	}
 
