@@ -12,3 +12,4 @@ Validator/secrets/*
 **.csv
 **.tar.gz
 **config_docker.yaml
+**deploy-preprod.sh
