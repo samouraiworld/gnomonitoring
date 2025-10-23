@@ -23,6 +23,8 @@ func InitScheduler(db *gorm.DB) {
 		reloadChans: make(map[string]chan struct{}),
 	}
 	Schedulerinstance.StartAll(db)
+	Schedulerinstance.StartAllTelegram(db)
+
 	println("Scheduler started")
 }
 
@@ -47,6 +49,29 @@ func (s *Scheduler) StartAll(db *gorm.DB) {
 		s.StartForUser(userID, hour, minute, tz, db)
 	}
 }
+
+func (s *Scheduler) StartAllTelegram(db *gorm.DB) {
+	rows, err := db.Raw(`
+		SELECT chat_id, daily_report_hour, daily_report_minute, timezone 
+		FROM telegram_hour_reports
+	`).Rows()
+	if err != nil {
+		log.Fatalf("❌ Failed to fetch report hours: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var chat_id int64
+		var tz string
+		var hour, minute int
+		if err := rows.Scan(&chat_id, &hour, &minute, &tz); err != nil {
+			log.Printf("⚠️ Error scanning user report config: %v", err)
+			continue
+		}
+		s.StartForTelegram(chat_id, hour, minute, tz, db)
+	}
+}
 func (s *Scheduler) StartForUser(userID string, hour, minute int, timezone string, db *gorm.DB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -63,7 +88,23 @@ func (s *Scheduler) StartForUser(userID string, hour, minute int, timezone strin
 		gnovalidator.SheduleUserReport(userID, hour, minute, timezone, db, reload)
 	}()
 }
+func (s *Scheduler) StartForTelegram(chat_id int64, hour, minute int, timezone string, db *gorm.DB) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
+	// If a scheduler already exists: we "kill" it
+	key := fmt.Sprintf("tg:%d", chat_id)
+	if ch, exists := s.reloadChans[key]; exists {
+		close(ch) // sends a stop signal
+	}
+
+	// New reload channel
+	reload := make(chan struct{})
+	s.reloadChans[key] = reload
+	go func() {
+		gnovalidator.SheduleTelegramReport(chat_id, hour, minute, timezone, db, reload)
+	}()
+}
 func (s *Scheduler) ReloadForUser(userID string, db *gorm.DB) error {
 	var config struct {
 		DailyReportHour   int

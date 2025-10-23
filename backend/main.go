@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -51,7 +52,24 @@ func main() {
 
 	go govdao.StartGovDAo(db)
 	go govdao.StartProposalWatcher(db)
+	// ====================== Sync Telegram chatid ================================= //
+	go internal.StartTelegramWatcher(internal.Config.TokenTelegramValidator, "validator", db)
+	go internal.StartTelegramWatcher(internal.Config.TokenTelegramGovdao, "govdao", db)
 
+	//======================= Telegram bot validator
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	handlers := internal.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db)
+
+	go func() {
+		if err := internal.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers); err != nil {
+			log.Fatalf("command loop error: %v", err)
+		}
+	}()
+
+	// msg, err := internal.FormatTxcontrib(db, "current_month")
+	// log.Println(msg)
 	// ====================== Metrics for prometheus =============================== //
 
 	gnovalidator.Init()                  // init metrics prometheus

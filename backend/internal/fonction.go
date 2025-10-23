@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"os"
@@ -14,14 +15,16 @@ import (
 )
 
 type config struct {
-	BackendPort    string `yaml:"backend_port"`
-	AllowOrigin    string `yaml:"allow_origin"`
-	RPCEndpoint    string `yaml:"rpc_endpoint"`
-	MetricsPort    int    `yaml:"metrics_port"`
-	Gnoweb         string `yaml:"gnoweb"`
-	Graphql        string `yaml:"graphql"`
-	ClerkSecretKey string `yaml:"clerk_secret_key"`
-	DevMode        bool   `yaml:"dev_mode"`
+	BackendPort            string `yaml:"backend_port"`
+	AllowOrigin            string `yaml:"allow_origin"`
+	RPCEndpoint            string `yaml:"rpc_endpoint"`
+	MetricsPort            int    `yaml:"metrics_port"`
+	Gnoweb                 string `yaml:"gnoweb"`
+	Graphql                string `yaml:"graphql"`
+	ClerkSecretKey         string `yaml:"clerk_secret_key"`
+	DevMode                bool   `yaml:"dev_mode"`
+	TokenTelegramValidator string `yaml:"token_telegram_validator"`
+	TokenTelegramGovdao    string `yaml:"token_telegram_govdao"`
 }
 
 var Config config
@@ -51,7 +54,7 @@ func SendDiscordAlert(msg string, webhookURL string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Discord webhook HTTP status: %d", resp.StatusCode)
+		return fmt.Errorf("discord webhook HTTP status: %d", resp.StatusCode)
 	}
 	return nil
 }
@@ -73,7 +76,7 @@ func SendSlackAlert(msg string, webhookURL string) error {
 	}
 	return nil
 }
-func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, start_height, end_height int, db *gorm.DB) error {
+func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, start_height, end_height int64, db *gorm.DB) error {
 	type Webhook struct {
 		UserID string
 		URL    string
@@ -175,6 +178,40 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 		}
 
 	}
+	// ======================================== TELEGRAM
+	if level == "CRITICAL" {
+		emoji := "🚨"
+		fullMsg = fmt.Sprintf(
+			"%s <b>%s</b> %s\n"+
+				"addr: <code>%s</code>\n"+
+				"moniker: <b>%s</b>\n"+
+				"missed %d blocks (%d → %d)",
+			emoji,
+			html.EscapeString(level),
+			html.EscapeString(today),
+			html.EscapeString(addr),
+			html.EscapeString(moniker),
+			missed, start_height, end_height,
+		)
+	}
+
+	if level == "WARNING" {
+		emoji := "⚠️"
+		fullMsg = fmt.Sprintf(
+			"%s <b>%s</b> %s\n"+
+				"addr: <code>%s</code>\n"+
+				"moniker: <b>%s</b>\n"+
+				"missed %d blocks (%d → %d)",
+			emoji,
+			html.EscapeString(level),
+			html.EscapeString(today),
+			html.EscapeString(addr),
+			html.EscapeString(moniker),
+			missed, start_height, end_height,
+		)
+	}
+
+	MsgTelegram(fullMsg, Config.TokenTelegramValidator, "validator", db)
 
 	return nil
 }
@@ -211,7 +248,7 @@ func SendUserReportAlert(userID, msg string, db *gorm.DB) error {
 	return nil
 }
 
-func SendInfoValidateur(msg string, level string, db *gorm.DB) error {
+func SendInfoValidator(msg string, level string, db *gorm.DB) error {
 	type Webhook struct {
 		UserID string
 		URL    string
@@ -243,6 +280,9 @@ func SendInfoValidateur(msg string, level string, db *gorm.DB) error {
 		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
 
 	}
+
+	MsgTelegram(msg, Config.TokenTelegramValidator, "validator", db)
+
 	return nil
 }
 
@@ -263,11 +303,28 @@ func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) 
 		SendReportGovdao(id, title, urlgnoweb, urltx, wh.Type, wh.URL)
 
 	}
+	// build msg for telegram and senb at all chatid
+	msg := formatTelegramMsg(id, title, urlgnoweb, urltx)
+	err := MsgTelegram(msg, Config.TokenTelegramGovdao, "govdao", db)
+	if err != nil {
+		log.Printf("error send govdao telegram  %s", err)
+	}
 
 	return nil
 
 }
 
+func SendReportGovdaoTelegram(id int, title, urlgnoweb, urltx string, chatid int64) error {
+	msg := formatTelegramMsg(id, title, urlgnoweb, urltx)
+
+	err := SendMessageTelegram(Config.TokenTelegramGovdao, chatid, msg)
+	if err != nil {
+		log.Printf("error send govdao telegram  %s", err)
+	}
+
+	return nil
+
+}
 func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook string) error {
 
 	switch typew {
@@ -293,6 +350,7 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 		}
 
 	}
+
 	return nil
 
 }
@@ -330,4 +388,21 @@ func SendInfoGovdao(msg string, db *gorm.DB) error {
 
 	}
 	return nil
+}
+func formatTelegramMsg(id int, title, proposalURL, txURL string) string {
+	esc := html.EscapeString
+	voteURL := fmt.Sprintf("https://gnolove.world/govdao/proposal/%d", id)
+
+	return fmt.Sprintf(
+
+		"🗳️ <b>New Proposal Nº %d</b>: %s\n"+
+			"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
+			"🗒️ Tx: <a href=\"%s\">Gnoscan</a>\n"+
+			"🖐️ Interact & Vote: <a href=\"%s\">Open proposal on Gnolove</a>",
+		id,
+		esc(title),
+		esc(proposalURL),
+		esc(txURL),
+		esc(voteURL),
+	)
 }

@@ -78,9 +78,11 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 			// Stagnation detection
 			if lastProgressHeight != -1 && latest == lastProgressHeight {
 				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
-					msg := fmt.Sprintf("⚠️ Blockchain stuck at height %d since %s (%s ago)", latest, lastProgressTime.Format(time.RFC822), time.Since(lastProgressTime).Truncate(time.Second))
+					msg := fmt.Sprintf("📢❗🚨💥 CRITICAL : Blockchain stuck at height %d since %s (%s ago)", latest, lastProgressTime.Format(time.RFC822), time.Since(lastProgressTime).Truncate(time.Second))
+					database.InsertAlertlog(db, "all", "", "CRITICAL", latest, latest, false, time.Now())
+
 					log.Println(msg)
-					internal.SendInfoValidateur(msg, "CRITICAL", db)
+					internal.SendInfoValidator(msg, "CRITICAL", db)
 
 					alertSent = true
 					restoredNotified = false
@@ -91,7 +93,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				lastProgressTime = time.Now()
 
 				if alertSent && !restoredNotified {
-					internal.SendInfoValidateur("✅ **Activity Restored**: Gnoland is back to normal.", "INFO", db)
+					internal.SendInfoValidator("✅ Activity Restored: Gno.land is back to normal.", "INFO", db)
 					restoredNotified = true
 					alertSent = false
 				}
@@ -203,7 +205,7 @@ func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
 				if _, exists := oldMap[addr]; !exists {
 					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
 					log.Println(msg)
-					internal.SendInfoValidateur(msg, "info", db)
+					internal.SendInfoValidator(msg, "info", db)
 				}
 			}
 			MonikerMutex.RUnlock()
@@ -226,7 +228,8 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 
 			for rows.Next() {
 				var addr, moniker string
-				var missed, start_height, end_height int
+				var missed int
+				var start_height, end_height int64
 
 				if err := rows.Scan(&addr, &moniker, &start_height, &end_height, &missed); err != nil {
 					log.Printf("❌ Error scanning row: %v", err)
@@ -306,7 +309,7 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 					// Activer un mute d'1h
 					log.Printf("🚫 Too many alerte for %s, muting for 1h", moniker)
 					// msg := fmt.Sprintf("🚫 Too many alerte for %s addr: %s, muting for 1h", moniker, addr)
-					// internal.SendInfoValidateur(msg, "info", db)
+					// internal.SendInfoValidator(msg, "info", db)
 					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now())
 
 					continue
@@ -329,8 +332,8 @@ func SendResolveAlerts(db *gorm.DB) {
 	type LastAlert struct {
 		Addr        string
 		Moniker     string
-		StartHeight int
-		EndHeight   int
+		StartHeight int64
+		EndHeight   int64
 	}
 
 	var alerts []LastAlert
@@ -404,7 +407,7 @@ func SendResolveAlerts(db *gorm.DB) {
 			continue
 		}
 		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s) at Block %d ", a.Moniker, a.Addr, a.EndHeight+1)
-		internal.SendInfoValidateur(resolveMsg, "RESOLVED", db)
+		internal.SendInfoValidator(resolveMsg, "RESOLVED", db)
 		database.InsertAlertlog(db, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now())
 
 	}

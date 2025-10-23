@@ -11,6 +11,11 @@ import (
 	"gorm.io/gorm"
 )
 
+type ValidatorRate struct {
+	Rate    float64
+	Moniker string
+}
+
 func SheduleUserReport(userID string, hour, minute int, timezone string, db *gorm.DB, reload <-chan struct{}) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
@@ -31,20 +36,46 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 		select {
 		case <-time.After(wait):
 			log.Printf("⏰ Sending report for user %s", userID)
-			SendDailyStatsForUser(db, userID, loc)
+			SendDailyStatsForUser(db, &userID, nil, loc)
 		case <-reload:
 			log.Printf("♻️ Reloading schedule for user %s", userID)
 			return
 		}
 	}
 }
+func SheduleTelegramReport(chat_id int64, hour, minute int, timezone string, db *gorm.DB, reload <-chan struct{}) {
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		log.Printf("⚠️ Invalid timezone for user %d: %s, defaulting to UTC", chat_id, timezone)
+		loc = time.UTC
+	}
 
-func SendDailyStatsForUser(db *gorm.DB, userID string, loc *time.Location) {
+	for {
+		now := time.Now().In(loc)
+		next := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, loc)
+		if next.Before(now) {
+			next = next.Add(24 * time.Hour)
+		}
+		wait := time.Until(next)
+
+		log.Printf("🕓 Scheduled next report for %d at %s (%s)", chat_id, next.Format(time.RFC1123), wait)
+
+		select {
+		case <-time.After(wait):
+			log.Printf("⏰ Sending report for user %d", chat_id)
+			SendDailyStatsForUser(db, nil, &chat_id, loc)
+		case <-reload:
+			log.Printf("♻️ Reloading schedule for user %d", chat_id)
+			return
+		}
+	}
+}
+
+func SendDailyStatsForUser(db *gorm.DB, userID *string, chatID *int64, loc *time.Location) {
 	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
-	//yesterday := time.Now().In(loc).AddDate(0, 0, 0).Format("2006-01-02")
 
 	rates, minBlock, maxBlock := CalculateRate(db, yesterday)
-	//rates, minBlock, maxBlock := CalculateRate(db, "2025-15-10")
+	//rates, minBlock, maxBlock := CalculateRate(db, "2025-10-18")
 	if len(rates) == 0 {
 		log.Printf("⚠️ No participation data found on date %s", yesterday)
 		return
@@ -72,16 +103,23 @@ func SendDailyStatsForUser(db *gorm.DB, userID string, loc *time.Location) {
 		}
 		buffer.WriteString(fmt.Sprintf("  %s Validator: %s addr: (%s) rate: %.2f%%\n", emoji, moniker, addr, data.Rate))
 	}
-
 	msg := buffer.String()
 	log.Println(msg)
-	SendUserReportInChunks(userID, msg, db, 1500)
+	switch {
+	case userID != nil:
+		// 🔹 Rapport utilisateur interne
+		SendUserReportInChunks(*userID, msg, db, 1500)
 
-}
+	// case chatID != nil:
+	// 	// 🔹 Rapport Telegram
+	// 	if err := internal.SendMessageTelegram(internal.Config.TokenTelegramValidator, *chatID, msg); err != nil {
+	// 		log.Printf("❌ Telegram send failed (chat %d): %v", *chatID, err)
+	// 	}
 
-type ValidatorRate struct {
-	Rate    float64
-	Moniker string
+	default:
+		log.Println("⚠️ Neither userID nor chatID provided — no target to send report.")
+	}
+
 }
 
 func CalculateRate(db *gorm.DB, date string) (map[string]ValidatorRate, int64, int64) {

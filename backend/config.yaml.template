@@ -6,3 +6,5 @@ gnoweb: "https://test8.testnets.gno.land"
 graphql: "https://indexer.test8.testnets.gno.land/graphql/query"
 clerk_secret_key: "sk_test...." #change me
 dev_mode: false # Set to true for local development without Clerk auth
+token_telegram_validator: ""
+token_telegram_govdao: ""
