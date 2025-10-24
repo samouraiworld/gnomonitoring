@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/telegram"
 	"gopkg.in/yaml.v2"
 	"gorm.io/gorm"
 )
@@ -211,7 +212,7 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 		)
 	}
 
-	MsgTelegram(fullMsg, Config.TokenTelegramValidator, "validator", db)
+	telegram.MsgTelegram(fullMsg, Config.TokenTelegramValidator, "validator", db)
 
 	return nil
 }
@@ -281,7 +282,7 @@ func SendInfoValidator(msg string, level string, db *gorm.DB) error {
 
 	}
 
-	MsgTelegram(msg, Config.TokenTelegramValidator, "validator", db)
+	telegram.MsgTelegram(msg, Config.TokenTelegramValidator, "validator", db)
 
 	return nil
 }
@@ -304,8 +305,8 @@ func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) 
 
 	}
 	// build msg for telegram and senb at all chatid
-	msg := formatTelegramMsg(id, title, urlgnoweb, urltx)
-	err := MsgTelegram(msg, Config.TokenTelegramGovdao, "govdao", db)
+	msg := telegram.FormatTelegramMsg(id, title, urlgnoweb, urltx)
+	err := telegram.MsgTelegram(msg, Config.TokenTelegramGovdao, "govdao", db)
 	if err != nil {
 		log.Printf("error send govdao telegram  %s", err)
 	}
@@ -314,17 +315,6 @@ func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) 
 
 }
 
-func SendReportGovdaoTelegram(id int, title, urlgnoweb, urltx string, chatid int64) error {
-	msg := formatTelegramMsg(id, title, urlgnoweb, urltx)
-
-	err := SendMessageTelegram(Config.TokenTelegramGovdao, chatid, msg)
-	if err != nil {
-		log.Printf("error send govdao telegram  %s", err)
-	}
-
-	return nil
-
-}
 func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook string) error {
 
 	switch typew {
@@ -388,21 +378,4 @@ func SendInfoGovdao(msg string, db *gorm.DB) error {
 
 	}
 	return nil
-}
-func formatTelegramMsg(id int, title, proposalURL, txURL string) string {
-	esc := html.EscapeString
-	voteURL := fmt.Sprintf("https://gnolove.world/govdao/proposal/%d", id)
-
-	return fmt.Sprintf(
-
-		"🗳️ <b>New Proposal Nº %d</b>: %s\n"+
-			"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
-			"🗒️ Tx: <a href=\"%s\">Gnoscan</a>\n"+
-			"🖐️ Interact & Vote: <a href=\"%s\">Open proposal on Gnolove</a>",
-		id,
-		esc(title),
-		esc(proposalURL),
-		esc(txURL),
-		esc(voteURL),
-	)
 }

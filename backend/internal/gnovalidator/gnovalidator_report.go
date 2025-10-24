@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/telegram"
 	"gorm.io/gorm"
 )
 
@@ -110,11 +111,11 @@ func SendDailyStatsForUser(db *gorm.DB, userID *string, chatID *int64, loc *time
 		// 🔹 Rapport utilisateur interne
 		SendUserReportInChunks(*userID, msg, db, 1500)
 
-	// case chatID != nil:
-	// 	// 🔹 Rapport Telegram
-	// 	if err := internal.SendMessageTelegram(internal.Config.TokenTelegramValidator, *chatID, msg); err != nil {
-	// 		log.Printf("❌ Telegram send failed (chat %d): %v", *chatID, err)
-	// 	}
+	case chatID != nil:
+		// 🔹 Rapport Telegram
+		if err := telegram.SendMessageTelegram(internal.Config.TokenTelegramValidator, *chatID, msg); err != nil {
+			log.Printf("❌ Telegram send failed (chat %d): %v", *chatID, err)
+		}
 
 	default:
 		log.Println("⚠️ Neither userID nor chatID provided — no target to send report.")
@@ -131,6 +132,7 @@ func CalculateRate(db *gorm.DB, date string) (map[string]ValidatorRate, int64, i
 		SELECT MIN(block_height), MAX(block_height)
 		FROM daily_participations
 		WHERE date(date) = ?
+		ORDER by ASC
 	`, date).Row().Scan(&minHeight, &maxHeight)
 
 	if err != nil {

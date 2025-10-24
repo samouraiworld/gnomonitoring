@@ -11,6 +11,7 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/govdao"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/telegram"
 )
 
 func main() {
@@ -52,18 +53,15 @@ func main() {
 
 	go govdao.StartGovDAo(db)
 	go govdao.StartProposalWatcher(db)
-	// ====================== Sync Telegram chatid ================================= //
-	go internal.StartTelegramWatcher(internal.Config.TokenTelegramValidator, "validator", db)
-	go internal.StartTelegramWatcher(internal.Config.TokenTelegramGovdao, "govdao", db)
 
 	//======================= Telegram bot validator
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	handlers := internal.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db)
+	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db)
 
 	go func() {
-		if err := internal.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers); err != nil {
+		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, "validator", db); err != nil {
 			log.Fatalf("command loop error: %v", err)
 		}
 	}()
