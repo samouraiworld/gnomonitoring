@@ -107,11 +107,16 @@ type AlertSummary struct {
 	SentAt      time.Time `json:"sentAt"`
 }
 type UptimeMetrics struct {
+	Moniker string  `json:"moniker"`
+	Addr    string  `json:"addr"`
+	Uptime  float64 `json:"uptime"`
+}
+type OperationTimeMetrics struct {
 	Moniker      string  `json:"moniker"`
 	Addr         string  `json:"addr"`
 	LastDownDate string  `json:"lastDownDate"`
 	LastUpDate   string  `json:"lastUpDate"`
-	DaysDiff     float64 `json:"uptime"`
+	DaysDiff     float64 `json:"OperationTime"`
 }
 type TxContribMetrics struct {
 	Moniker   string  ` json:"moniker"`

@@ -685,6 +685,28 @@ func GetUptime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 }
 
+// =========================== Get Operation time metrics =============================
+func GetOperationtime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+
+	}
+	uptime, err := database.OperationTimeMetricsaddr(db)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get Operation time  metrics: %v", err), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(uptime)
+
+}
+
 // ========================= Get tx_contrib
 func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w)
@@ -924,6 +946,20 @@ func StartWebhookAPI(db *gorm.DB) {
 
 		case http.MethodGet:
 			GetUptime(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+	mux.HandleFunc("/operation_time", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			GetOperationtime(w, r, db)
 		case http.MethodOptions:
 			EnableCORS(w)
 			w.WriteHeader(http.StatusOK)
