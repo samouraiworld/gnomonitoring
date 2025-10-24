@@ -427,12 +427,15 @@ func ExtractProposalRender(proposalID int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	log.Println(res)
 
 	switch {
 	case strings.Contains(res, "ACCEPTED"):
 		return "ACCEPTED", nil
 	case strings.Contains(res, "ACTIVE"):
 		return "ACTIVE", nil
+	case strings.Contains(res, "Vote YES"):
+		return "IN PROGRESS", nil
 	default:
 		return "REJECTED", nil
 	}
@@ -473,7 +476,7 @@ func StartProposalWatcher(db *gorm.DB) {
 
 	for {
 		<-ticker.C
-		log.Println("⏳ Checking proposal statuses...")
+		log.Println("⏳ Checking proposal status...")
 		CheckProposalStatus(db)
 	}
 }

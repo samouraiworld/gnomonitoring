@@ -116,7 +116,7 @@ type OperationTimeMetrics struct {
 	Addr         string  `json:"addr"`
 	LastDownDate string  `json:"lastDownDate"`
 	LastUpDate   string  `json:"lastUpDate"`
-	DaysDiff     float64 `json:"OperationTime"`
+	DaysDiff     float64 `json:"operationTime"`
 }
 type TxContribMetrics struct {
 	Moniker   string  ` json:"moniker"`

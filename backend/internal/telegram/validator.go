@@ -125,6 +125,21 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			}
 
 		},
+		"/report": func(chatID int64, args string) {
+			params := parseParams(args)
+
+			activate := params["activate"]
+
+			msg, err := reportActivate(db, chatID, activate)
+			if err != nil {
+				log.Printf("error report activate%s", err)
+			}
+
+			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+				log.Printf("send %s failed: %v", "/missing", err)
+			}
+
+		},
 
 		"/help": func(chatID int64, _ string) {
 
@@ -346,6 +361,36 @@ func formatMissing(db *gorm.DB, period string, limit int) (string, error) {
 		))
 	}
 	return b.String(), nil
+}
+func reportActivate(db *gorm.DB, chatID int64, isActivate string) (string, error) {
+	if isActivate == "" {
+		status, err := database.GetTelegramReportStatus(db, chatID)
+		if err != nil {
+			return "", fmt.Errorf("failed to get status report: %w", err)
+		}
+
+		if status {
+			return "📝 The daily report is activated ✅", nil
+		}
+		return "📝 The daily report is disabled ❌", nil
+	}
+
+	switch strings.ToLower(isActivate) {
+	case "true", "on", "enable", "activate":
+		if err := database.ActivateTelegramReport(db, true, chatID); err != nil {
+			return "", fmt.Errorf("failed to activate report: %w", err)
+		}
+		return "✅ The daily report has been activated.", nil
+
+	case "false", "off", "disable", "deactivate":
+		if err := database.ActivateTelegramReport(db, false, chatID); err != nil {
+			return "", fmt.Errorf("failed to deactivate report: %w", err)
+		}
+		return "🚫 The daily report has been disabled.", nil
+
+	default:
+		return "⚠️ Invalid argument. Use `/report activate=true` or `/report activate=false`.", nil
+	}
 }
 
 func formatHelp() string {
