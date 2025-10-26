@@ -17,7 +17,7 @@ cp config.yaml.template config.yaml
 
 Edit `config.yaml`:
 ```yaml
-rpc_endpoint: "https://rpc.test8.testnets.gno.land"
+rpc_endpoint: "https://rpc.test9.testnets.gno.land"
 validator_address: "your_validator_address_here"
 metrics_port: 8888
 ```
