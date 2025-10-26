@@ -32,7 +32,7 @@ nano config.yaml
 2. Configure your validator address and (optionally) the RPC endpoint:
 
 ```yaml
-rpc_endpoint: "https://rpc.test8.testnets.gno.land"
+rpc_endpoint: "https://rpc.test9.testnets.gno.land"
 validator_address: "replace with your validator address"
 port: 8888
 ```
@@ -67,7 +67,7 @@ This backend service monitors both GovDAO proposals and validator participation.
 ### 🧾 GovDAO Proposal Detection
 
 Sends Discord alerts when a new proposal is detected on:
-<https://test8.testnets.gno.land/r/gov/dao>
+<https://test9.testnets.gno.land/r/gov/dao>
 
 ### 🛠️ Setup
 
@@ -92,10 +92,10 @@ nano config.yaml
 
 backend_port: "8989"
 allow_origin: "http://localhost:3000"
-rpc_endpoint: "https://rpc.test8.testnets.gno.land"
+rpc_endpoint: "https://rpc.test9.testnets.gno.land"
 metrics_port: 8888
-gnoweb: "https://test8.testnets.gno.land"
-graphql: "indexer.test8.testnets.gno.land/graphql/query"
+gnoweb: "https://test9.testnets.gno.land"
+graphql: "indexer.test9.testnets.gno.land/graphql/query"
 clerk_secret_key: "sk_test...." #change me
 dev_mode: false # Set to true for local development without Clerk auth
 ```

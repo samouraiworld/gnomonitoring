@@ -39,7 +39,7 @@ curl -X POST http://localhost:8989/webhooks/govdao \
   -d '{
     "url": "https://discord.com/api/webhooks/YOUR_WEBHOOK",
     "type": "discord",
-    "description": "Alice's webhook"
+    "description": "Alice\'s webhook"
   }'
 
 # List the available webhooks
@@ -288,13 +288,13 @@ Edit `config.yaml`:
 interval_seconde: 1200                    # Monitoring interval
 backend_port: "8989"                      # API port
 allow_origin: "http://localhost:3000"    # CORS origin
-rpc_endpoint: "https://rpc.test8.testnets.gno.land"
+rpc_endpoint: "https://rpc.test9.testnets.gno.land"
 windows_size: 100                         # Block window for calculations
 daily_report_hour: 10                     # Daily report hour (24h format)
 daily_report_minute: 30                   # Daily report minute
 metrics_port: 8888                        # Prometheus metrics port
-gnoweb: "https://test8.testnets.gno.land"
-graphql: "indexer.test8.testnets.gno.land/graphql/query"
+gnoweb: "https://test9.testnets.gno.land"
+graphql: "indexer.test9.testnets.gno.land/graphql/query"
 clerk_secret_key: "sk_test_..."          # Clerk authentication key
 dev_mode: false                           # Set to true for local development
 ```
