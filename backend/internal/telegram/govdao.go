@@ -12,17 +12,12 @@ import (
 )
 
 func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int64, string) {
-	period_default := "current_month"
 
 	limit_default := int64(10)
 	return map[string]func(int64, string){
 		// status on Govdao proposals
 		"/status": func(chatID int64, args string) {
 			params := parseParams(args)
-			period := params["period"]
-			if period == "" {
-				period = period_default
-			}
 
 			limit, err := strconv.ParseInt(params["limit"], 10, 64)
 			if err != nil {
@@ -31,9 +26,9 @@ func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int6
 			}
 			limitint := int(limit)
 
-			msg, err := formatParticipationRAte(db, period, limitint)
+			msg, err := formatStatusProposal(db, limitint)
 			if err != nil {
-				log.Printf("error get particpate Rate%s", err)
+				log.Printf("error get status proposal%s", err)
 			}
 
 			if err := SendMessageTelegram(token, chatID, msg); err != nil {
@@ -116,15 +111,33 @@ func formatStatusProposal(db *gorm.DB, limit int) (msg string, err error) {
 		if i >= limit {
 			break
 		}
+		var emoji string
+		if r.Status == "ACEPTED" {
+			emoji = "✅"
+		}
+		if r.Status == "IN PROGRESS" {
+			emoji = "⏳"
+		}
+		if r.Status == "REJECTED" {
+			emoji = "❌"
+		}
 
 		builder.WriteString(fmt.Sprintf(
-			"%s  <b>%s </b> \n addr:  %s \n %.2f%%\n\n",
-			emoji, html.EscapeString(r.Moniker), html.EscapeString(r.Addr), r.ParticipationRate,
+
+			"🗳️ <b>Proposal Nº %d</b>: %s\n"+
+				"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
+				"%s  %s \n\n",
+
+			r.Id,
+			r.Title,
+			r.Url,
+			emoji,
+			r.Status,
 		))
 
 	}
 
-	return msg, nil
+	return builder.String(), nil
 }
 
 func SendReportGovdaoTelegram(id int, title, urlgnoweb, urltx, botoken string, chatid int64) error {
