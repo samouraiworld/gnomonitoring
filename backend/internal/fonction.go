@@ -320,8 +320,12 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 	switch typew {
 	case "discord":
 
-		msg := fmt.Sprintf("--- \n 🗳️ ** New Proposal N° %d: %s ** -  \n 🔗source: %s \n tx: %s",
-			id, title, urlgnoweb, urltx)
+		msg := fmt.Sprintf("--- \n"+
+			"🗳️ ** New Proposal N° %d: %s ** -  \n"+
+			"🔗source: %s \n"+
+			"🗒️Tx: %s"+
+			"🖐️ Interact & Vote: https://gnolove.world/govdao/proposal/%d",
+			id, title, urlgnoweb, urltx, id)
 		log.Println(msg)
 		sendErr := SendDiscordAlert(msg, urlwebhook)
 		if sendErr != nil {
@@ -330,8 +334,12 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 		}
 
 	case "slack":
-		msg := fmt.Sprintf("--- \n 🗳️ * New Proposal N° %d: %s * -  \n 🔗source: %s \n tx: %s",
-			id, title, urlgnoweb, urltx)
+		msg := fmt.Sprintf("--- \n"+
+			"🗳️ * New Proposal N° %d: %s * -  \n"+
+			"🔗source: %s \n"+
+			"🗒️Tx: %s"+
+			"🖐️ Interact & Vote: https://gnolove.world/govdao/proposal/%d",
+			id, title, urlgnoweb, urltx, id)
 
 		sendErr := SendSlackAlert(msg, urlwebhook)
 		if sendErr != nil {
