@@ -16,6 +16,7 @@ import (
 	"github.com/machinebox/graphql"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/telegram"
 	"gorm.io/gorm"
 )
 
@@ -459,9 +460,23 @@ func CheckProposalStatus(db *gorm.DB) {
 			log.Printf("✅ Proposal %d (%s) has been ACCEPTED!", p.Id, p.Title)
 
 			// Send notification
-			msg := fmt.Sprintf("--- \n 🗳️   Proposal N° %d: %s  -  \n 🔗source: %s \n ACCEPTED",
+			msg := fmt.Sprintf("--- \n 🗳️"+
+				"Proposal N° %d: %s  -  \n"+
+				" 🔗source: %s \n "+
+				" ACCEPTED",
 				p.Id, p.Title, p.Url)
 			internal.SendInfoGovdao(msg, db)
+
+			// Send Telegram message
+			msgT := fmt.Sprintf(
+				"🗳️ <b>✅ Proposal Nº %d</b>: %s\n"+
+					"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
+					"<b>ACCEPTED</b>\n",
+				p.Id,
+				p.Title,
+				p.Url,
+			)
+			telegram.MsgTelegram(msgT, internal.Config.TokenTelegramValidator, "govdao", db)
 
 			// update GovDao
 			db.Model(&p).Update("status", "ACCEPTED")
