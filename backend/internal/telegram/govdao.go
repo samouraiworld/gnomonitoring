@@ -52,7 +52,7 @@ func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int6
 				log.Printf("error get last executed proposal: %s", err)
 			}
 			if err := SendMessageTelegram(token, chatID, msg); err != nil {
-				log.Printf("send %s failed: %v", "/executedproposal", err)
+				log.Printf("send %s failed: %v", "/executedproposals", err)
 			}
 			// last proposal posted
 		},
