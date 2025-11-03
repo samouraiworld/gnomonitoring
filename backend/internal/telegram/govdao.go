@@ -149,7 +149,7 @@ func FormatGetLastExecute(db *gorm.DB, limit int) (msg string, err error) {
 		limit = len(status)
 	}
 	var builder strings.Builder
-	builder.WriteString("🗳️ <b>Gov Dao Last Proposal Execute</b>")
+	builder.WriteString("🗳️ <b>Last Executed Proposals</b>")
 
 	for i, r := range status {
 		if i >= limit {
@@ -157,8 +157,8 @@ func FormatGetLastExecute(db *gorm.DB, limit int) (msg string, err error) {
 		}
 
 		format := FormatTelegramMsg(r.Id, r.Title, r.Url, r.Tx)
-
 		builder.WriteString(format)
+		builder.WriteString("\n\n")
 
 	}
 
@@ -175,7 +175,7 @@ func FormatGetLastProposal(db *gorm.DB) (msg string, err error) {
 		return " <b>No recent proposals found</b>", nil
 	}
 	var builder strings.Builder
-	builder.WriteString("🗳️ <b>Gov Dao Last Proposal</b>")
+	builder.WriteString("🗳️ <b>Most Recent Proposal</b>")
 
 	for _, r := range status {
 
@@ -225,9 +225,11 @@ func formatHelpgovdao() string {
 	b.WriteString("   ⮑ Params: <code>limit</code> (optional, default: 10)\n")
 	b.WriteString("   ⮑ Example: <code>/status limit=5</code>\n\n")
 
-	b.WriteString("• <code>/executedproposal</code> — show the last executed proposals\n\n")
+	b.WriteString("• <code>/executedproposals</code> — show the last executed proposals\n")
 	b.WriteString("   ⮑ Params: <code>limit</code> (optional, default: 10)\n")
-	b.WriteString("• <code>/lastproposals limit=5</code> — show the last posted proposals\n\n")
+	b.WriteString("   ⮑ Example: <code>/executedproposals limit=5</code>\n\n")
+
+	b.WriteString("• <code>/lastproposal</code> — show the most recent proposal\n\n")
 
 	b.WriteString("Formatting notes:\n")
 	b.WriteString("• Links open to Gno.land and Gnoscan when available\n")
