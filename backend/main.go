@@ -73,7 +73,7 @@ func main() {
 	handlersgovdao := telegram.BuildTelegramGovdaoHandlers(internal.Config.TokenTelegramGovdao, db)
 
 	go func() {
-		if err := telegram.StartCommandLoop(ctxgovdao, internal.Config.TokenTelegramValidator, handlersgovdao, "govdao", db); err != nil {
+		if err := telegram.StartCommandLoop(ctxgovdao, internal.Config.TokenTelegramGovdao, handlersgovdao, "govdao", db); err != nil {
 			log.Fatalf("command loop error bot govdao: %v", err)
 		}
 	}()

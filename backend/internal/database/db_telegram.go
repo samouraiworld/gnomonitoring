@@ -145,8 +145,7 @@ func GetLastExecute(db *gorm.DB) ([]Govdao, error) {
 			govdaos
 			where status = "ACCEPTED"
 		ORDER BY
-			id DESC
-		LIMIT 1;`
+			id DESC;`
 
 	err := db.Raw(query).Scan(&results).Error
 	log.Println(results)
