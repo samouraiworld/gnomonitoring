@@ -53,6 +53,7 @@ func GetAllChatIDs(db *gorm.DB, TypeChatid string) ([]int64, error) {
 	return ids, nil
 }
 
+// ============================ Telegram validato =============================================
 // ================== Telegram hours report ================================
 
 func UpdateTelegramHeureReport(db *gorm.DB, H, M int, T string, chatid int64) error {
@@ -107,4 +108,68 @@ func GetHourTelegramReport(db *gorm.DB, chatid int64) (*TelegramHourReport, erro
 }
 func createHourReportTelegram(db *gorm.DB, chatid int64) error {
 	return db.Create(&TelegramHourReport{ChatID: chatid}).Error
+}
+
+// ============================ Telegram govdao =============================================
+// status of govdao handlers
+func GetStatusofGovdao(db *gorm.DB) ([]Govdao, error) {
+	var results []Govdao
+	query := `
+		SELECT
+			id,
+			url,
+			title,
+			tx,
+			status
+		FROM
+			govdaos
+		ORDER BY
+			id DESC;`
+
+	err := db.Raw(query).Scan(&results).Error
+	log.Println(results)
+
+	return results, err
+}
+
+func GetLastExecute(db *gorm.DB) ([]Govdao, error) {
+	var results []Govdao
+	query := `
+		SELECT
+			id,
+			url,
+			title,
+			tx,
+			status
+		FROM
+			govdaos
+			where status = "ACCEPTED"
+		ORDER BY
+			id DESC;`
+
+	err := db.Raw(query).Scan(&results).Error
+	log.Println(results)
+
+	return results, err
+}
+func GetLastPorposal(db *gorm.DB) ([]Govdao, error) {
+	var results []Govdao
+	query := `
+		SELECT
+			id,
+			url,
+			title,
+			tx,
+			status
+		FROM
+			govdaos
+		
+		ORDER BY
+			id DESC
+		LIMIT 1;`
+
+	err := db.Raw(query).Scan(&results).Error
+	log.Println(results)
+
+	return results, err
 }

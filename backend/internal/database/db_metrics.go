@@ -81,7 +81,7 @@ func GetAlertLog(db *gorm.DB, period string) ([]AlertSummary, error) {
 
 	result := db.
 		Model(&AlertLog{}).
-		Select("DISTINCT moniker, level,addr, start_height, end_height,sent_at").
+		Select("DISTINCT moniker, level,addr, start_height, end_height,msg,sent_at").
 		Order("end_height desc").
 		Where("sent_at BETWEEN ? AND ?", startStr, endStr).
 		Limit(10).
