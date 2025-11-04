@@ -2,13 +2,52 @@
 
 This repository provides lightweight tools to monitor the [Gno.land](https://gno.land) blockchain and its validators.
 
-🧩 Architecture Overview:
-
-![Architecture Overview](assets/gnomonitoring_infra.png)
-
 Two services are available:
 
+- **Block Exporter** – Tracks missed blocks from a specific Gnoland validator. It exposes [Prometheus](https://prometheus.io/) metrics, enabling [Grafana](https://grafana.com/) dashboards and alerts.
+
 - **GovDAO & Validator Alerting** – Monitors the entire validator set, calculates participation rates over a sliding window, detects new proposals on GovDAO, and sends Discord/Slack alerts when needed. Also exposes Prometheus metrics.
+
+---
+
+## 🚀 Block Exporter
+
+![Dashboard principal](assets/Block_Exporter.png)
+
+### Requirements
+
+- [Docker](https://www.docker.com/)
+- [Docker Compose](https://docs.docker.com/compose/)
+
+### Setup
+
+1. Copy the configuration template and edit it:
+
+```bash
+cd block_exporter
+cp config.yaml.template config.yaml 
+nano config.yaml
+```
+
+2. Configure your validator address and (optionally) the RPC endpoint:
+
+```yaml
+rpc_endpoint: "https://rpc.test8.testnets.gno.land"
+validator_address: "replace with your validator address"
+port: 8888
+```
+
+3. Start the container:
+
+```bash
+touch webhooks.db
+docker compose up -d 
+```
+
+4. Open <http://localhost:8888/metrics> to view the following metrics:
+
+- `gnoland_missed_blocks`
+- `gnoland_consecutive_missed_blocks`
 
 ---
 

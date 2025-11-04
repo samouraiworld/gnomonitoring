@@ -1,33 +1,41 @@
-# Gno Block Exporter
 
-Simple Prometheus metrics exporter for monitoring a Gno blockchain validator.
+## 🚀 Block Exporter
 
-## What it does
+![Dashboard principal](assets/Block_Exporter.png)
 
-Monitors your validator in real-time and exports Prometheus metrics:
-- `gnoland_missed_blocks` - Cumulative count of missed blocks (never resets)
-- `gnoland_consecutive_missed_blocks` - Current consecutive missed blocks (resets to 0 when validator signs)
+### Requirements
 
-## Quick Start
+- [Docker](https://www.docker.com/)
+- [Docker Compose](https://docs.docker.com/compose/)
 
-1. **Configure**
+### Setup
+
+1. Copy the configuration template and edit it:
+
 ```bash
-cp config.yaml.template config.yaml
+cd block_exporter
+cp config.yaml.template config.yaml 
+nano config.yaml
 ```
 
-Edit `config.yaml`:
+2. Configure your validator address and (optionally) the RPC endpoint:
+
 ```yaml
-rpc_endpoint: "https://rpc.test9.testnets.gno.land"
-validator_address: "your_validator_address_here"
-metrics_port: 8888
+rpc_endpoint: "https://rpc.test8.testnets.gno.land"
+validator_address: "replace with your validator address"
+port: 8888
 ```
 
-2. **Run with Docker**
+3. Start the container:
+
 ```bash
-docker compose up -d
+touch webhooks.db
+docker compose up -d 
 ```
 
-3. **View metrics**
-Open http://localhost:8888/metrics
+4. Open <http://localhost:8888/metrics> to view the following metrics:
 
-That's it! Your validator monitoring is ready.
+- `gnoland_missed_blocks`
+- `gnoland_consecutive_missed_blocks`
+
+---
