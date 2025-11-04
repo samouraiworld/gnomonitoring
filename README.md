@@ -14,30 +14,12 @@ Two services are available:
 
 ---
 
-### ✅ Gno Validator Monitoring
-
-**Sends alerts (Discord/Slack) when:**
-
-- Rpc is down
-- The blockchain is stuck on the same block for more than 2 minutes.
-- A validator's participation rate drops below 100%.
-- A new validator joins the network.
-
-**Expose Metrics from API REST** :
-
-### 🧾 GovDAO Proposal Detection
-
-Sends Discord alerts when a new proposal is detected on:
-<https://test9.testnets.gno.land/r/gov/dao>
-
 ### 🛠️ Setup
 
 **Requirements**
 
 - [Docker](https://www.docker.com/)
 - [Docker Compose](https://docs.docker.com/compose/)
-
-![Discord alert daily](assets/discord_view.png)
 
 1. Copy the configuration template and edit it:
 
@@ -70,6 +52,73 @@ docker compose up -d
 ```
 
 ---
+
+### ✅ Gno Validator Monitoring
+
+**Sends alerts (Discord/Slack) when:**
+
+- Rpc is down
+- The blockchain is stuck on the same block for more than 2 minutes.
+
+![Alert example](assets/stagnation.png)
+
+- A new validator joins the network.
+
+![News Validators](assets/newsvalidators.png)
+
+- A validator's missed block :
+  - WARNING if a validator missed 5 blocks.
+  - CRITICAL if  a validator missed more of 30 blocks
+- Send Resolve Alert.
+
+![Alert example](assets/alert.png)
+
+- Send Daily Report:
+
+![Discord alert daily](assets/discord_view.png)
+
+**Expose Metrics from API REST** :
+
+The disponible period for metrics:
+
+- current_week
+- current_month
+- current_year
+- all_time
+
+**Participate Rate:**
+The participation rate represents the percentage of blocks in which a validator successfully participated during a given time period.
+
+```bash
+curl  '127.0.0.1:8989/Participation?period=all_time'
+```
+
+Response:
+
+```json
+[{"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01","participationRate":100},
+  {"addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","moniker":"onbloc-val-02","participationRate":100}]
+```
+
+**Uptime Metrics:**
+
+Validator Uptime represents the percentage of the last 500 blocks in which a validator was active and participated successfully.
+
+```bash
+curl 'localhost:8989/uptime'
+```
+
+Response:
+
+```json
+[{"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","uptime":94},
+{"moniker":"gnocore-val-01","addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","uptime":100}]
+```
+
+### 🧾 GovDAO Proposal Detection
+
+Sends Discord alerts when a new proposal is detected on:
+<https://test9.testnets.gno.land/r/gov/dao>
 
 ### 🔗 Webhook Management (Discord / Slack)
 
