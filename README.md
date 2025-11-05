@@ -21,7 +21,7 @@ Two services are available:
 - [Docker](https://www.docker.com/)
 - [Docker Compose](https://docs.docker.com/compose/)
 
-1. Copy the configuration template and edit it:
+1.Copy the configuration template and edit it:
 
 ``` bash
 cd backend 
@@ -29,7 +29,7 @@ cp config.yaml.template config.yaml
 nano config.yaml
 ```
 
-2. Customize parameters as needed. For example:
+2.Customize parameters as needed. For example:
 
 ```yaml
 
@@ -45,7 +45,7 @@ token_telegram_validator: ""
 token_telegram_govdao: ""
 ```
 
-3. Start the backend:
+3.Start the backend:
 
 ```bash
 docker compose up -d 
@@ -53,9 +53,59 @@ docker compose up -d
 
 ---
 
-### ✅ Gno Validator Monitoring
+<!-- ### ✅ Gno Validator Monitoring -->
 
-**Add Wehbook Discord or Slack:**
+#### 🔗 Webhook Management (Discord / Slack)
+
+**✚ Add webhook URL:**
+
+```bash
+curl -L -X POST '127.0.0.7:8989/webhooks/[govdao | validator]' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer Clerk_Token ' \
+-d '{
+     "URL": "https://discord.com/api/webhooks/.....",
+    "Type": "discord",
+    "Description":"Samourai"
+  }'
+```
+
+**☰ List webhook URL:**
+
+```bash
+curl -L -X GET '127.0.0.7:8989/webhooks/[govdao | validator]' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer Clerk_Token' 
+
+```
+
+**❌ Delete webhook URL:**
+
+```bash
+curl -L -X DELETE '127.0.0.7:8989/webhooks/[govdao | validator]?id=2' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer Clerk_Token' 
+
+```
+
+**🔄 Update webhook URL:**
+
+```bash
+curl -L -X PUT '127.0.0.7:8989/webhooks/[govdao | validator]' \
+-H 'Content-Type: application/json' \
+-H 'Authorization: Bearer Clerk_Token' 
+-d '{
+    "ID": 3,
+   
+    "URL": "https://discord.com/api/...",
+    "Type": "discord",
+    "Description": "Samourai"
+}
+```
+
+---
+
+#### 📢 ALERTING
 
 **Sends alerts (Discord/Slack) when:**
 
@@ -79,7 +129,9 @@ docker compose up -d
 
 ![Discord alert daily](assets/discord_view.png)
 
-**Expose Metrics from API REST** :
+---
+
+#### 📝 Expose Metrics from API REST
 
 The disponible period for metrics:
 
@@ -93,7 +145,7 @@ The disponible period for metrics:
 The participation rate represents the percentage of blocks in which a validator successfully participated during a given time period.
 
 ```bash
-curl  '127.0.0.1:8989/Participation?period=all_time'
+curl -X GET '127.0.0.1:8989/Participation?period=all_time'
 ```
 
 Response:
@@ -107,7 +159,7 @@ Response:
 The Missing Block metric measures the total number of blocks that a validator failed to participate in during a given period
 
 ```bash
-curl  '127.0.0.1:8989/missing_block?period=all_time''
+curl -X GET '127.0.0.1:8989/missing_block?period=all_time''
 ```
 
 Response:
@@ -122,7 +174,7 @@ Response:
 The Tx Contribution metric measures how much a validator has contributed to the total number of transactions processed across all validators during a specific period.
 
 ```bash
-curl  '127.0.0.1:8989/tx_contrib?period=all_time'
+curl -X GET '127.0.0.1:8989/tx_contrib?period=all_time'
 ```
 
 Response:
@@ -136,7 +188,7 @@ Response:
 The Latest Incidents metric retrieves the most recent critical or warning events (alerts) detected for validators within a specific time period.
 
 ```bash
-curl  '127.0.0.1:8989/latest_incidents?period=all_time'
+curl -X GET '127.0.0.1:8989/latest_incidents?period=all_time'
 ```
 
 Response:
@@ -152,7 +204,7 @@ Response:
 Validator Uptime represents the percentage of the last 500 blocks in which a validator was active and participated successfully.
 
 ```bash
-curl 'localhost:8989/uptime'
+curl -X GET 'localhost:8989/uptime'
 ```
 
 Response:
@@ -167,7 +219,7 @@ Response:
 Operation Time represents the number of days between a validator’s last successful participation and its most recent downtime.
 
 ```bash
-curl 'localhost:8989/operation_time'
+curl -X GET 'localhost:8989/operation_time'
 ```
 
 Response:
@@ -179,45 +231,68 @@ Response:
 "lastUpDate":"2025-10-18 16:29:24.242186417+00:00","operationTime":4.4}....
 ```
 
-**📈 Prometheus Metrics**
+---
+
+#### 📈 Prometheus Metrics
 
 Metrics are exposed at <http://localhost:8888/metrics>.
 
 ![Status of Validator](assets/status_of_validator.png)
 
-Example metrics:
+List of  metrics:
 
-- `gnoland_validator_participation_rate{moniker="samourai-dev-team-1",validator_address="g1tq3gyzjmuu4gzu4np4ckfgun87j540gvx43d65"} 100`
-- `gnoland_block_window_start_height 100`
-- `gnoland_block_window_end_height 199`
-
-### 🧾 GovDAO Proposal Detection
-
-Sends Discord alerts when a new proposal is detected on:
-<https://test9.testnets.gno.land/r/gov/dao>
-
-### 🔗 Webhook Management (Discord / Slack)
-
-Manage webhooks for alert delivery. Choose between validator or govdao depending on the type.
-
-**➕ Add a webhook**
-
-```bash
-curl -X POST http://localhost:8989/webhooks/[validator / govdao]\
-  -H "Content-Type: application/json" \
-  -d '{"user": "username","url": "URL_WEBHOOK", "type": ["discord"/"slack"}'
-```
-
-**📋 List webhooks**
-
-```bash
-curl http://localhost:8989/webhooks/[validator / govdao]
-```
-
-**❌ Delete a webhook**
-
-```bash
- curl -X DELETE "http://localhost:8989/webhooks/[validator / govdao]?id=x"
-```
+- `gnoland_validator_participation_rate{moniker="gnocore-val-01",validator_address="g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t"} 99.99873156005428`
+- `gnoland_missed_blocks{moniker="gnocore-val-01",validator_address="g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t"} 1`
+- `gnoland_consecutive_missed_blocks{moniker="onbloc-val-02",validator_address="g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2"} 30`
 
 ---
+
+#### ✉️ Telegram Bot
+
+##### 🌐 Govdao bot
+
+**/status — list recent GovDAO proposals**
+  ⮑ Params: <code>limit</code> (optional, default: 10)
+ ```/status limit=5```
+
+**/executedproposals — show the last executed proposals**
+  ⮑ Params: <code>limit</code> (optional, default: 10)
+ ```/executedproposals limit=5```
+
+**/lastproposal — show the most recent proposal**
+
+##### 🌐 Gnovalidator bot
+
+⏱️ <b>Available periods</b>
+• <code>current_week</code>
+• <code>current_month</code>
+• <code>current_year</code>
+• <code>all_time</code>
+
+📡 <b>Commands</b>
+
+<code>/status [period=...] [limit=N]</code>
+Shows the participation rate of validators for a given period.
+Examples:
+• <code>/status</code> (defaults: period=current_month, limit=10)
+• <code>/status period=current_month limit=5</code>
+
+<code>/uptime [limit=N]</code>
+Displays uptime statistics of validator.
+Examples:
+• <code>/uptime</code> (default: limit=10)
+• <code>/uptime limit=3</code>
+
+<code>/tx_contrib [period=...] [limit=N]</code>
+Shows each validator’s contribution to transaction inclusion.
+Examples:
+• <code>/tx_contrib</code> (defaults: period=current_month, limit=10)
+• <code>/tx_contrib period=current_year limit=20</code>
+
+<code>/missing [period=...] [limit=N]</code>
+Displays how many blocks each validator missed for a given period.
+Examples:
+• <code>/missing</code> (defaults: period=current_month, limit=10)
+• <code>/missing period=all_time limit=50</code>
+
+ℹ️ Parameters must be written as <code>key=value</code> (e.g. <code>period=current_week</code>).
