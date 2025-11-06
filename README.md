@@ -294,5 +294,3 @@ Displays how many blocks each validator missed for a given period.
 Examples:
 • <code>/missing</code> (defaults: period=current_month, limit=10)
 • <code>/missing period=all_time limit=50</code>
-
-ℹ️ Parameters must be written as <code>key=value</code> (e.g. <code>period=current_week</code>).
