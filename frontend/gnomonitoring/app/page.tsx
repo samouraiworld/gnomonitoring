@@ -192,7 +192,7 @@ export default function Home() {
           </li>
           <li>
             <a
-              href="https://gnoweb.test8.testnets.gno.land"
+              href="https://gnoweb.test9.testnets.gno.land"
               target="_blank"
               className="block px-4 py-2 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-300 rounded hover:bg-green-200 dark:hover:bg-green-800 transition"
             >
