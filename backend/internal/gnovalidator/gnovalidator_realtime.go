@@ -330,10 +330,9 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 					continue
 				}
 				if mute >= 1 {
-					// Activer un mute d'1h
+					// Activer un mute 1h
 					log.Printf("🚫 Too many alerte for %s, muting for 1h", moniker)
-					// msg := fmt.Sprintf("🚫 Too many alerte for %s addr: %s, muting for 1h", moniker, addr)
-					// internal.SendInfoValidator(msg, "info", db)
+
 					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now(), "")
 
 					continue
@@ -431,7 +430,8 @@ func SendResolveAlerts(db *gorm.DB) {
 			continue
 		}
 		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s) at Block %d ", a.Moniker, a.Addr, a.EndHeight+1)
-		internal.SendInfoValidator(resolveMsg, "RESOLVED", db)
+		internal.SendResolveValidator(resolveMsg, a.Addr, db)
+
 		database.InsertAlertlog(db, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), "")
 
 	}

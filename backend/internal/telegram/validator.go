@@ -43,6 +43,10 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			}
 
 		},
+		"/subscribe": func(chatID int64, args string) {
+			params := parseParams(args)
+
+		},
 		"/uptime": func(chatID int64, args string) {
 			params := parseParams(args)
 			limit, err := strconv.ParseInt(params["limit"], 10, 64)
@@ -391,6 +395,128 @@ func reportActivate(db *gorm.DB, chatID int64, isActivate string) (string, error
 	default:
 		return "⚠️ Invalid argument. Use `/report activate=true` or `/report activate=false`.", nil
 	}
+}
+func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
+	fields := strings.Fields(args)
+	if len(fields) == 0 || fields[0] == "help" {
+		_ = SendMessageTelegram(token, chatID, subscribeUsage())
+		return
+	}
+
+	cmd := strings.ToLower(fields[0])
+	rest := fields[1:]
+
+	switch cmd {
+	case "list":
+		subs, err := database.GetValidatorStatusList(db, chatID)
+		if err != nil {
+			log.Printf("subscribe:list fail: %v", err)
+			_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch list of validators.")
+			return
+		}
+
+		var b strings.Builder
+		b.WriteString("🧾 <b>Your subscriptions</b>\n")
+		for _, s := range subs {
+
+			b.WriteString(fmt.Sprintf("• %s (%s): <b>%s</b>\n", s.Moniker, s.Addr, s.Status))
+		}
+		_ = SendMessageTelegram(token, chatID, b.String())
+		return
+
+	case "on":
+		if len(rest) == 0 {
+			_ = SendMessageTelegram(token, chatID, "Usage: /subscribe on <addr|moniker> [more...]")
+			return
+		}
+		if strings.ToLower(rest[0]) == "all" {
+			vals, err := database.GetAllValidators(db)
+			if err != nil {
+				_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch validator list.")
+				return
+			}
+			changed := 0
+			for _, v := range vals {
+				if err := database.UpdateTelegramValidatorSubStatus(db, chatID, v.Addr, v.Moniker, "subscribe"); err == nil {
+					changed++
+				}
+			}
+			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Enabled alerts for <b>%d</b> validators.", changed))
+			return
+		}
+
+		targets, err := database.ResolveValidators(db, rest)
+		if err != nil {
+			_ = SendMessageTelegram(token, chatID, "⚠️ Some validators could not be resolved.")
+		}
+		if len(targets) == 0 {
+			_ = SendMessageTelegram(token, chatID, "No valid validators found.")
+			return
+		}
+		var ok, fail int
+		for _, t := range targets {
+			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, t.Addr, t.Moniker, "subscribe"); err != nil {
+				fail++
+			} else {
+				ok++
+			}
+		}
+		_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Subscribed: %d | ❌ Failed: %d", ok, fail))
+		return
+
+	case "off":
+		if len(rest) == 0 {
+			_ = SendMessageTelegram(token, chatID, "Usage: /subscribe off <addr|moniker>|all")
+			return
+		}
+		if strings.ToLower(rest[0]) == "all" {
+			subs, err := database.GetTelegramValidatorSub(db, chatID, true)
+			if err != nil {
+				_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch your active subscriptions.")
+				return
+			}
+			var ok int
+			for _, s := range subs {
+				if err := database.UpdateTelegramValidatorSubStatus(db, chatID, s.Addr, s.Moniker, "unsubscribe"); err == nil {
+					ok++
+				}
+			}
+			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("🛑 Disabled alerts for <b>%d</b> validators.", ok))
+			return
+		}
+
+		targets, err := database.ResolveValidators(db, rest)
+		if err != nil {
+			_ = SendMessageTelegram(token, chatID, "⚠️ Some validators could not be resolved.")
+		}
+		if len(targets) == 0 {
+			_ = SendMessageTelegram(token, chatID, "No valid validators found.")
+			return
+		}
+		var ok, fail int
+		for _, t := range targets {
+			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, t.Addr, t.Moniker, "unsubscribe"); err != nil {
+				fail++
+			} else {
+				ok++
+			}
+		}
+		_ = SendMessageTelegram(token, chatID, fmt.Sprintf("🛑 Unsubscribed: %d | ❌ Failed: %d", ok, fail))
+		return
+
+	default:
+		_ = SendMessageTelegram(token, chatID, subscribeUsage())
+		return
+	}
+}
+
+func subscribeUsage() string {
+	return `📬 <b>Subscribe command</b>
+/subscribe list  — show your subscriptions
+/subscribe on <addr|moniker> [more...] — enable alerts
+/subscribe off <addr|moniker> [more...] — disable alerts
+/subscribe on all — enable all
+/subscribe off all — disable all`
 }
 
 func formatHelp() string {

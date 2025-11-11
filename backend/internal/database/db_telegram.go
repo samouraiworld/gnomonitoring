@@ -11,6 +11,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+type ValidatorStatus struct {
+	Moniker string
+	Addr    string
+	Status  string
+}
+
 // ============================ Telegram =============================================
 
 func InsertChatID(db *gorm.DB, chatID int64, chatType string) (bool, error) {
@@ -151,6 +157,37 @@ func GetTelegramValidatorSub(db *gorm.DB, chatID int64, onlyActive bool) ([]Tele
 	err := query.Order("created_at DESC").Find(&subs).Error
 	return subs, err
 }
+func GetValidatorStatusList(db *gorm.DB, chatID int64) ([]ValidatorStatus, error) {
+
+	var results []ValidatorStatus
+
+	query := `
+		WITH v AS (
+			SELECT DISTINCT moniker, addr
+			FROM daily_participations
+		)
+		SELECT
+			v.moniker,
+			v.addr,
+			CASE
+				WHEN s.activate = 1 THEN 'on'
+				ELSE 'off'
+			END AS status
+		FROM v
+		LEFT JOIN telegram_validator_subs s
+			ON s.addr = v.addr
+			AND s.chat_id = ?
+		ORDER BY status DESC;
+	`
+
+	err := db.Raw(query, chatID).Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
 func DeleteTelegramValidatorSub(db *gorm.DB, chatID int64, addr string) error {
 	return db.
 		Where("chat_id = ? AND addr = ?", chatID, addr).

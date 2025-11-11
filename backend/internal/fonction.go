@@ -248,6 +248,42 @@ func SendUserReportAlert(userID, msg string, db *gorm.DB) error {
 
 	return nil
 }
+func SendResolveValidator(msg string, addr string, db *gorm.DB) error {
+	type Webhook struct {
+		UserID string
+		URL    string
+		Type   string
+		ID     int
+	}
+
+	var webhooks []Webhook
+	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
+		return fmt.Errorf("failed to fetch webhooks: %w", err)
+	}
+	for _, wh := range webhooks {
+		switch wh.Type {
+		case "discord":
+			sendErr := SendDiscordAlert(msg, wh.URL)
+			if sendErr != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+				continue
+			}
+
+		case "slack":
+			sendErr := SendSlackAlert(msg, wh.URL)
+			if sendErr != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+				continue
+			}
+
+		}
+		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
+
+	}
+	telegram.MsgTelegramAlert(msg, addr, Config.TokenTelegramValidator, "validator", db)
+
+	return nil
+}
 
 func SendInfoValidator(msg string, level string, db *gorm.DB) error {
 	type Webhook struct {
@@ -281,9 +317,7 @@ func SendInfoValidator(msg string, level string, db *gorm.DB) error {
 		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
 
 	}
-
 	telegram.MsgTelegram(msg, Config.TokenTelegramValidator, "validator", db)
-
 	return nil
 }
 
