@@ -29,10 +29,12 @@ type TelegramHourReport struct {
 }
 
 type TelegramValidatorSub struct {
-	ChatID   int64  `gorm:"column:chat_id" `
-	Moniker  string `gorm:"column:moniker"`
-	Addr     string `gorm:"column:addr;not null"`
-	Activate bool   `gorm:"column:activate;default:true"`
+	ID        uint      `gorm:"primaryKey;autoIncrement"`
+	ChatID    int64     `gorm:"index:idx_chat_validator,unique;not null"`
+	Moniker   string    `gorm:"size:64;index"`
+	Addr      string    `gorm:"index:idx_chat_validator,unique;not null"`
+	Activate  bool      `gorm:"default:true;index"`
+	CreatedAt time.Time `gorm:"autoCreateTime"`
 }
 type ParticipationRate struct {
 	Addr              string  `json:"addr"`
