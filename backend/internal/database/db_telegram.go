@@ -187,6 +187,21 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64) ([]ValidatorStatus, error
 
 	return results, nil
 }
+func GetAllValidators(db *gorm.DB) ([]AddrMoniker, error) {
+
+	var results []AddrMoniker
+
+	query := `
+			SELECT DISTINCT moniker, addr
+			FROM daily_participations;`
+
+	err := db.Raw(query).Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
 
 func DeleteTelegramValidatorSub(db *gorm.DB, chatID int64, addr string) error {
 	return db.

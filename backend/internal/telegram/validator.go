@@ -44,8 +44,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 
 		},
 		"/subscribe": func(chatID int64, args string) {
-			params := parseParams(args)
-
+			handleSubscribe(token, db, chatID, args)
 		},
 		"/uptime": func(chatID int64, args string) {
 			params := parseParams(args)
@@ -426,7 +425,7 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 
 	case "on":
 		if len(rest) == 0 {
-			_ = SendMessageTelegram(token, chatID, "Usage: /subscribe on <addr|moniker> [more...]")
+			_ = SendMessageTelegram(token, chatID, "Usage: /subscribe on <addr> [more...]")
 			return
 		}
 		if strings.ToLower(rest[0]) == "all" {
@@ -445,23 +444,6 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 			return
 		}
 
-		targets, err := database.ResolveValidators(db, rest)
-		if err != nil {
-			_ = SendMessageTelegram(token, chatID, "⚠️ Some validators could not be resolved.")
-		}
-		if len(targets) == 0 {
-			_ = SendMessageTelegram(token, chatID, "No valid validators found.")
-			return
-		}
-		var ok, fail int
-		for _, t := range targets {
-			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, t.Addr, t.Moniker, "subscribe"); err != nil {
-				fail++
-			} else {
-				ok++
-			}
-		}
-		_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Subscribed: %d | ❌ Failed: %d", ok, fail))
 		return
 
 	case "off":
@@ -485,25 +467,6 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 			return
 		}
 
-		targets, err := database.ResolveValidators(db, rest)
-		if err != nil {
-			_ = SendMessageTelegram(token, chatID, "⚠️ Some validators could not be resolved.")
-		}
-		if len(targets) == 0 {
-			_ = SendMessageTelegram(token, chatID, "No valid validators found.")
-			return
-		}
-		var ok, fail int
-		for _, t := range targets {
-			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, t.Addr, t.Moniker, "unsubscribe"); err != nil {
-				fail++
-			} else {
-				ok++
-			}
-		}
-		_ = SendMessageTelegram(token, chatID, fmt.Sprintf("🛑 Unsubscribed: %d | ❌ Failed: %d", ok, fail))
-		return
-
 	default:
 		_ = SendMessageTelegram(token, chatID, subscribeUsage())
 		return
@@ -513,8 +476,8 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 func subscribeUsage() string {
 	return `📬 <b>Subscribe command</b>
 /subscribe list  — show your subscriptions
-/subscribe on <addr|moniker> [more...] — enable alerts
-/subscribe off <addr|moniker> [more...] — disable alerts
+/subscribe on <addr> [more...] — enable alerts
+/subscribe off <addr> [more...] — disable alerts
 /subscribe on all — enable all
 /subscribe off all — disable all`
 }
@@ -531,29 +494,46 @@ func formatHelp() string {
 
 	b.WriteString("📡 <b>Commands</b>\n")
 
-	b.WriteString("<code>/status [period=...] [limit=N]</code>\n")
+	b.WriteString("<code>🚦 /status [period=...] [limit=N]</code>\n")
 	b.WriteString("Shows the participation rate of validators for a given period.\n")
 	b.WriteString("Examples:\n")
 	b.WriteString("• <code>/status</code> (defaults: period=current_month, limit=10)\n")
 	b.WriteString("• <code>/status period=current_month limit=5</code>\n\n")
 
-	b.WriteString("<code>/uptime [limit=N]</code>\n")
+	b.WriteString("<code>🕒 /uptime [limit=N]</code>\n")
 	b.WriteString("Displays uptime statistics of validator.\n")
 	b.WriteString("Examples:\n")
 	b.WriteString("• <code>/uptime</code> (default: limit=10)\n")
 	b.WriteString("• <code>/uptime limit=3</code>\n\n")
 
-	b.WriteString("<code>/tx_contrib [period=...] [limit=N]</code>\n")
+	b.WriteString("<code>💪 /tx_contrib [period=...] [limit=N]</code>\n")
 	b.WriteString("Shows each validator’s contribution to transaction inclusion.\n")
 	b.WriteString("Examples:\n")
 	b.WriteString("• <code>/tx_contrib</code> (defaults: period=current_month, limit=10)\n")
 	b.WriteString("• <code>/tx_contrib period=current_year limit=20</code>\n\n")
 
-	b.WriteString("<code>/missing [period=...] [limit=N]</code>\n")
+	b.WriteString("<code>🚧 /missing [period=...] [limit=N]</code>\n")
 	b.WriteString("Displays how many blocks each validator missed for a given period.\n")
 	b.WriteString("Examples:\n")
 	b.WriteString("• <code>/missing</code> (defaults: period=current_month, limit=10)\n")
 	b.WriteString("• <code>/missing period=all_time limit=50</code>\n\n")
+
+	b.WriteString("📬 <b>Subscribe command</b> \n")
+
+	b.WriteString("Show your active subscriptions and available validators\n")
+	b.WriteString("• <code>/subscribe list </code>\n")
+
+	b.WriteString("Enable alerts for one or more validators\n")
+	b.WriteString("• <code>/subscribe on <addr> [more...]</code>\n")
+
+	b.WriteString("Disable alerts for one or more validators\n")
+	b.WriteString("• <code>/subscribe off <addr> [more...]</code>\n ")
+
+	b.WriteString("Enable alerts for all validators\n")
+	b.WriteString("• <code>/subscribe on all </code>\n")
+
+	b.WriteString("Disable alerts for all validators\n")
+	b.WriteString("• <code>/subscribe off all </code>\n")
 
 	b.WriteString("ℹ️ Parameters must be written as <code>key=value</code> (e.g. <code>period=current_week</code>).\n")
 
