@@ -212,7 +212,7 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 		)
 	}
 
-	telegram.MsgTelegram(fullMsg, Config.TokenTelegramValidator, "validator", db)
+	telegram.MsgTelegramAlert(fullMsg, addr, Config.TokenTelegramValidator, "validator", db)
 
 	return nil
 }

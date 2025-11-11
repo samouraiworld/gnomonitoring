@@ -115,6 +115,49 @@ func MsgTelegram(Msg string, Token, TypeChatid string, db *gorm.DB) (err error) 
 
 	return nil
 }
+func MsgTelegramAlert(Msg string, addr, Token, TypeChatid string, db *gorm.DB) (err error) {
+
+	if Token == "" {
+		return fmt.Errorf("token is empty")
+	}
+
+	ids, err := database.GetAllChatIDs(db, TypeChatid)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("chat_ids:", ids)
+
+	for _, chatID := range ids {
+		// check sub
+		subs, err := database.GetTelegramValidatorSub(db, chatID, true)
+		if err != nil {
+			log.Printf("⚠️  get subscriptions failed for chat_id=%d: %v", chatID, err)
+			continue
+		}
+		// if empty not send
+		if len(subs) == 0 {
+			log.Printf("↪️  skip chat_id=%d (no active subscriptions)", chatID)
+			continue
+		}
+
+		for _, s := range subs {
+
+			if s.Addr == addr {
+
+				if err := SendMessageTelegram(Token, chatID, Msg); err != nil {
+					log.Printf("❌ send failed for chat_id=%d: %v", chatID, err)
+					continue
+				} else {
+					log.Printf("✅ message sent to chat_id=%d (validator=%s)", chatID, addr)
+				}
+				break
+			}
+		}
+
+	}
+
+	return nil
+}
 
 // ============================== handler telegram ==============================
 func extractCommand(msg *message) (cmd, args string, ok bool) {
