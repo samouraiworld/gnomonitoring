@@ -202,6 +202,19 @@ func GetAllValidators(db *gorm.DB) ([]AddrMoniker, error) {
 
 	return results, nil
 }
+func ResolveAddrs(db *gorm.DB, addrs []string) ([]AddrMoniker, error) {
+	var results []AddrMoniker
+
+	err := db.Table("daily_participations").
+		Select("DISTINCT addr, moniker").
+		Where("addr IN ?", addrs).
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
 
 func DeleteTelegramValidatorSub(db *gorm.DB, chatID int64, addr string) error {
 	return db.

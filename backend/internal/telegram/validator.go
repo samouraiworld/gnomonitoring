@@ -444,6 +444,24 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 			return
 		}
 
+		moniker, err := database.ResolveAddrs(db, rest)
+		if err != nil {
+			_ = SendMessageTelegram(token, chatID, "⚠️ Some validators could not be resolved.")
+		}
+		if len(moniker) == 0 {
+			_ = SendMessageTelegram(token, chatID, "No valid validators found.")
+			return
+		}
+		var ok, fail int
+		for _, m := range moniker {
+			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, m.Addr, m.Moniker, "subscribe"); err != nil {
+				fail++
+			} else {
+				ok++
+			}
+		}
+		_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Subscribed: %d | ❌ Failed: %d", ok, fail))
+
 		return
 
 	case "off":
@@ -466,6 +484,23 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("🛑 Disabled alerts for <b>%d</b> validators.", ok))
 			return
 		}
+		moniker, err := database.ResolveAddrs(db, rest)
+		if err != nil {
+			_ = SendMessageTelegram(token, chatID, "⚠️ Some validators could not be resolved.")
+		}
+		if len(moniker) == 0 {
+			_ = SendMessageTelegram(token, chatID, "No valid validators found.")
+			return
+		}
+		var ok, fail int
+		for _, m := range moniker {
+			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, m.Addr, m.Moniker, "unsubscribe"); err != nil {
+				fail++
+			} else {
+				ok++
+			}
+		}
+		_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Subscribed: %d | ❌ Failed: %d", ok, fail))
 
 	default:
 		_ = SendMessageTelegram(token, chatID, subscribeUsage())
