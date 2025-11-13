@@ -252,72 +252,73 @@ List of  metrics:
 ##### 🌐 Govdao bot
 
 **/status — list recent GovDAO proposals**
-  ⮑ Params: <code>limit</code> (optional, default: 10)
+  ⮑ Params: ```limit``` (optional, default: 10)
  ```/status limit=5```
 
 **/executedproposals — show the last executed proposals**
-  ⮑ Params: <code>limit</code> (optional, default: 10)
+  ⮑ Params: ```limit``` (optional, default: 10)
  ```/executedproposals limit=5```
 
 **/lastproposal — show the most recent proposal**
 
 ##### 🌐 Gnovalidator bot
 
-⏱️ <b>Available periods</b>
-• <code>current_week</code>
-• <code>current_month</code>
-• <code>current_year</code>
-• <code>all_time</code>
+⏱️ **Available periods**
 
-📡 <b>Commands</b>
+• ```current_week```
+• ```current_month```
+• ```current_year```
+• ```all_time```
 
-🚦 <b>Particpate rate command</b>
+📡 **Commands**
+
+🚦 **Particpate rate command**
 Shows the participation rate of validators for a given period.
 Examples:
 
-<code>/status [period=...] [limit=N]</code>
+```/status [period=...] [limit=N]```
 
-• <code>/status</code> (defaults: period=current_month, limit=10)
-• <code>/status period=current_month limit=5</code>
+• ```/status``` (defaults: period=current_month, limit=10)
+• ```/status period=current_month limit=5```
 
-🕒 <b>Up time command</b>
+🕒 **Up time command**
 Displays uptime statistics of validator.
 Examples:
 
-<code>/uptime [limit=N]</code>
+```/uptime [limit=N]```
 
-• <code>/uptime</code> (default: limit=10)
-• <code>/uptime limit=3</code>
+• ```/uptime``` (default: limit=10)
+• ```/uptime limit=3```
 
-💪 <b>Tx contribution command</b>
+💪 **Tx contribution command**
 Shows each validator’s contribution to transaction inclusion.
 Examples:
-<code>/tx_contrib [period=...] [limit=N]</code>
+```/tx_contrib [period=...] [limit=N]```
 
-• <code>/tx_contrib</code> (defaults: period=current_month, limit=10)
-• <code>/tx_contrib period=current_year limit=20</code>
+• ```/tx_contrib``` (defaults: period=current_month, limit=10)
+• ```/tx_contrib period=current_year limit=20```
 
-🚧 <b>Subscribe missing block command</b>
+🚧 **Subscribe missing block command**
 Displays how many blocks each validator missed for a given period.
 Examples:
 
-<code>/missing [period=...] [limit=N]</code>
+```/missing [period=...] [limit=N]```
 
-• <code>/missing</code> (defaults: period=current_month, limit=10)
-• <code>/missing period=all_time limit=50</code>
+• ```/missing``` (defaults: period=current_month, limit=10)
+• ```/missing period=all_time limit=50```
 
-📬 <b>Subscribe command</b>
+📬 **Subscribe command**
  Show your active subscriptions and available validators
- • <code>/subscribe list </code>
+ • ```/subscribe list```
 
  Enable alerts for one or more validators
- • <code>/subscribe on [addr] [more...]</code>
+ • ```/subscribe on [addr] [more...]```
 
  Disable alerts for one or more validators
- • <code>/subscribe off [addr] [more...]</code>\n
+ • ```/subscribe off [addr] [more...]```\n
 
  Enable alerts for all validators
- • <code>/subscribe on all </code>
+ • ```/subscribe on all```
 
  Disable alerts for all validators
- • <code>/subscribe off all </code>
+ • ```/subscribe off all```
