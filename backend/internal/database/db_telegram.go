@@ -1,13 +1,21 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+type ValidatorStatus struct {
+	Moniker string
+	Addr    string
+	Status  string
+}
 
 // ============================ Telegram =============================================
 
@@ -108,6 +116,154 @@ func GetHourTelegramReport(db *gorm.DB, chatid int64) (*TelegramHourReport, erro
 }
 func createHourReportTelegram(db *gorm.DB, chatid int64) error {
 	return db.Create(&TelegramHourReport{ChatID: chatid}).Error
+}
+
+// ============================ Telegram subscsubscriptions===============================
+
+func InsertTelegramValidatorSub(db *gorm.DB, chatID int64, moniker, addr string) error {
+	sub := TelegramValidatorSub{
+		ChatID:   chatID,
+		Moniker:  moniker,
+		Addr:     addr,
+		Activate: true,
+	}
+
+	// Vérifie si un abonnement existe déjà
+	var existing TelegramValidatorSub
+	err := db.
+		Where("chat_id = ? AND addr = ?", chatID, addr).
+		First(&existing).Error
+
+	if err == nil {
+		// Si déjà présent, on le réactive
+		if !existing.Activate {
+			return db.Model(&existing).Update("activate", true).Error
+		}
+		return nil // déjà actif → rien à faire
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// Sinon on l'insère
+		return db.Create(&sub).Error
+	}
+
+	return err
+}
+func GetTelegramValidatorSub(db *gorm.DB, chatID int64, onlyActive bool) ([]TelegramValidatorSub, error) {
+	var subs []TelegramValidatorSub
+	query := db.Where("chat_id = ?", chatID)
+	if onlyActive {
+		query = query.Where("activate = ?", true)
+	}
+	err := query.Order("created_at DESC").Find(&subs).Error
+	return subs, err
+}
+func GetValidatorStatusList(db *gorm.DB, chatID int64) ([]ValidatorStatus, error) {
+
+	var results []ValidatorStatus
+
+	query := `
+		WITH v AS (
+			SELECT DISTINCT moniker, addr
+			FROM daily_participations
+		)
+		SELECT
+			v.moniker,
+			v.addr,
+			CASE
+				WHEN s.activate = 1 THEN 'on'
+				ELSE 'off'
+			END AS status
+		FROM v
+		LEFT JOIN telegram_validator_subs s
+			ON s.addr = v.addr
+			AND s.chat_id = ?
+		ORDER BY status DESC;
+	`
+
+	err := db.Raw(query, chatID).Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+func GetAllValidators(db *gorm.DB) ([]AddrMoniker, error) {
+
+	var results []AddrMoniker
+
+	query := `
+			SELECT DISTINCT moniker, addr
+			FROM daily_participations;`
+
+	err := db.Raw(query).Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+func ResolveAddrs(db *gorm.DB, addrs []string) ([]AddrMoniker, error) {
+	var results []AddrMoniker
+
+	err := db.Table("daily_participations").
+		Select("DISTINCT addr, moniker").
+		Where("addr IN ?", addrs).
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+func DeleteTelegramValidatorSub(db *gorm.DB, chatID int64, addr string) error {
+	return db.
+		Where("chat_id = ? AND addr = ?", chatID, addr).
+		Delete(&TelegramValidatorSub{}).Error
+}
+func UpdateTelegramValidatorSubStatus(db *gorm.DB, chatID int64, addr, moniker, action string) error {
+	var activate bool
+
+	switch strings.ToLower(action) {
+	case "subscribe":
+		activate = true
+	case "unsubscribe":
+		activate = false
+	default:
+		return fmt.Errorf("invalid action: %s (expected 'subscribe' or 'unsubscribe')", action)
+	}
+
+	// find if exist record
+	var sub TelegramValidatorSub
+	err := db.Where("chat_id = ? AND addr = ?", chatID, addr).First(&sub).Error
+
+	// if not existe insert record
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if activate {
+			log.Printf("ℹ️ No existing record found — creating new active subscription for %s", addr)
+			return InsertTelegramValidatorSub(db, chatID, moniker, addr)
+		}
+		log.Printf("ℹ️ No existing record found — nothing to unsubscribe for %s", addr)
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("database lookup failed: %w", err)
+	}
+
+	//update status
+	if sub.Activate == activate {
+		log.Printf("⚙️ Subscription for %s already set to %t", addr, activate)
+		return nil
+	}
+
+	res := db.Model(&sub).Update("activate", activate)
+	if res.Error != nil {
+		return fmt.Errorf("failed to update validator subscription: %w", res.Error)
+	}
+
+	log.Printf("✅ Subscription for %s set to %t", addr, activate)
+	return nil
 }
 
 // ============================ Telegram govdao =============================================

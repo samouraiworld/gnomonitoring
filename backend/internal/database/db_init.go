@@ -27,6 +27,15 @@ type TelegramHourReport struct {
 	Activate          bool   `gorm:"column:activate;default:true"`
 	Timezone          string `gorm:"column:timezone;default:Europe/Paris" `
 }
+
+type TelegramValidatorSub struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement"`
+	ChatID    int64     `gorm:"index:idx_chat_validator,unique;not null"`
+	Moniker   string    `gorm:"size:64;index"`
+	Addr      string    `gorm:"index:idx_chat_validator,unique;not null"`
+	Activate  bool      `gorm:"default:true;index"`
+	CreatedAt time.Time `gorm:"autoCreateTime"`
+}
 type ParticipationRate struct {
 	Addr              string  `json:"addr"`
 	Moniker           string  `json:"moniker"`
@@ -152,7 +161,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	err = db.AutoMigrate(
 		&User{}, &AlertContact{}, &WebhookValidator{},
 		&WebhookGovDAO{}, &HourReport{},
-		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{}, &Govdao{}, &Telegram{}, &TelegramHourReport{},
+		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{}, &Govdao{}, &Telegram{}, &TelegramHourReport{}, &TelegramValidatorSub{},
 	)
 	if err != nil {
 		return nil, err
