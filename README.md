@@ -271,26 +271,53 @@ List of  metrics:
 
 📡 <b>Commands</b>
 
-<code>/status [period=...] [limit=N]</code>
+🚦 <b>Particpate rate command</b>
 Shows the participation rate of validators for a given period.
 Examples:
+
+<code>/status [period=...] [limit=N]</code>
+
 • <code>/status</code> (defaults: period=current_month, limit=10)
 • <code>/status period=current_month limit=5</code>
 
-<code>/uptime [limit=N]</code>
+🕒 <b>Up time command</b>
 Displays uptime statistics of validator.
 Examples:
+
+<code>/uptime [limit=N]</code>
+
 • <code>/uptime</code> (default: limit=10)
 • <code>/uptime limit=3</code>
 
-<code>/tx_contrib [period=...] [limit=N]</code>
+💪 <b>Tx contribution command</b>
 Shows each validator’s contribution to transaction inclusion.
 Examples:
+<code>/tx_contrib [period=...] [limit=N]</code>
+
 • <code>/tx_contrib</code> (defaults: period=current_month, limit=10)
 • <code>/tx_contrib period=current_year limit=20</code>
 
-<code>/missing [period=...] [limit=N]</code>
+🚧 <b>Subscribe missing block command</b>
 Displays how many blocks each validator missed for a given period.
 Examples:
+
+<code>/missing [period=...] [limit=N]</code>
+
 • <code>/missing</code> (defaults: period=current_month, limit=10)
 • <code>/missing period=all_time limit=50</code>
+
+📬 <b>Subscribe command</b>
+ Show your active subscriptions and available validators
+ • <code>/subscribe list </code>
+
+ Enable alerts for one or more validators
+ • <code>/subscribe on [addr] [more...]</code>
+
+ Disable alerts for one or more validators
+ • <code>/subscribe off [addr] [more...]</code>\n
+
+ Enable alerts for all validators
+ • <code>/subscribe on all </code>
+
+ Disable alerts for all validators
+ • <code>/subscribe off all </code>
