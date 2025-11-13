@@ -418,7 +418,7 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 		b.WriteString("🧾 <b>Your subscriptions</b>\n")
 		for _, s := range subs {
 
-			b.WriteString(fmt.Sprintf("• %s (%s): <b>%s</b>\n", s.Moniker, s.Addr, s.Status))
+			b.WriteString(fmt.Sprintf("• %s \n (%s)\n<b>%s</b>\n", s.Moniker, s.Addr, s.Status))
 		}
 		_ = SendMessageTelegram(token, chatID, b.String())
 		return
@@ -457,10 +457,11 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, m.Addr, m.Moniker, "subscribe"); err != nil {
 				fail++
 			} else {
+				_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Enabled alerts for <b>%s</b> validators.", m.Moniker))
 				ok++
 			}
 		}
-		_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Subscribed: %d | ❌ Failed: %d", ok, fail))
+		// _ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Unsubscribed: %d | ❌ Failed: %d", ok, fail))
 
 		return
 
@@ -497,10 +498,10 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, m.Addr, m.Moniker, "unsubscribe"); err != nil {
 				fail++
 			} else {
+				_ = SendMessageTelegram(token, chatID, fmt.Sprintf("🛑 Disabled alerts for <b>%s</b> validators.", m.Moniker))
 				ok++
 			}
 		}
-		_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Subscribed: %d | ❌ Failed: %d", ok, fail))
 
 	default:
 		_ = SendMessageTelegram(token, chatID, subscribeUsage())
@@ -511,8 +512,8 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 func subscribeUsage() string {
 	return `📬 <b>Subscribe command</b>
 /subscribe list  — show your subscriptions
-/subscribe on <addr> [more...] — enable alerts
-/subscribe off <addr> [more...] — disable alerts
+/subscribe on addr addr2 — enable alerts
+/subscribe off addr addr2 — disable alerts
 /subscribe on all — enable all
 /subscribe off all — disable all`
 }
@@ -559,10 +560,10 @@ func formatHelp() string {
 	b.WriteString("• <code>/subscribe list </code>\n")
 
 	b.WriteString("Enable alerts for one or more validators\n")
-	b.WriteString("• <code>/subscribe on <addr> [more...]</code>\n")
+	b.WriteString("• <code>/subscribe on [addr] [more...]</code>\n")
 
 	b.WriteString("Disable alerts for one or more validators\n")
-	b.WriteString("• <code>/subscribe off <addr> [more...]</code>\n ")
+	b.WriteString("• <code>/subscribe off [addr] [more...]</code>\n ")
 
 	b.WriteString("Enable alerts for all validators\n")
 	b.WriteString("• <code>/subscribe on all </code>\n")
