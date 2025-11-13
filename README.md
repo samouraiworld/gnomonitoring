@@ -265,10 +265,10 @@ List of  metrics:
 
 ⏱️ **Available periods**
 
-• ```current_week```
-• ```current_month```
-• ```current_year```
-• ```all_time```
+- ```current_week```
+- ```current_month```
+- ```current_year```
+- ```all_time```
 
 📡 **Commands**
 
@@ -278,8 +278,8 @@ Examples:
 
 ```/status [period=...] [limit=N]```
 
-• ```/status``` (defaults: period=current_month, limit=10)
-• ```/status period=current_month limit=5```
+- ```/status``` (defaults: period=current_month, limit=10)
+- ```/status period=current_month limit=5```
 
 🕒 **Up time command**
 Displays uptime statistics of validator.
@@ -287,16 +287,16 @@ Examples:
 
 ```/uptime [limit=N]```
 
-• ```/uptime``` (default: limit=10)
-• ```/uptime limit=3```
+- ```/uptime``` (default: limit=10)
+- ```/uptime limit=3```
 
 💪 **Tx contribution command**
 Shows each validator’s contribution to transaction inclusion.
 Examples:
 ```/tx_contrib [period=...] [limit=N]```
 
-• ```/tx_contrib``` (defaults: period=current_month, limit=10)
-• ```/tx_contrib period=current_year limit=20```
+- ```/tx_contrib``` (defaults: period=current_month, limit=10)
+- ```/tx_contrib period=current_year limit=20```
 
 🚧 **Subscribe missing block command**
 Displays how many blocks each validator missed for a given period.
@@ -304,21 +304,26 @@ Examples:
 
 ```/missing [period=...] [limit=N]```
 
-• ```/missing``` (defaults: period=current_month, limit=10)
-• ```/missing period=all_time limit=50```
+- ```/missing``` (defaults: period=current_month, limit=10)
+- ```/missing period=all_time limit=50```
 
 📬 **Subscribe command**
  Show your active subscriptions and available validators
- • ```/subscribe list```
+
+- ```/subscribe list```
 
  Enable alerts for one or more validators
- • ```/subscribe on [addr] [more...]```
+
+- ```/subscribe on [addr] [more...]```
 
  Disable alerts for one or more validators
- • ```/subscribe off [addr] [more...]```\n
+
+- ```/subscribe off [addr] [more...]```\n
 
  Enable alerts for all validators
- • ```/subscribe on all```
+
+- ```/subscribe on all```
 
  Disable alerts for all validators
- • ```/subscribe off all```
+
+- ```/subscribe off all```
