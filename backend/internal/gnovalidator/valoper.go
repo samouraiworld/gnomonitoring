@@ -44,7 +44,7 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 
 	for {
 
-		cmd := fmt.Sprintf(`gno.land/r/gnoland/valopers.Render("?page=%d")`, page)
+		cmd := fmt.Sprintf(`gno.land/r/gnops/valopers.Render("?page=%d")`, page)
 
 		resp, err := client.RPCClient.ABCIQuery("vm/qeval", []byte(cmd))
 		if err != nil {
@@ -56,7 +56,7 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 		data := string(resp.Response.Data)
 
 		// Extract with regex
-		re := regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnoland/valopers:([a-z0-9]+)\)`)
+		re := regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnops/valopers:([a-z0-9]+)\)`)
 		matches := re.FindAllStringSubmatch(data, -1)
 
 		//If no result, we stop the loop
