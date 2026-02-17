@@ -456,7 +456,7 @@ func CheckProposalStatus(db *gorm.DB) {
 			continue
 		}
 
-		if p.Status == "ACTIVE" && currentStatus == "ACCEPTED" {
+		if currentStatus == "ACCEPTED" && p.Status != "ACCEPTED" {
 			log.Printf("✅ Proposal %d (%s) has been ACCEPTED!", p.Id, p.Title)
 
 			// Send notification
