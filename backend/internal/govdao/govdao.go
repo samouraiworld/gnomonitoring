@@ -478,6 +478,7 @@ func CheckProposalStatus(db *gorm.DB) {
 			)
 			telegram.MsgTelegram(msgT, internal.Config.TokenTelegramValidator, "govdao", db)
 
+			log.Printf("❌ Failed to update govdao status id=%d: %v", p.Id, err)
 			// update GovDao (explicit WHERE to handle id=0)
 			if err := db.Model(&database.Govdao{}).
 				Where("id = ?", p.Id).
