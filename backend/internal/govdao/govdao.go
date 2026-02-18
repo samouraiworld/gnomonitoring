@@ -456,7 +456,7 @@ func CheckProposalStatus(db *gorm.DB) {
 			continue
 		}
 
-		if p.Status == "ACTIVE" && currentStatus == "ACCEPTED" {
+		if currentStatus == "ACCEPTED" && p.Status != "ACCEPTED" {
 			log.Printf("✅ Proposal %d (%s) has been ACCEPTED!", p.Id, p.Title)
 
 			// Send notification
@@ -478,8 +478,13 @@ func CheckProposalStatus(db *gorm.DB) {
 			)
 			telegram.MsgTelegram(msgT, internal.Config.TokenTelegramValidator, "govdao", db)
 
-			// update GovDao
-			db.Model(&p).Update("status", "ACCEPTED")
+			log.Printf("❌ Failed to update govdao status id=%d: %v", p.Id, err)
+			// update GovDao (explicit WHERE to handle id=0)
+			if err := db.Model(&database.Govdao{}).
+				Where("id = ?", p.Id).
+				Update("status", "ACCEPTED").Error; err != nil {
+				log.Printf("❌ Failed to update govdao status id=%d: %v", p.Id, err)
+			}
 		}
 	}
 }
