@@ -1,5 +1,5 @@
 backend_port: "8989"
-allow_origin: "http://localhost:3000"
+allow_origin: "http://localhost:3000"  # Comma-separated for multiple origins, e.g. "https://gnolove.world, https://memba.samourai.app"
 rpc_endpoint: "https://rpc.test9.testnets.gno.land"
 metrics_port: 8888
 gnoweb: "https://test9.testnets.gno.land"
