@@ -41,7 +41,7 @@ func authUserIDFromContext(r *http.Request) (string, error) {
 // ========== GOVDAO ==========
 
 func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -63,7 +63,7 @@ func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 }
 
 func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 
 	var webhook database.WebhookGovDAO
 	err := json.NewDecoder(r.Body).Decode(&webhook)
@@ -124,7 +124,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 }
 
 func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	idStr := r.URL.Query().Get("id")
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
@@ -148,7 +148,7 @@ func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	var webhook database.WebhookGovDAO
-	EnableCORS(w)
+	EnableCORS(w, r)
 	err := json.NewDecoder(r.Body).Decode(&webhook)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -174,7 +174,7 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 // ========== VALIDATOR ==========
 
 func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -195,7 +195,7 @@ func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *g
 }
 
 func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 
 	var webhook database.WebhookValidator
 	err := json.NewDecoder(r.Body).Decode(&webhook)
@@ -247,7 +247,7 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 }
 
 func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	idStr := r.URL.Query().Get("id")
 	// for get userid with apiclerk
 	userID, err := authUserIDFromContext(r)
@@ -271,7 +271,7 @@ func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 }
 
 func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	var webhook database.WebhookValidator
 	err := json.NewDecoder(r.Body).Decode(&webhook)
 	if err != nil {
@@ -296,7 +296,7 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 
 // =======================USER==========================================func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 
 	var users database.User
 	err := json.NewDecoder(r.Body).Decode(&users)
@@ -339,7 +339,7 @@ func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 }
 
 func DeleteUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -360,7 +360,7 @@ func DeleteUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 }
 
 func GetUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -385,7 +385,7 @@ func GetUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	json.NewEncoder(w).Encode(user)
 }
 func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -420,7 +420,7 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 // =====================Hour Report ================================
 func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -453,7 +453,7 @@ func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB
 	w.WriteHeader(http.StatusOK)
 }
 func GetReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -475,7 +475,7 @@ func GetReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 // ======================Alert Contact ================================
 
 func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -516,7 +516,7 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 }
 
 func GetAlertContactsHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -538,7 +538,7 @@ func GetAlertContactsHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB
 }
 func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -575,7 +575,7 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	w.Write([]byte("Alert contact updated"))
 }
 func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -605,7 +605,7 @@ func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 
 // ====================== Block Height ============
 func Getblockheight(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -621,7 +621,7 @@ func Getblockheight(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 // ======================last incident ==================================
 func Getlastincident(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -643,7 +643,7 @@ func Getlastincident(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 // ============================ Participation Rate ========================
 func Getarticipation(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -665,7 +665,7 @@ func Getarticipation(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 // =========================== Get uptime metrics =============================
 func GetUptime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -687,7 +687,7 @@ func GetUptime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 // =========================== Get Operation time metrics =============================
 func GetOperationtime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -709,7 +709,7 @@ func GetOperationtime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 // ========================= Get tx_contrib
 func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -737,7 +737,7 @@ func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 // =========================== Missing Block
 // ========================= Get tx_contrib
 func GetMissingBlock(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -765,7 +765,7 @@ func GetMissingBlock(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 // =========================Info of  rpc gnoweb use ====================
 
 func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
-	EnableCORS(w)
+	EnableCORS(w, r)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -786,8 +786,30 @@ func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 }
 
 // ======================CORS=============================================
-func EnableCORS(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", internal.Config.AllowOrigin)
+func EnableCORS(w http.ResponseWriter, r ...*http.Request) {
+	origin := ""
+	if len(r) > 0 && r[0] != nil {
+		origin = r[0].Header.Get("Origin")
+	}
+
+	// Match the request origin against the allowed list.
+	// If no match and there's only one allowed origin, fall back to that
+	// (backward compatible with single-origin configs).
+	allowedOrigin := ""
+	if len(internal.Config.AllowedOrigins) == 1 {
+		allowedOrigin = internal.Config.AllowedOrigins[0]
+	} else {
+		for _, ao := range internal.Config.AllowedOrigins {
+			if ao == origin {
+				allowedOrigin = ao
+				break
+			}
+		}
+	}
+
+	if allowedOrigin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+	}
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Forwarded-Proto, X-Forwarded-Host")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 }

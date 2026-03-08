@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"strings"
 	"log"
 	"net/http"
 	"os"
@@ -26,6 +27,9 @@ type config struct {
 	DevMode                bool   `yaml:"dev_mode"`
 	TokenTelegramValidator string `yaml:"token_telegram_validator"`
 	TokenTelegramGovdao    string `yaml:"token_telegram_govdao"`
+
+	// Parsed at load time from AllowOrigin (comma-separated).
+	AllowedOrigins []string `yaml:"-"`
 }
 
 var Config config
@@ -42,7 +46,16 @@ func LoadConfig() {
 		log.Fatalf("Error parsing config file: %v", err)
 	}
 
+	// Parse comma-separated origins into a slice for dynamic CORS matching.
+	for _, raw := range strings.Split(Config.AllowOrigin, ",") {
+		origin := strings.TrimSpace(raw)
+		if origin != "" {
+			Config.AllowedOrigins = append(Config.AllowedOrigins, origin)
+		}
+	}
+
 	log.Printf("DevMode value: %v", Config.DevMode)
+	log.Printf("Allowed CORS origins: %v", Config.AllowedOrigins)
 }
 func SendDiscordAlert(msg string, webhookURL string) error {
 	payload := map[string]string{"content": msg}
