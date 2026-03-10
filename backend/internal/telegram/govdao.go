@@ -201,14 +201,14 @@ func SendReportGovdaoTelegram(id int, title, urlgnoweb, urltx, botoken string, c
 }
 func FormatTelegramMsg(id int, title, proposalURL, txURL string) string {
 	esc := html.EscapeString
-	voteURL := fmt.Sprintf("https://gnolove.world/govdao/proposal/%d", id)
+	voteURL := fmt.Sprintf("https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d", id)
 
 	return fmt.Sprintf(
 
 		"🗳️ <b>New Proposal Nº %d</b>: %s\n"+
 			"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
 			"🗒️ Tx: <a href=\"%s\">Gnoscan</a>\n"+
-			"🖐️ Interact & Vote: <a href=\"%s\">Open proposal on Gnolove</a>",
+			"🖐️ Interact & Vote: <a href=\"%s\">Open proposal on Memba</a>",
 		id,
 		esc(title),
 		esc(proposalURL),
@@ -233,7 +233,7 @@ func formatHelpgovdao() string {
 
 	b.WriteString("Formatting notes:\n")
 	b.WriteString("• Links open to Gno.land and Gnoscan when available\n")
-	b.WriteString("• You can interact & vote via the Gnolove link when provided\n\n")
+	b.WriteString("• You can interact & vote via the Memba link when provided\n\n")
 
 	return b.String()
 }
