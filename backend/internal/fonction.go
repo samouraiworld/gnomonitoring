@@ -358,7 +358,7 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 			"🗳️ ** New Proposal N° %d: %s ** -  \n"+
 			"🔗source: %s \n"+
 			"🗒️Tx: %s"+
-			"🖐️ Interact & Vote: https://gnolove.world/govdao/proposal/%d",
+			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d",
 			id, title, urlgnoweb, urltx, id)
 		log.Println(msg)
 		sendErr := SendDiscordAlert(msg, urlwebhook)
@@ -372,7 +372,7 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 			"🗳️ * New Proposal N° %d: %s * -  \n"+
 			"🔗source: %s \n"+
 			"🗒️Tx: %s"+
-			"🖐️ Interact & Vote: https://gnolove.world/govdao/proposal/%d",
+			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d",
 			id, title, urlgnoweb, urltx, id)
 
 		sendErr := SendSlackAlert(msg, urlwebhook)
