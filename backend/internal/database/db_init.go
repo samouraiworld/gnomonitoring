@@ -137,6 +137,11 @@ type MissingBlockMetrics struct {
 	Addr         string `json:"addr"`
 	MissingBlock int    `json:"missingBlock"`
 }
+type FirstSeenMetrics struct {
+	Addr      string `json:"addr"`
+	Moniker   string `json:"moniker"`
+	FirstSeen string `json:"firstSeen"`
+}
 
 // CReate index
 func InitDB(dbPath string) (*gorm.DB, error) {

@@ -707,6 +707,26 @@ func GetOperationtime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 }
 
+// =========================== Get First Seen metrics =============================
+func GetFirstSeen(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w, r)
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	firstSeen, err := database.GetFirstSeen(db)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get First Seen metrics: %v", err), http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(firstSeen)
+}
+
 // ========================= Get tx_contrib
 func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	EnableCORS(w, r)
@@ -982,6 +1002,21 @@ func StartWebhookAPI(db *gorm.DB) {
 
 		case http.MethodGet:
 			GetOperationtime(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+
+		}
+
+	})
+
+	mux.HandleFunc("/first_seen", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+
+		case http.MethodGet:
+			GetFirstSeen(w, r, db)
 		case http.MethodOptions:
 			EnableCORS(w)
 			w.WriteHeader(http.StatusOK)
