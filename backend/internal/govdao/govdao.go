@@ -185,18 +185,35 @@ func ExtractGovDAOIDs(txs []Transaction) []string {
 func WebsocketGovdao(db *gorm.DB) {
 	wsURL := strings.Replace(internal.Config.Graphql, "http", "ws", 1)
 
-	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		log.Fatal("Dial error:", err)
-	}
-	defer c.Close()
+	const (
+		backoffMin = 2 * time.Second
+		backoffMax = 60 * time.Second
+	)
+	backoff := backoffMin
 
-	initMsg := gqlMessage{
-		Type: "connection_init",
-	}
-	c.WriteJSON(initMsg)
+	for {
+		c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if err != nil {
+			log.Printf("WebsocketGovdao dial error: %v — retrying in %s", err, backoff)
+			time.Sleep(backoff)
+			if backoff < backoffMax {
+				backoff *= 2
+				if backoff > backoffMax {
+					backoff = backoffMax
+				}
+			}
+			continue
+		}
 
-	query := `
+		// Successful connection — reset backoff.
+		backoff = backoffMin
+
+		initMsg := gqlMessage{
+			Type: "connection_init",
+		}
+		c.WriteJSON(initMsg)
+
+		query := `
         subscription {
           getTransactions(
             where: {
@@ -224,37 +241,51 @@ func WebsocketGovdao(db *gorm.DB) {
           }
         }
     `
-	startMsg := gqlMessage{
-		ID:   "1",
-		Type: "start",
-		Payload: map[string]interface{}{
-			"query": query,
-		},
-	}
-	c.WriteJSON(startMsg)
-
-	for {
-		_, message, err := c.ReadMessage()
-		if err != nil {
-			log.Println("Read error:", err)
-			return
+		startMsg := gqlMessage{
+			ID:   "1",
+			Type: "start",
+			Payload: map[string]interface{}{
+				"query": query,
+			},
 		}
-		log.Println("Message sent:", string(message))
+		c.WriteJSON(startMsg)
 
-		var msg WSMessage
-		if err := json.Unmarshal(message, &msg); err != nil {
-			log.Println("JSON decode error:", err)
-			continue
+		readErr := false
+		for {
+			_, message, err := c.ReadMessage()
+			if err != nil {
+				log.Println("Read error:", err)
+				readErr = true
+				break
+			}
+			log.Println("Message sent:", string(message))
+
+			var msg WSMessage
+			if err := json.Unmarshal(message, &msg); err != nil {
+				log.Println("JSON decode error:", err)
+				continue
+			}
+
+			if msg.Type != "data" {
+
+				continue
+			}
+
+			tx := msg.Payload.Data.GetTransactions
+			ProcessProposal(tx, "socket", db)
 		}
 
-		if msg.Type != "data" {
-
-			continue
+		c.Close()
+		if readErr {
+			log.Printf("WebsocketGovdao lost connection — retrying in %s", backoff)
+			time.Sleep(backoff)
+			if backoff < backoffMax {
+				backoff *= 2
+				if backoff > backoffMax {
+					backoff = backoffMax
+				}
+			}
 		}
-
-		tx := msg.Payload.Data.GetTransactions
-		ProcessProposal(tx, "socket", db)
-
 	}
 
 }

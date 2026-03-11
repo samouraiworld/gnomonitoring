@@ -34,11 +34,13 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 
 		log.Printf("🕓 Scheduled next report for %s at %s (%s)", userID, next.Format(time.RFC1123), wait)
 
+		timer := time.NewTimer(wait)
 		select {
-		case <-time.After(wait):
+		case <-timer.C:
 			log.Printf("⏰ Sending report for user %s", userID)
 			SendDailyStatsForUser(db, &userID, nil, loc)
 		case <-reload:
+			timer.Stop()
 			log.Printf("♻️ Reloading schedule for user %s", userID)
 			return
 		}
@@ -61,11 +63,13 @@ func SheduleTelegramReport(chat_id int64, hour, minute int, timezone string, db 
 
 		log.Printf("🕓 Scheduled next report for %d at %s (%s)", chat_id, next.Format(time.RFC1123), wait)
 
+		timer := time.NewTimer(wait)
 		select {
-		case <-time.After(wait):
+		case <-timer.C:
 			log.Printf("⏰ Sending report for user %d", chat_id)
 			SendDailyStatsForUser(db, nil, &chat_id, loc)
 		case <-reload:
+			timer.Stop()
 			log.Printf("♻️ Reloading schedule for user %d", chat_id)
 			return
 		}

@@ -224,12 +224,11 @@ func MsgTelegram(Msg string, Token, TypeChatid string, db *gorm.DB) (err error) 
 
 	ids, err := database.GetAllChatIDs(db, TypeChatid)
 	if err != nil {
-		panic(err)
+		log.Printf("❌ GetAllChatIDs failed: %v", err)
+		return err
 	}
-	fmt.Println("chat_ids:", ids)
 
 	for _, chatID := range ids {
-		fmt.Println("Send to chat:", chatID)
 
 		err := SendMessageTelegram(Token, chatID, Msg)
 		if err != nil {
@@ -249,9 +248,9 @@ func MsgTelegramAlert(Msg string, addr, Token, TypeChatid string, db *gorm.DB) (
 
 	ids, err := database.GetAllChatIDs(db, TypeChatid)
 	if err != nil {
-		panic(err)
+		log.Printf("❌ GetAllChatIDs failed: %v", err)
+		return err
 	}
-	fmt.Println("chat_ids:", ids)
 
 	for _, chatID := range ids {
 		// check sub
@@ -361,21 +360,24 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 			if up.Message == nil || up.Message.Chat.ID == 0 {
 				continue
 			}
-			// For save Chat ID into db
-			insert, err := database.InsertChatID(db, up.Message.Chat.ID, TypeChatid)
-			if err != nil {
-				return fmt.Errorf("error  insert chatid to db %w", err)
-			}
-			if insert && TypeChatid == "govdao" {
-				//for send ultimate Govdao
-				log.Println("Send ultimate govdao telegram")
-				govdaolist, err := database.GetLastGovDaoInfo(db)
+			// For save Chat ID into db (fire-and-forget, idempotent upsert)
+			chatIDToInsert := up.Message.Chat.ID
+			go func() {
+				insert, err := database.InsertChatID(db, chatIDToInsert, TypeChatid)
 				if err != nil {
-					return fmt.Errorf("error get lastid govdao%s ", err)
-
+					log.Printf("⚠️ InsertChatID failed for chat_id=%d: %v", chatIDToInsert, err)
+					return
 				}
-				SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, up.Message.Chat.ID)
-			}
+				if insert && TypeChatid == "govdao" {
+					log.Println("Send ultimate govdao telegram")
+					govdaolist, err := database.GetLastGovDaoInfo(db)
+					if err != nil {
+						log.Printf("error get lastid govdao: %s", err)
+						return
+					}
+					SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, chatIDToInsert)
+				}
+			}()
 			if HandleSearchInput(token, db, TypeChatid, up.Message.Chat.ID, up.Message.Text) {
 				continue
 			}
