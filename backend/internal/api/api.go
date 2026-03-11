@@ -947,7 +947,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		case http.MethodGet:
 			Getblockheight(w, r, db)
 		case http.MethodOptions:
-			EnableCORS(w)
+			EnableCORS(w, r)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -961,7 +961,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		case http.MethodGet:
 			Getlastincident(w, r, db)
 		case http.MethodOptions:
-			EnableCORS(w)
+			EnableCORS(w, r)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -975,7 +975,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		case http.MethodGet:
 			Getarticipation(w, r, db)
 		case http.MethodOptions:
-			EnableCORS(w)
+			EnableCORS(w, r)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -989,7 +989,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		case http.MethodGet:
 			GetUptime(w, r, db)
 		case http.MethodOptions:
-			EnableCORS(w)
+			EnableCORS(w, r)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1003,7 +1003,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		case http.MethodGet:
 			GetOperationtime(w, r, db)
 		case http.MethodOptions:
-			EnableCORS(w)
+			EnableCORS(w, r)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1018,7 +1018,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		case http.MethodGet:
 			GetFirstSeen(w, r, db)
 		case http.MethodOptions:
-			EnableCORS(w)
+			EnableCORS(w, r)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1033,7 +1033,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		case http.MethodGet:
 			GetTxContrib(w, r, db)
 		case http.MethodOptions:
-			EnableCORS(w)
+			EnableCORS(w, r)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1047,7 +1047,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		case http.MethodGet:
 			GetMissingBlock(w, r, db)
 		case http.MethodOptions:
-			EnableCORS(w)
+			EnableCORS(w, r)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1062,7 +1062,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		case http.MethodGet:
 			GetInfo(w, r, db)
 		case http.MethodOptions:
-			EnableCORS(w)
+			EnableCORS(w, r)
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
