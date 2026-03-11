@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
-	"strings"
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/telegram"
@@ -33,6 +34,9 @@ type config struct {
 }
 
 var Config config
+
+// alertHTTPClient is reused across all webhook dispatches to enable TCP connection pooling.
+var alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 // Load config.yaml
 func LoadConfig() {
@@ -61,7 +65,7 @@ func SendDiscordAlert(msg string, webhookURL string) error {
 	payload := map[string]string{"content": msg}
 	body, _ := json.Marshal(payload)
 
-	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	resp, err := alertHTTPClient.Post(webhookURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		return fmt.Errorf("error sending Discord alert: %w", err)
 	}
@@ -74,11 +78,10 @@ func SendDiscordAlert(msg string, webhookURL string) error {
 }
 
 func SendSlackAlert(msg string, webhookURL string) error {
-
 	payload := map[string]string{"text": msg}
 	body, _ := json.Marshal(payload)
 
-	resp, err := http.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	resp, err := alertHTTPClient.Post(webhookURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("Erreur sending Slack alert : %v", err)
 		return nil

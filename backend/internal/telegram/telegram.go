@@ -16,6 +16,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var telegramHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
 //	type chat struct {
 //		ID int64 `json:"id"`
 //	}
@@ -34,10 +36,16 @@ type message struct {
 	Text      string     `json:"text"`
 	Entities  []tgEntity `json:"entities"`
 }
+type callbackQuery struct {
+	ID      string   `json:"id"`
+	Message *message `json:"message,omitempty"`
+	Data    string   `json:"data"`
+}
 type update struct {
-	UpdateID    int      `json:"update_id"`
-	Message     *message `json:"message,omitempty"`
-	ChannelPost *message `json:"channel_post,omitempty"`
+	UpdateID      int            `json:"update_id"`
+	Message       *message       `json:"message,omitempty"`
+	ChannelPost   *message       `json:"channel_post,omitempty"`
+	CallbackQuery *callbackQuery `json:"callback_query,omitempty"`
 }
 type updatesResp struct {
 	Ok     bool     `json:"ok"`
@@ -47,6 +55,15 @@ type tgEntity struct {
 	Type   string `json:"type"`   // "bot_command"
 	Offset int    `json:"offset"` // position dans msg.Text
 	Length int    `json:"length"`
+}
+
+type InlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data"`
+}
+
+type InlineKeyboardMarkup struct {
+	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
 }
 
 func SendMessageTelegram(botToken string, chatID int64, text string) error {
@@ -70,8 +87,8 @@ func SendMessageTelegram(botToken string, chatID int64, text string) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+
+	resp, err := telegramHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("do request: %w", err)
 	}
@@ -90,6 +107,115 @@ func SendMessageTelegram(botToken string, chatID int64, text string) error {
 	return nil
 }
 
+func SendMessageTelegramWithMarkup(botToken string, chatID int64, text string, markup *InlineKeyboardMarkup) error {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
+
+	body := map[string]any{
+		"chat_id":                  chatID,
+		"text":                     text,
+		"parse_mode":               "HTML",
+		"disable_web_page_preview": true,
+	}
+	if markup != nil {
+		body["reply_markup"] = markup
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+
+	resp, err := telegramHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var res struct {
+		Ok          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&res)
+	if resp.StatusCode/100 != 2 || !res.Ok {
+		return fmt.Errorf("telegram http %d: %s", resp.StatusCode, res.Description)
+	}
+	return nil
+}
+
+func EditMessageTelegramWithMarkup(botToken string, chatID int64, messageID int, text string, markup *InlineKeyboardMarkup) error {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/editMessageText", botToken)
+
+	body := map[string]any{
+		"chat_id":                  chatID,
+		"message_id":               messageID,
+		"text":                     text,
+		"parse_mode":               "HTML",
+		"disable_web_page_preview": true,
+	}
+	if markup != nil {
+		body["reply_markup"] = markup
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+
+	resp, err := telegramHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var res struct {
+		Ok          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&res)
+	if resp.StatusCode/100 != 2 || !res.Ok {
+		return fmt.Errorf("telegram http %d: %s", resp.StatusCode, res.Description)
+	}
+	return nil
+}
+
+func AnswerCallbackQuery(botToken, callbackID string) error {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/answerCallbackQuery", botToken)
+	body := map[string]any{
+		"callback_query_id": callbackID,
+	}
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+
+	resp, err := telegramHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
 func MsgTelegram(Msg string, Token, TypeChatid string, db *gorm.DB) (err error) {
 
 	if Token == "" {
@@ -98,12 +224,11 @@ func MsgTelegram(Msg string, Token, TypeChatid string, db *gorm.DB) (err error) 
 
 	ids, err := database.GetAllChatIDs(db, TypeChatid)
 	if err != nil {
-		panic(err)
+		log.Printf("❌ GetAllChatIDs failed: %v", err)
+		return err
 	}
-	fmt.Println("chat_ids:", ids)
 
 	for _, chatID := range ids {
-		fmt.Println("Send to chat:", chatID)
 
 		err := SendMessageTelegram(Token, chatID, Msg)
 		if err != nil {
@@ -123,9 +248,9 @@ func MsgTelegramAlert(Msg string, addr, Token, TypeChatid string, db *gorm.DB) (
 
 	ids, err := database.GetAllChatIDs(db, TypeChatid)
 	if err != nil {
-		panic(err)
+		log.Printf("❌ GetAllChatIDs failed: %v", err)
+		return err
 	}
-	fmt.Println("chat_ids:", ids)
 
 	for _, chatID := range ids {
 		// check sub
@@ -180,7 +305,7 @@ func extractCommand(msg *message) (cmd, args string, ok bool) {
 // - token: ton bot token
 // - stopCtx: to shut down properly (SIGINT/SIGTERM)
 
-func StartCommandLoop(stopCtx context.Context, token string, handlers map[string]func(int64, string), TypeChatid string, db *gorm.DB) error {
+func StartCommandLoop(stopCtx context.Context, token string, handlers map[string]func(int64, string), callbackHandler func(int64, int, string), TypeChatid string, db *gorm.DB) error {
 	base := "https://api.telegram.org/bot" + url.PathEscape(token) + "/getUpdates"
 	offset := 0
 	httpClient := &http.Client{Timeout: 50 * time.Second}
@@ -218,23 +343,43 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 			if up.UpdateID >= offset {
 				offset = up.UpdateID + 1
 			}
+			if up.CallbackQuery != nil {
+				if up.CallbackQuery.Message == nil || up.CallbackQuery.Message.Chat.ID == 0 {
+					continue
+				}
+				_ = AnswerCallbackQuery(token, up.CallbackQuery.ID)
+				if callbackHandler != nil {
+					go callbackHandler(
+						up.CallbackQuery.Message.Chat.ID,
+						up.CallbackQuery.Message.MessageID,
+						up.CallbackQuery.Data,
+					)
+				}
+				continue
+			}
 			if up.Message == nil || up.Message.Chat.ID == 0 {
 				continue
 			}
-			// For save Chat ID into db
-			insert, err := database.InsertChatID(db, up.Message.Chat.ID, TypeChatid)
-			if err != nil {
-				return fmt.Errorf("error  insert chatid to db %w", err)
-			}
-			if insert && TypeChatid == "govdao" {
-				//for send ultimate Govdao
-				log.Println("Send ultimate govdao telegram")
-				govdaolist, err := database.GetLastGovDaoInfo(db)
+			// For save Chat ID into db (fire-and-forget, idempotent upsert)
+			chatIDToInsert := up.Message.Chat.ID
+			go func() {
+				insert, err := database.InsertChatID(db, chatIDToInsert, TypeChatid)
 				if err != nil {
-					return fmt.Errorf("error get lastid govdao%s ", err)
-
+					log.Printf("⚠️ InsertChatID failed for chat_id=%d: %v", chatIDToInsert, err)
+					return
 				}
-				SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, up.Message.Chat.ID)
+				if insert && TypeChatid == "govdao" {
+					log.Println("Send ultimate govdao telegram")
+					govdaolist, err := database.GetLastGovDaoInfo(db)
+					if err != nil {
+						log.Printf("error get lastid govdao: %s", err)
+						return
+					}
+					SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, chatIDToInsert)
+				}
+			}()
+			if HandleSearchInput(token, db, TypeChatid, up.Message.Chat.ID, up.Message.Text) {
+				continue
 			}
 			//========================
 			cmd, args, ok := extractCommand(up.Message)

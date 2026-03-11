@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
@@ -14,13 +15,22 @@ import (
 )
 
 var MonikerMutex sync.RWMutex
-var lastRPCErrorAlert time.Time //anti spam for error RPC
+
+// timeMu protects lastRPCErrorAlert and lastProgressTime since time.Time is not
+// atomic-safe and must be guarded by a mutex.
+var timeMu sync.Mutex
+var lastRPCErrorAlert time.Time // anti spam for error RPC
+var lastProgressTime = time.Now()
+
 var (
-	lastProgressHeight int64 = -1
-	lastProgressTime         = time.Now()
-	alertSent          bool
-	restoredNotified   bool
+	lastProgressHeight atomic.Int64 // -1 means "not yet set"
+	alertSent          atomic.Bool
+	restoredNotified   atomic.Bool
 )
+
+func init() {
+	lastProgressHeight.Store(-1)
+}
 
 type BlockParticipation struct {
 	Height     int64
@@ -66,18 +76,33 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 			if err != nil {
 				log.Printf("Error retrieving last block: %v", err)
 
-				if time.Since(lastRPCErrorAlert) > 10*time.Minute {
+				timeMu.Lock()
+			timeMu.Lock()
+			sinceRPCErr := time.Since(lastRPCErrorAlert)
+			timeMu.Unlock()
+			timeMu.Unlock()
+			if sinceRPCErr > 10*time.Minute {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
 					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
 					log.Println(msg)
-					lastRPCErrorAlert = time.Now()
+					timeMu.Lock()
+				timeMu.Lock()
+				lastRPCErrorAlert = time.Now()
+				timeMu.Unlock()
+				timeMu.Unlock()
 				}
 				time.Sleep(10 * time.Second)
 				continue
 			}
 			// Stagnation detection
-			if lastProgressHeight != -1 && latest == lastProgressHeight {
-				if !alertSent && time.Since(lastProgressTime) > 2*time.Minute {
+			lph := lastProgressHeight.Load()
+			timeMu.Lock()
+			timeMu.Lock()
+			lpt := lastProgressTime
+			timeMu.Unlock()
+			timeMu.Unlock()
+			if lph != -1 && latest == lph {
+				if !alertSent.Load() && time.Since(lpt) > 2*time.Minute {
 
 					blockTime, err := database.GetTimeOfBlock(db, latest)
 					if err != nil {
@@ -106,24 +131,32 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 						database.InsertAlertlog(db, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg)
 					}
 
-					alertSent = true
-					restoredNotified = false
+					alertSent.Store(true)
+					restoredNotified.Store(false)
+					timeMu.Lock()
 					lastProgressTime = time.Now()
+					timeMu.Unlock()
 				}
 			} else {
-				lastProgressHeight = latest
+				lastProgressHeight.Store(latest)
+				timeMu.Lock()
 				lastProgressTime = time.Now()
+				timeMu.Unlock()
 
-				if alertSent && !restoredNotified {
+				if alertSent.Load() && !restoredNotified.Load() {
 					msg := "✅ Activity Restored: Gno.land is back to normal."
 					internal.SendInfoValidator(msg, "INFO", db)
 					database.InsertAlertlog(db, "all", "all", "RESOLVED", latest, latest, false, time.Now(), msg)
-					restoredNotified = true
-					alertSent = false
+					restoredNotified.Store(true)
+					alertSent.Store(false)
 				}
 			}
 
+			timeMu.Lock()
+			timeMu.Lock()
 			lastRPCErrorAlert = time.Time{}
+			timeMu.Unlock()
+			timeMu.Unlock()
 
 			if latest <= currentHeight {
 				time.Sleep(3 * time.Second)

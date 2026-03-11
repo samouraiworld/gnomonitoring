@@ -13,3 +13,7 @@ Validator/secrets/*
 **.tar.gz
 **config_docker.yaml
 **deploy-preprod.sh
+.claude/**
+CLAUDE.md
+CODEX.md
+.claudeignore

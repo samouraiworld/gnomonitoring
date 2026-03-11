@@ -162,6 +162,9 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	_, _ = sqlDB.Exec("PRAGMA synchronous = NORMAL;")
 	_, _ = sqlDB.Exec("PRAGMA temp_store = MEMORY;")
+	_, _ = sqlDB.Exec("PRAGMA cache_size = -64000;")   // 64 MB page cache
+	_, _ = sqlDB.Exec("PRAGMA mmap_size = 268435456;") // 256 MB memory-mapped I/O
+	_, _ = sqlDB.Exec("PRAGMA busy_timeout = 5000;")   // 5s retry on SQLITE_BUSY
 
 	err = db.AutoMigrate(
 		&User{}, &AlertContact{}, &WebhookValidator{},
@@ -173,6 +176,13 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	}
 
 	CreateMissingBlocksView(db)
+
+	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_block_height ON daily_participations(block_height);")
+	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_date ON daily_participations(date);")
+	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr ON daily_participations(addr);")
+	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr_participated ON daily_participations(addr, participated);")
+	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr_date ON daily_participations(addr, date);")
+	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_tvs_addr_chatid ON telegram_validator_subs(addr, chat_id);")
 
 	return db, nil
 }

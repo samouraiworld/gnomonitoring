@@ -7,40 +7,67 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
 
+const (
+	periodDefault = "current_month"
+	limitDefault  = 10
+	limitMax      = 50
+	sortDefault   = "desc"
+	searchTTL     = 2 * time.Minute
+)
+
+const cacheTTL = 45 * time.Second
+
+type cacheEntry struct {
+	data      any
+	expiresAt time.Time
+}
+
+var (
+	metricsCache   = map[string]cacheEntry{}
+	metricsCacheMu sync.Mutex
+)
+
+func getCached(key string) (any, bool) {
+	metricsCacheMu.Lock()
+	defer metricsCacheMu.Unlock()
+	e, ok := metricsCache[key]
+	if !ok || time.Now().After(e.expiresAt) {
+		return nil, false
+	}
+	return e.data, true
+}
+
+func setCached(key string, data any, ttl time.Duration) {
+	metricsCacheMu.Lock()
+	defer metricsCacheMu.Unlock()
+	metricsCache[key] = cacheEntry{data: data, expiresAt: time.Now().Add(ttl)}
+}
+
 // BuildTelegramHandlers retourne la map de handlers
 func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, string) {
-	period_default := "current_month"
-
-	limit_default := int64(10)
+	startSearchStateCleanup()
 	return map[string]func(int64, string){
 
 		"/status": func(chatID int64, args string) {
 			params := parseParams(args)
 			period := params["period"]
 			if period == "" {
-				period = period_default
+				period = periodDefault
 			}
 
-			limit, err := strconv.ParseInt(params["limit"], 10, 64)
-			if err != nil {
-				log.Printf("error conversion limit value : %v", err)
-				limit = limit_default
-			}
-			limitint := int(limit)
+			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
+			page := parseIntWithDefault(params["page"], 1, "page")
+			filter := params["filter"]
+			sortOrder := normalizeSort(params["sort"])
 
-			msg, err := formatParticipationRAte(db, period, limitint)
-			if err != nil {
-				log.Printf("error get particpate Rate%s", err)
-			}
-
-			if err := SendMessageTelegram(token, chatID, msg); err != nil {
-				log.Printf("send %s failed: %v", "/status", err)
-			}
+			sendPaginatedMessage(token, chatID, db, "status", period, filter, page, limit, sortOrder)
 
 		},
 		"/subscribe": func(chatID int64, args string) {
@@ -48,60 +75,35 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 		},
 		"/uptime": func(chatID int64, args string) {
 			params := parseParams(args)
-			limit, err := strconv.ParseInt(params["limit"], 10, 64)
-			if err != nil {
-				log.Printf("error conversion limit: %v", err)
-				limit = limit_default
-			}
-			limitint := int(limit)
+			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
+			page := parseIntWithDefault(params["page"], 1, "page")
+			filter := params["filter"]
+			sortOrder := normalizeSort(params["sort"])
 
-			msg, err := formatUptime(db, limitint)
-			if err != nil {
-				log.Printf("error get uptime metrics: %s", err)
-			}
-			if err := SendMessageTelegram(token, chatID, msg); err != nil {
-				log.Printf("send %s failed: %v", "/uptime", err)
-			}
+			sendPaginatedMessage(token, chatID, db, "uptime", "", filter, page, limit, sortOrder)
 
 		}, "/operation_time": func(chatID int64, args string) {
 			params := parseParams(args)
-			limit, err := strconv.ParseInt(params["limit"], 10, 64)
-			if err != nil {
-				log.Printf("error conversion limit: %v", err)
-				limit = limit_default
-			}
-			limitint := int(limit)
+			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
+			page := parseIntWithDefault(params["page"], 1, "page")
+			filter := params["filter"]
+			sortOrder := normalizeSort(params["sort"])
 
-			msg, err := formatOperationTime(db, limitint)
-			if err != nil {
-				log.Printf("error get uptime metrics: %s", err)
-			}
-			if err := SendMessageTelegram(token, chatID, msg); err != nil {
-				log.Printf("send %s failed: %v", "/uptime", err)
-			}
+			sendPaginatedMessage(token, chatID, db, "operation_time", "", filter, page, limit, sortOrder)
 
 		},
 		"/tx_contrib": func(chatID int64, args string) {
 			params := parseParams(args)
 			period := params["period"]
 			if period == "" {
-				period = period_default
+				period = periodDefault
 			}
-			limit, err := strconv.ParseInt(params["limit"], 10, 64)
-			if err != nil {
-				log.Printf("error conversion limit: %v", err)
-				limit = limit_default
-			}
-			limitint := int(limit)
+			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
+			page := parseIntWithDefault(params["page"], 1, "page")
+			filter := params["filter"]
+			sortOrder := normalizeSort(params["sort"])
 
-			msg, err := FormatTxcontrib(db, period, limitint)
-			if err != nil {
-				log.Printf("error get tx_contribe%s", err)
-			}
-
-			if err := SendMessageTelegram(token, chatID, msg); err != nil {
-				log.Printf("send %s failed: %v", "/tx_contrib", err)
-			}
+			sendPaginatedMessage(token, chatID, db, "tx_contrib", period, filter, page, limit, sortOrder)
 
 		},
 		"/missing": func(chatID int64, args string) {
@@ -109,23 +111,14 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 
 			period := params["period"]
 			if period == "" {
-				period = period_default
+				period = periodDefault
 			}
-			limit, err := strconv.ParseInt(params["limit"], 10, 64)
-			if err != nil {
-				log.Printf("error conversion limit: %v", err)
-				limit = limit_default
-			}
-			limitint := int(limit)
+			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
+			page := parseIntWithDefault(params["page"], 1, "page")
+			filter := params["filter"]
+			sortOrder := normalizeSort(params["sort"])
 
-			msg, err := formatMissing(db, period, limitint)
-			if err != nil {
-				log.Printf("error get missingg block%s", err)
-			}
-
-			if err := SendMessageTelegram(token, chatID, msg); err != nil {
-				log.Printf("send %s failed: %v", "/missing", err)
-			}
+			sendPaginatedMessage(token, chatID, db, "missing", period, filter, page, limit, sortOrder)
 
 		},
 		"/report": func(chatID int64, args string) {
@@ -159,28 +152,36 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 	}
 }
 
-func formatParticipationRAte(db *gorm.DB, period string, limit int) (msg string, err error) {
-	rates, err := database.GetCurrentPeriodParticipationRate(db, period)
-	if err != nil {
-		return "", fmt.Errorf("failed to get participation rate: %v", err)
-
+func formatParticipationRAte(db *gorm.DB, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
+	var rates []database.ParticipationRate
+	cacheKey := "status:" + period
+	if cached, ok := getCached(cacheKey); ok {
+		rates = cached.([]database.ParticipationRate)
+	} else {
+		var fetchErr error
+		rates, fetchErr = database.GetCurrentPeriodParticipationRate(db, period)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get participation rate: %v", fetchErr)
+		}
+		setCached(cacheKey, rates, cacheTTL)
 	}
+	rates = filterParticipationRates(rates, filter)
 	if len(rates) == 0 {
-		return fmt.Sprintf("📊 <b>Participation rates — %s</b>\nNo data.", html.EscapeString(period)), nil
+		return fmt.Sprintf("📊 <b>Participation rates — %s</b>\nNo data.", html.EscapeString(period)), 1, 1, nil
 	}
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("📊 <b>Participation rates for %s</b>\n\n", period))
 
-	// limit
-	if len(rates) < limit {
-		limit = len(rates)
-	}
+	// Sort by participation rate
+	sort.Slice(rates, func(i, j int) bool {
+		return compareFloat(rates[i].ParticipationRate, rates[j].ParticipationRate, sortOrder)
+	})
 
-	for i, r := range rates {
+	pageOut, start, end, totalPages := paginate(len(rates), page, limit)
+	builder.WriteString(pageInfoLine(pageOut, totalPages))
+	builder.WriteString(filterInfoLine(filter))
 
-		if i >= limit {
-			break
-		}
+	for _, r := range rates[start:end] {
 
 		emoji := "🟢"
 		if r.ParticipationRate < 95.0 {
@@ -201,34 +202,37 @@ func formatParticipationRAte(db *gorm.DB, period string, limit int) (msg string,
 
 	}
 
-	return builder.String(), nil
+	return builder.String(), pageOut, totalPages, nil
 }
-func formatUptime(db *gorm.DB, limit int) (msg string, err error) {
+func formatUptime(db *gorm.DB, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
 
-	results, err := database.UptimeMetricsaddr(db)
-	if err != nil {
-		return "", fmt.Errorf("failed to get uptime metrics: %v", err)
-
+	var results []database.UptimeMetrics
+	if cached, ok := getCached("uptime"); ok {
+		results = cached.([]database.UptimeMetrics)
+	} else {
+		var fetchErr error
+		results, fetchErr = database.UptimeMetricsaddr(db)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get uptime metrics: %v", fetchErr)
+		}
+		setCached("uptime", results, cacheTTL)
 	}
+	results = filterUptimeMetrics(results, filter)
 	if len(results) == 0 {
-		return "🕘 <b>Update Metrics</b>\nNo data.", nil
+		return "🕘 <b>Uptime metrics</b>\nNo data.", 1, 1, nil
 	}
 
-	// Sort by  (desc)
-	sort.Slice(results, func(i, j int) bool { return results[i].Uptime > results[j].Uptime })
+	// Sort by uptime
+	sort.Slice(results, func(i, j int) bool { return compareFloat(results[i].Uptime, results[j].Uptime, sortOrder) })
 
 	var builder strings.Builder
 	builder.WriteString("🕘 <b>Uptime metrics </b>\n\n")
 
-	// limit
-	if len(results) < limit {
-		limit = len(results)
-	}
+	pageOut, start, end, totalPages := paginate(len(results), page, limit)
+	builder.WriteString(pageInfoLine(pageOut, totalPages))
+	builder.WriteString(filterInfoLine(filter))
 
-	for i, r := range results {
-		if i >= limit {
-			break
-		}
+	for _, r := range results[start:end] {
 
 		emoji := "🟢"
 		if r.Uptime < 95.0 {
@@ -250,34 +254,37 @@ func formatUptime(db *gorm.DB, limit int) (msg string, err error) {
 
 	}
 
-	return builder.String(), err
+	return builder.String(), pageOut, totalPages, err
 }
-func formatOperationTime(db *gorm.DB, limit int) (msg string, err error) {
+func formatOperationTime(db *gorm.DB, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
 
-	results, err := database.OperationTimeMetricsaddr(db)
-	if err != nil {
-		return "", fmt.Errorf("failed to get operation time  metrics: %v", err)
-
+	var results []database.OperationTimeMetrics
+	if cached, ok := getCached("operation_time"); ok {
+		results = cached.([]database.OperationTimeMetrics)
+	} else {
+		var fetchErr error
+		results, fetchErr = database.OperationTimeMetricsaddr(db)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get operation time metrics: %v", fetchErr)
+		}
+		setCached("operation_time", results, cacheTTL)
 	}
+	results = filterOperationTimeMetrics(results, filter)
 	if len(results) == 0 {
-		return "🕘 <b>Update Metrics</b>\nNo data.", nil
+		return "🕘 <b>Operation time metrics</b>\nNo data.", 1, 1, nil
 	}
 
 	// Sort by  (desc)
 	sort.Slice(results, func(i, j int) bool { return results[i].DaysDiff > results[j].DaysDiff })
 
 	var builder strings.Builder
-	builder.WriteString("🕘 <b>Uptime metrics </b>\n\n")
+	builder.WriteString("🕘 <b>Operation time metrics </b>\n\n")
 
-	// limit
-	if len(results) < limit {
-		limit = len(results)
-	}
+	pageOut, start, end, totalPages := paginate(len(results), page, limit)
+	builder.WriteString(pageInfoLine(pageOut, totalPages))
+	builder.WriteString(filterInfoLine(filter))
 
-	for i, r := range results {
-		if i >= limit {
-			break
-		}
+	for _, r := range results[start:end] {
 
 		builder.WriteString(fmt.Sprintf(
 			" <b> %s </b> \n addr: %s \n Operation Time : %.2f days\n\n",
@@ -286,33 +293,37 @@ func formatOperationTime(db *gorm.DB, limit int) (msg string, err error) {
 
 	}
 
-	return builder.String(), err
+	return builder.String(), pageOut, totalPages, err
 }
-func FormatTxcontrib(db *gorm.DB, period string, limit int) (msg string, err error) {
-	txcontrib, err := database.TxContrib(db, period)
-	if err != nil {
-		return "", fmt.Errorf("failed to get tx_contrib: %v", err)
-
+func FormatTxcontrib(db *gorm.DB, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
+	var txcontrib []database.TxContribMetrics
+	cacheKey := "tx_contrib:" + period
+	if cached, ok := getCached(cacheKey); ok {
+		txcontrib = cached.([]database.TxContribMetrics)
+	} else {
+		var fetchErr error
+		txcontrib, fetchErr = database.TxContrib(db, period)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get tx_contrib: %v", fetchErr)
+		}
+		setCached(cacheKey, txcontrib, cacheTTL)
 	}
+	txcontrib = filterTxContrib(txcontrib, filter)
 	if len(txcontrib) == 0 {
-		return fmt.Sprintf("⚙️ <b>Tx Contrib — %s</b>\nNo data.", html.EscapeString(period)), nil
+		return fmt.Sprintf("⚙️ <b>Tx Contrib — %s</b>\nNo data.", html.EscapeString(period)), 1, 1, nil
 	}
 
-	// Sort by  (desc)
-	sort.Slice(txcontrib, func(i, j int) bool { return txcontrib[i].TxContrib > txcontrib[j].TxContrib })
+	// Sort by contribution
+	sort.Slice(txcontrib, func(i, j int) bool { return compareFloat(txcontrib[i].TxContrib, txcontrib[j].TxContrib, sortOrder) })
 
 	var builder strings.Builder
 	builder.WriteString(fmt.Sprintf("⚙️ <b>Tx Contrib metrics for %s</b>\n\n", period))
 
-	// limit
-	if len(txcontrib) < limit {
-		limit = len(txcontrib)
-	}
+	pageOut, start, end, totalPages := paginate(len(txcontrib), page, limit)
+	builder.WriteString(pageInfoLine(pageOut, totalPages))
+	builder.WriteString(filterInfoLine(filter))
 
-	for i, r := range txcontrib {
-		if i >= limit {
-			break
-		}
+	for _, r := range txcontrib[start:end] {
 
 		builder.WriteString(fmt.Sprintf(
 			"<b> %s </b> \n addr %s  \n contrib : %.2f%%\n\n",
@@ -321,16 +332,25 @@ func FormatTxcontrib(db *gorm.DB, period string, limit int) (msg string, err err
 
 	}
 
-	return builder.String(), nil
+	return builder.String(), pageOut, totalPages, nil
 }
 
-func formatMissing(db *gorm.DB, period string, limit int) (string, error) {
-	rows, err := database.MissingBlock(db, period)
-	if err != nil {
-		return "", fmt.Errorf("failed to get missing block: %w", err)
+func formatMissing(db *gorm.DB, period string, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
+	var rows []database.MissingBlockMetrics
+	cacheKey := "missing:" + period
+	if cached, ok := getCached(cacheKey); ok {
+		rows = cached.([]database.MissingBlockMetrics)
+	} else {
+		var fetchErr error
+		rows, fetchErr = database.MissingBlock(db, period)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get missing block: %w", fetchErr)
+		}
+		setCached(cacheKey, rows, cacheTTL)
 	}
+	rows = filterMissing(rows, filter)
 	if len(rows) == 0 {
-		return fmt.Sprintf("🕵️ <b>Missing blocks — %s</b>\nNo data.", html.EscapeString(period)), nil
+		return fmt.Sprintf("🕵️ <b>Missing blocks — %s</b>\nNo data.", html.EscapeString(period)), 1, 1, nil
 	}
 
 	// Sort by missed blocks (desc)
@@ -340,15 +360,11 @@ func formatMissing(db *gorm.DB, period string, limit int) (string, error) {
 
 	b.WriteString(fmt.Sprintf("🕵️ <b>Missing Blocks — %s</b>\n\n", html.EscapeString(period)))
 
-	// limit
-	if len(rows) < limit {
-		limit = len(rows)
-	}
+	pageOut, start, end, totalPages := paginate(len(rows), page, limit)
+	b.WriteString(pageInfoLine(pageOut, totalPages))
+	b.WriteString(filterInfoLine(filter))
 
-	for i, r := range rows {
-		if i >= limit {
-			break
-		}
+	for i, r := range rows[start:end] {
 		emoji := "🟢"
 		if r.MissingBlock > 50 {
 			emoji = "🔴"
@@ -360,10 +376,10 @@ func formatMissing(db *gorm.DB, period string, limit int) (string, error) {
 
 		b.WriteString(fmt.Sprintf(
 			"%d. %s <b>%s</b>\n<code>%s</code>\nMissing: <b>%d blocks</b> \n\n",
-			i+1, emoji, html.EscapeString(r.Moniker), r.Addr, r.MissingBlock,
+			start+i+1, emoji, html.EscapeString(r.Moniker), r.Addr, r.MissingBlock,
 		))
 	}
-	return b.String(), nil
+	return b.String(), pageOut, totalPages, nil
 }
 func reportActivate(db *gorm.DB, chatID int64, isActivate string) (string, error) {
 	if isActivate == "" {
@@ -518,6 +534,584 @@ func subscribeUsage() string {
 /subscribe off all — disable all`
 }
 
+func BuildTelegramCallbackHandler(token string, db *gorm.DB) func(int64, int, string) {
+	return func(chatID int64, messageID int, data string) {
+		cmdKey, page, limit, period, filter, sortOrder, action, ok := parseCallbackData(data)
+		if !ok {
+			return
+		}
+		if action == "search" {
+			setSearchState(chatID, SearchState{
+				BotType:   "validator",
+				Cmd:       cmdKey,
+				Page:      1,
+				Limit:     limit,
+				Period:    period,
+				SortOrder: sortOrder,
+				ExpiresAt: time.Now().Add(searchTTL),
+			})
+			_ = SendMessageTelegram(token, chatID, "🔎 Tapez un moniker ou une adresse (ou /cancel).")
+			return
+		}
+
+		msg, markup, err := buildPaginatedResponse(db, cmdKey, period, filter, page, limit, sortOrder)
+		if err != nil {
+			log.Printf("error build paginated response (%s): %v", cmdKey, err)
+			return
+		}
+		if err := EditMessageTelegramWithMarkup(token, chatID, messageID, msg, markup); err != nil {
+			log.Printf("edit message failed (%s): %v", cmdKey, err)
+		}
+	}
+}
+
+func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, cmdKey, period, filter string, page, limit int, sortOrder string) {
+	msg, markup, err := buildPaginatedResponse(db, cmdKey, period, filter, page, limit, sortOrder)
+	if err != nil {
+		log.Printf("error build paginated response (%s): %v", cmdKey, err)
+		_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch data.")
+		return
+	}
+	if err := SendMessageTelegramWithMarkup(token, chatID, msg, markup); err != nil {
+		log.Printf("send %s failed: %v", cmdKey, err)
+	}
+}
+
+func buildPaginatedResponse(db *gorm.DB, cmdKey, period, filter string, page, limit int, sortOrder string) (string, *InlineKeyboardMarkup, error) {
+	limit = clampLimit(limit)
+	sortOrder = normalizeSort(sortOrder)
+	switch cmdKey {
+	case "status":
+		if period == "" {
+			period = periodDefault
+		}
+		msg, pageOut, totalPages, err := formatParticipationRAte(db, period, page, limit, filter, sortOrder)
+		if err != nil {
+			return "", nil, err
+		}
+		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
+
+	case "uptime":
+		msg, pageOut, totalPages, err := formatUptime(db, page, limit, filter, sortOrder)
+		if err != nil {
+			return "", nil, err
+		}
+		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, "", filter, sortOrder), nil
+
+	case "operation_time":
+		msg, pageOut, totalPages, err := formatOperationTime(db, page, limit, filter)
+		if err != nil {
+			return "", nil, err
+		}
+		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, "", filter, sortOrder), nil
+
+	case "tx_contrib":
+		if period == "" {
+			period = periodDefault
+		}
+		msg, pageOut, totalPages, err := FormatTxcontrib(db, period, page, limit, filter, sortOrder)
+		if err != nil {
+			return "", nil, err
+		}
+		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
+
+	case "missing":
+		if period == "" {
+			period = periodDefault
+		}
+		msg, pageOut, totalPages, err := formatMissing(db, period, page, limit, filter)
+		if err != nil {
+			return "", nil, err
+		}
+		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
+
+	default:
+		return "", nil, fmt.Errorf("unknown command key: %s", cmdKey)
+	}
+}
+
+func buildPaginationMarkup(cmdKey string, page, totalPages, limit int, period, filter, sortOrder string) *InlineKeyboardMarkup {
+	if totalPages <= 1 {
+		if supportsSearch(cmdKey) || supportsPercentSort(cmdKey) {
+			return buildSecondaryButtons(cmdKey, page, totalPages, limit, period, filter, sortOrder)
+		}
+		return nil
+	}
+	var rows [][]InlineKeyboardButton
+	var row []InlineKeyboardButton
+	if page > 1 {
+		row = append(row, InlineKeyboardButton{
+			Text:         "⬅️ Prev",
+			CallbackData: encodeCallbackData(cmdKey, page-1, limit, period, filter, sortOrder, ""),
+		})
+	}
+	if page < totalPages {
+		row = append(row, InlineKeyboardButton{
+			Text:         "➡️ Next",
+			CallbackData: encodeCallbackData(cmdKey, page+1, limit, period, filter, sortOrder, ""),
+		})
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+	if secondary := buildSecondaryButtons(cmdKey, page, totalPages, limit, period, filter, sortOrder); secondary != nil {
+		rows = append(rows, secondary.InlineKeyboard...)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return &InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+func parseCallbackData(data string) (cmdKey string, page, limit int, period, filter, sortOrder, action string, ok bool) {
+	params := parseCallbackParams(data)
+	cmdKey = codeToCmd(params["c"])
+	if cmdKey == "" {
+		return "", 1, limitDefault, "", "", sortDefault, "", false
+	}
+	page = parseIntWithDefault(params["p"], 1, "page")
+	limit = parseIntWithDefault(params["l"], limitDefault, "limit")
+	period = decodePeriod(params["r"])
+	filter = params["f"]
+	sortOrder = decodeSort(params["s"])
+	action = decodeAction(params["a"])
+	return cmdKey, page, limit, period, filter, sortOrder, action, true
+}
+
+func parseCallbackParams(data string) map[string]string {
+	out := map[string]string{}
+	for _, tok := range strings.Split(data, "&") {
+		kv := strings.SplitN(tok, "=", 2)
+		if len(kv) == 2 {
+			out[kv[0]] = kv[1]
+		}
+	}
+	return out
+}
+
+func encodeCallbackData(cmdKey string, page, limit int, period, filter, sortOrder, action string) string {
+	cmdCode := cmdToCode(cmdKey)
+	if cmdCode == "" {
+		cmdCode = cmdKey
+	}
+	var b strings.Builder
+	b.WriteString("c=")
+	b.WriteString(cmdCode)
+	b.WriteString("&p=")
+	b.WriteString(strconv.Itoa(page))
+	b.WriteString("&l=")
+	b.WriteString(strconv.Itoa(limit))
+	if period != "" {
+		if p := encodePeriod(period); p != "" {
+			b.WriteString("&r=")
+			b.WriteString(p)
+		}
+	}
+	if s := encodeSort(sortOrder); s != "" {
+		b.WriteString("&s=")
+		b.WriteString(s)
+	}
+	if a := encodeAction(action); a != "" {
+		b.WriteString("&a=")
+		b.WriteString(a)
+	}
+	if filter != "" {
+		f := sanitizeCallbackValue(filter, 20)
+		if f != "" {
+			b.WriteString("&f=")
+			b.WriteString(f)
+		}
+	}
+	return b.String()
+}
+
+func buildSecondaryButtons(cmdKey string, page, totalPages, limit int, period, filter, sortOrder string) *InlineKeyboardMarkup {
+	var row []InlineKeyboardButton
+	if supportsPercentSort(cmdKey) {
+		nextSort := toggleSort(sortOrder)
+		row = append(row, InlineKeyboardButton{
+			Text:         "↕️ Sort %",
+			CallbackData: encodeCallbackData(cmdKey, 1, limit, period, filter, nextSort, ""),
+		})
+	}
+	if supportsSearch(cmdKey) {
+		row = append(row, InlineKeyboardButton{
+			Text:         "🔎 Search",
+			CallbackData: encodeCallbackData(cmdKey, page, limit, period, filter, sortOrder, "search"),
+		})
+	}
+	if len(row) == 0 {
+		return nil
+	}
+	return &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{row}}
+}
+
+func supportsPercentSort(cmdKey string) bool {
+	switch cmdKey {
+	case "status", "uptime", "tx_contrib":
+		return true
+	default:
+		return false
+	}
+}
+
+func supportsSearch(cmdKey string) bool {
+	switch cmdKey {
+	case "status", "uptime", "operation_time", "tx_contrib", "missing":
+		return true
+	default:
+		return false
+	}
+}
+
+func cmdToCode(cmdKey string) string {
+	switch cmdKey {
+	case "status":
+		return "st"
+	case "uptime":
+		return "up"
+	case "operation_time":
+		return "op"
+	case "tx_contrib":
+		return "tx"
+	case "missing":
+		return "ms"
+	default:
+		return ""
+	}
+}
+
+func codeToCmd(code string) string {
+	switch code {
+	case "st", "status":
+		return "status"
+	case "up", "uptime":
+		return "uptime"
+	case "op", "operation_time":
+		return "operation_time"
+	case "tx", "tx_contrib":
+		return "tx_contrib"
+	case "ms", "missing":
+		return "missing"
+	default:
+		return ""
+	}
+}
+
+func encodePeriod(period string) string {
+	switch period {
+	case "current_week":
+		return "cw"
+	case "current_month":
+		return "cm"
+	case "current_year":
+		return "cy"
+	case "all_time":
+		return "all"
+	default:
+		return ""
+	}
+}
+
+func decodePeriod(code string) string {
+	switch code {
+	case "cw":
+		return "current_week"
+	case "cm":
+		return "current_month"
+	case "cy":
+		return "current_year"
+	case "all":
+		return "all_time"
+	default:
+		return ""
+	}
+}
+
+func sanitizeCallbackValue(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "&", "")
+	s = strings.ReplaceAll(s, "=", "")
+	return truncateRunes(s, maxLen)
+}
+
+func truncateRunes(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == maxLen {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
+type SearchState struct {
+	BotType   string
+	Cmd       string
+	Page      int
+	Limit     int
+	Period    string
+	SortOrder string
+	ExpiresAt time.Time
+}
+
+var searchStateMu sync.Mutex
+var searchState = map[int64]SearchState{}
+
+func setSearchState(chatID int64, state SearchState) {
+	searchStateMu.Lock()
+	defer searchStateMu.Unlock()
+	searchState[chatID] = state
+}
+
+func startSearchStateCleanup() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			searchStateMu.Lock()
+			for chatID, s := range searchState {
+				if time.Now().After(s.ExpiresAt) {
+					delete(searchState, chatID)
+				}
+			}
+			searchStateMu.Unlock()
+		}
+	}()
+}
+
+func HandleSearchInput(token string, db *gorm.DB, botType string, chatID int64, text string) bool {
+	searchStateMu.Lock()
+	state, ok := searchState[chatID]
+	if !ok {
+		searchStateMu.Unlock()
+		return false
+	}
+	if state.BotType != botType {
+		searchStateMu.Unlock()
+		return false
+	}
+	if time.Now().After(state.ExpiresAt) {
+		delete(searchState, chatID)
+		searchStateMu.Unlock()
+		return false
+	}
+	delete(searchState, chatID)
+	searchStateMu.Unlock()
+
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return true
+	}
+	if strings.EqualFold(t, "/cancel") {
+		_ = SendMessageTelegram(token, chatID, "❌ Search annulée.")
+		return true
+	}
+	if strings.HasPrefix(t, "/") {
+		return false
+	}
+	sendPaginatedMessage(token, chatID, db, state.Cmd, state.Period, t, 1, state.Limit, state.SortOrder)
+	return true
+}
+
+func parseIntWithDefault(v string, def int, name string) int {
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		log.Printf("error conversion %s: %v", name, err)
+		return def
+	}
+	return n
+}
+
+func clampLimit(limit int) int {
+	if limit <= 0 {
+		return limitDefault
+	}
+	if limit > limitMax {
+		return limitMax
+	}
+	return limit
+}
+
+func normalizeSort(sortOrder string) string {
+	switch strings.ToLower(sortOrder) {
+	case "asc", "a":
+		return "asc"
+	case "desc", "d", "":
+		return sortDefault
+	default:
+		return sortDefault
+	}
+}
+
+func toggleSort(sortOrder string) string {
+	if normalizeSort(sortOrder) == "asc" {
+		return "desc"
+	}
+	return "asc"
+}
+
+func encodeSort(sortOrder string) string {
+	switch normalizeSort(sortOrder) {
+	case "asc":
+		return "a"
+	case "desc":
+		return "d"
+	default:
+		return ""
+	}
+}
+
+func decodeSort(code string) string {
+	switch strings.ToLower(code) {
+	case "a", "asc":
+		return "asc"
+	case "d", "desc":
+		return "desc"
+	default:
+		return sortDefault
+	}
+}
+
+func encodeAction(action string) string {
+	switch action {
+	case "search":
+		return "s"
+	default:
+		return ""
+	}
+}
+
+func decodeAction(code string) string {
+	switch strings.ToLower(code) {
+	case "s", "search":
+		return "search"
+	default:
+		return ""
+	}
+}
+
+func compareFloat(a, b float64, sortOrder string) bool {
+	if normalizeSort(sortOrder) == "asc" {
+		return a < b
+	}
+	return a > b
+}
+
+func paginate(total, page, limit int) (pageOut, start, end, totalPages int) {
+	limit = clampLimit(limit)
+	if page <= 0 {
+		page = 1
+	}
+	if total <= 0 {
+		return 1, 0, 0, 1
+	}
+	totalPages = (total + limit - 1) / limit
+	if page > totalPages {
+		page = totalPages
+	}
+	start = (page - 1) * limit
+	end = start + limit
+	if end > total {
+		end = total
+	}
+	return page, start, end, totalPages
+}
+
+func pageInfoLine(page, totalPages int) string {
+	if totalPages <= 1 {
+		return ""
+	}
+	return fmt.Sprintf("Page %d/%d\n\n", page, totalPages)
+}
+
+func filterInfoLine(filter string) string {
+	if filter == "" {
+		return ""
+	}
+	return fmt.Sprintf("Filter: <code>%s</code>\n\n", html.EscapeString(filter))
+}
+
+func matchesFilter(filter, moniker, addr string) bool {
+	if filter == "" {
+		return true
+	}
+	f := strings.ToLower(filter)
+	return strings.Contains(strings.ToLower(moniker), f) || strings.Contains(strings.ToLower(addr), f)
+}
+
+func filterParticipationRates(in []database.ParticipationRate, filter string) []database.ParticipationRate {
+	if filter == "" {
+		return in
+	}
+	out := make([]database.ParticipationRate, 0, len(in))
+	for _, r := range in {
+		if matchesFilter(filter, r.Moniker, r.Addr) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func filterUptimeMetrics(in []database.UptimeMetrics, filter string) []database.UptimeMetrics {
+	if filter == "" {
+		return in
+	}
+	out := make([]database.UptimeMetrics, 0, len(in))
+	for _, r := range in {
+		if matchesFilter(filter, r.Moniker, r.Addr) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func filterOperationTimeMetrics(in []database.OperationTimeMetrics, filter string) []database.OperationTimeMetrics {
+	if filter == "" {
+		return in
+	}
+	out := make([]database.OperationTimeMetrics, 0, len(in))
+	for _, r := range in {
+		if matchesFilter(filter, r.Moniker, r.Addr) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func filterTxContrib(in []database.TxContribMetrics, filter string) []database.TxContribMetrics {
+	if filter == "" {
+		return in
+	}
+	out := make([]database.TxContribMetrics, 0, len(in))
+	for _, r := range in {
+		if matchesFilter(filter, r.Moniker, r.Addr) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func filterMissing(in []database.MissingBlockMetrics, filter string) []database.MissingBlockMetrics {
+	if filter == "" {
+		return in
+	}
+	out := make([]database.MissingBlockMetrics, 0, len(in))
+	for _, r := range in {
+		if matchesFilter(filter, r.Moniker, r.Addr) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func formatHelp() string {
 	var b strings.Builder
 	b.WriteString("🆘 <b>Help</b>\n\n")
@@ -542,6 +1136,12 @@ func formatHelp() string {
 	b.WriteString("• <code>/uptime</code> (default: limit=10)\n")
 	b.WriteString("• <code>/uptime limit=3</code>\n\n")
 
+	b.WriteString("<code>⏱️ /operation_time [limit=N]</code>\n")
+	b.WriteString("Shows operation time since last down/up event.\n")
+	b.WriteString("Examples:\n")
+	b.WriteString("• <code>/operation_time</code> (default: limit=10)\n")
+	b.WriteString("• <code>/operation_time limit=3</code>\n\n")
+
 	b.WriteString("<code>💪 /tx_contrib [period=...] [limit=N]</code>\n")
 	b.WriteString("Shows each validator’s contribution to transaction inclusion.\n")
 	b.WriteString("Examples:\n")
@@ -553,6 +1153,12 @@ func formatHelp() string {
 	b.WriteString("Examples:\n")
 	b.WriteString("• <code>/missing</code> (defaults: period=current_month, limit=10)\n")
 	b.WriteString("• <code>/missing period=all_time limit=50</code>\n\n")
+
+	b.WriteString("📄 <b>Pagination</b>\n")
+	b.WriteString("Results are paginated with inline buttons. You can also pass <code>page=N</code>.\n")
+	b.WriteString("Optional filter: <code>filter=...</code> (moniker or address).\n")
+	b.WriteString("Sort (percent commands): <code>sort=asc</code> or <code>sort=desc</code>.\n")
+	b.WriteString("Search button prompts for a moniker or address.\n\n")
 
 	b.WriteString("📬 <b>Subscribe command</b> \n")
 

@@ -67,7 +67,12 @@ func CalculateMissedBlocks(db *gorm.DB) ([]MissedBlockStat, error) {
 func CalculateConsecutiveMissedBlocks(db *gorm.DB) ([]ConsecutiveMissedStat, error) {
 	var rows []database.DailyParticipation
 
-	err := db.Order("addr, block_height ASC").Find(&rows).Error
+	err := db.Raw(`
+		SELECT addr, moniker, participated, block_height
+		FROM daily_participations
+		WHERE block_height > (SELECT MAX(block_height) FROM daily_participations) - 200
+		ORDER BY addr, block_height ASC
+	`).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}

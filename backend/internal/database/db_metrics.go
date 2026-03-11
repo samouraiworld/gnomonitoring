@@ -114,7 +114,6 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 			participation_rate ASC`
 
 	err = db.Raw(query, startStr, endStr).Scan(&results).Error
-	log.Println(results)
 
 	return results, err
 }
@@ -124,24 +123,26 @@ func OperationTimeMetricsaddr(db *gorm.DB) ([]OperationTimeMetrics, error) {
 	var results []OperationTimeMetrics
 
 	query := `
-					SELECT
-					Moniker,
-				dp.addr,
-				
-				MAX(dp.date) AS last_down_date,
-				(
-					SELECT MAX(date)
-					FROM daily_participations AS d2
-					WHERE d2.addr = dp.addr AND d2.participated = 1
-				) AS last_up_date,
-				round(julianday((
-					SELECT MAX(date)
-					FROM daily_participations AS d2
-					WHERE d2.addr = dp.addr AND d2.participated = 1
-				)) - julianday(MAX(dp.date)),1) AS days_diff
-				FROM daily_participations AS dp
-				WHERE dp.participated = 0
-				GROUP BY dp.addr; `
+		WITH last_down AS (
+			SELECT addr, moniker, MAX(date) AS last_down_date
+			FROM daily_participations
+			WHERE participated = 0
+			GROUP BY addr
+		),
+		last_up AS (
+			SELECT addr, MAX(date) AS last_up_date
+			FROM daily_participations
+			WHERE participated = 1
+			GROUP BY addr
+		)
+		SELECT
+			ld.moniker,
+			ld.addr,
+			ld.last_down_date,
+			lu.last_up_date,
+			ROUND(julianday(lu.last_up_date) - julianday(ld.last_down_date), 1) AS days_diff
+		FROM last_down ld
+		LEFT JOIN last_up lu ON lu.addr = ld.addr;`
 
 	if err := db.Raw(query).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
@@ -265,6 +266,7 @@ func GetMoniker(db *gorm.DB) (map[string]string, error) {
 	log.Printf("✅ Loaded %d monikers from DB", len(monikerMap))
 	return monikerMap, nil
 }
+
 // getPeriodParams returns parameterized date boundaries for a given period.
 // Returns date strings suitable for use as GORM query parameters (not for fmt.Sprintf).
 func getPeriodParams(period string) (startStr, endStr string, err error) {
