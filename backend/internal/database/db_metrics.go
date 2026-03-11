@@ -93,12 +93,13 @@ func GetAlertLog(db *gorm.DB, period string) ([]AlertSummary, error) {
 func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]ParticipationRate, error) {
 	log.Println("==========Start Get Participate Rate ")
 	var results []ParticipationRate
-	startStr, endStr, err := getPeriod(period)
+	startStr, endStr, err := getPeriodParams(period)
 	if err != nil {
 		log.Printf("Error invalid period %s", err)
+		return nil, err
 	}
 
-	query := fmt.Sprintf(`
+	query := `
 		SELECT
 			addr,
 			moniker,
@@ -106,14 +107,13 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 		FROM
 			daily_participations
 		WHERE
-			date >= %s AND date < %s
+			date >= ? AND date < ?
 		GROUP BY
 			addr, moniker
 		ORDER BY
-			participation_rate ASC;
-	`, startStr, endStr)
+			participation_rate ASC`
 
-	err = db.Raw(query).Scan(&results).Error
+	err = db.Raw(query, startStr, endStr).Scan(&results).Error
 	log.Println(results)
 
 	return results, err
@@ -153,33 +153,32 @@ func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
 
 	var results []UptimeMetrics
 
+	// Use the actual last 500 scraped blocks per validator instead of a theoretical
+	// block_height range. This handles gaps where the scraper was not running and
+	// avoids returning 0% uptime due to missing block data.
 	query := `
-					WITH
-						bounds AS (
-							SELECT (SELECT MAX(block_height) AS max_height FROM daily_participations) AS latest,
-							 500 AS window, 
-							 ((SELECT MAX(block_height) AS max_height FROM daily_participations)- 500+ 1) AS start_h,
-							  (SELECT MAX(block_height) AS max_height FROM daily_participations) AS end_h
-						),
-						base AS (
-							SELECT
-							p.moniker,
-							p.addr,
-							SUM(CASE WHEN p.participated THEN 1 ELSE 0 END) AS ok,
-							COUNT(*) AS total
-							FROM daily_participations p
-							JOIN bounds b
-							ON p.block_height BETWEEN b.start_h AND b.end_h
-							GROUP BY p.addr
-						)
-						SELECT
-						moniker,
-						addr,
-					
-					
-						100.0 * ok / total AS uptime
-						FROM base
-						ORDER BY uptime ASC;`
+		WITH recent_blocks AS (
+			SELECT DISTINCT block_height
+			FROM daily_participations
+			ORDER BY block_height DESC
+			LIMIT 500
+		),
+		base AS (
+			SELECT
+				p.moniker,
+				p.addr,
+				SUM(CASE WHEN p.participated THEN 1 ELSE 0 END) AS ok,
+				COUNT(*) AS total
+			FROM daily_participations p
+			INNER JOIN recent_blocks rb ON p.block_height = rb.block_height
+			GROUP BY p.addr
+		)
+		SELECT
+			moniker,
+			addr,
+			100.0 * ok / total AS uptime
+		FROM base
+		ORDER BY uptime ASC`
 
 	if err := db.Raw(query).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
@@ -191,22 +190,23 @@ func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
 func TxContrib(db *gorm.DB, period string) ([]TxContribMetrics, error) {
 	var results []TxContribMetrics
 
-	startStr, endStr, err := getPeriod(period)
+	startStr, endStr, err := getPeriodParams(period)
 	if err != nil {
 		log.Printf("Error invalid period %s", err)
+		return nil, err
 	}
 
-	query := fmt.Sprintf(`
-		select 
-		moniker,
-		addr,
-			round((SUM(tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations)),1) AS tx_contrib
-		from daily_participations
+	query := `
+		SELECT
+			moniker,
+			addr,
+			ROUND((SUM(tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations)), 1) AS tx_contrib
+		FROM daily_participations
 		WHERE
-			date >= %s AND date < %s
-		group by addr;  `, startStr, endStr)
+			date >= ? AND date < ?
+		GROUP BY addr`
 
-	if err := db.Raw(query).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, startStr, endStr).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
 	}
 
@@ -217,23 +217,24 @@ func TxContrib(db *gorm.DB, period string) ([]TxContribMetrics, error) {
 func MissingBlock(db *gorm.DB, period string) ([]MissingBlockMetrics, error) {
 	var results []MissingBlockMetrics
 
-	startStr, endStr, err := getPeriod(period)
+	startStr, endStr, err := getPeriodParams(period)
 	if err != nil {
 		log.Printf("Error invalid period %s", err)
+		return nil, err
 	}
 
-	query := fmt.Sprintf(`
-		select 
-		moniker,
-		addr,
-		SUM(CASE WHEN participated = 0 THEN 1 ELSE 0 END) AS missing_block
-		from daily_participations
+	query := `
+		SELECT
+			moniker,
+			addr,
+			SUM(CASE WHEN participated = 0 THEN 1 ELSE 0 END) AS missing_block
+		FROM daily_participations
 		WHERE
-			date >= %s AND date < %s
-		group by addr;  `, startStr, endStr)
+			date >= ? AND date < ?
+		GROUP BY addr`
 
-	if err := db.Raw(query).Scan(&results).Error; err != nil {
-		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
+	if err := db.Raw(query, startStr, endStr).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in the request MissingBlock: %s", err)
 	}
 
 	return results, nil
@@ -264,45 +265,66 @@ func GetMoniker(db *gorm.DB) (map[string]string, error) {
 	log.Printf("✅ Loaded %d monikers from DB", len(monikerMap))
 	return monikerMap, nil
 }
-func getPeriod(period string) (startStr, endStr string, err error) {
-
+// getPeriodParams returns parameterized date boundaries for a given period.
+// Returns date strings suitable for use as GORM query parameters (not for fmt.Sprintf).
+func getPeriodParams(period string) (startStr, endStr string, err error) {
 	var start, end time.Time
-	// var startStr, endStr string
 	now := time.Now()
 
 	switch period {
 	case "current_week":
-		today := time.Now()
-		weekday := int(today.Weekday())
+		weekday := int(now.Weekday())
 		if weekday == 0 {
 			weekday = 7 // Sunday => 7
 		}
-		start = today.AddDate(0, 0, -weekday+1) // Return to last Monday
+		start = now.AddDate(0, 0, -weekday+1) // Return to last Monday
 		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
 		end = start.AddDate(0, 0, 7)
-		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
-		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
+
 	case "current_month":
 		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 		end = start.AddDate(0, 1, 0)
-		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
-		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
 
 	case "current_year":
 		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 		end = start.AddDate(1, 0, 0)
-		startStr = fmt.Sprintf("'%s'", start.Format("2006-01-02"))
-		endStr = fmt.Sprintf("'%s'", end.Format("2006-01-02"))
 
 	case "all_time":
-
-		startStr = `(select min(date) from daily_participations)`
-		endStr = `(select max(date) from daily_participations)`
+		// Use extreme bounds to cover all data
+		start = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+		end = now.AddDate(1, 0, 0)
 
 	default:
 		return "", "", fmt.Errorf("invalid period: %s", period)
 	}
+
+	startStr = start.Format("2006-01-02")
+	endStr = end.Format("2006-01-02")
 	return startStr, endStr, nil
+}
+
+// ====================================== First Seen ======================================
+
+// GetFirstSeen returns the earliest participation date for each validator.
+// This can be used as a "start time" / "first seen" metric.
+func GetFirstSeen(db *gorm.DB) ([]FirstSeenMetrics, error) {
+	var results []FirstSeenMetrics
+
+	query := `
+		SELECT
+			addr,
+			moniker,
+			MIN(date) AS first_seen
+		FROM daily_participations
+		WHERE participated = 1
+		GROUP BY addr
+		ORDER BY first_seen ASC`
+
+	if err := db.Raw(query).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in the request FirstSeen: %s", err)
+	}
+
+	return results, nil
 }
 
 func GetTimeOfBlock(db *gorm.DB, numBlock int64) (time.Time, error) {
