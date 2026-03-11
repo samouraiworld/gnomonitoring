@@ -223,6 +223,14 @@ func InitMonikerMap(db *gorm.DB) {
 	}
 
 	log.Printf("✅ MonikerMap initialized with %d active validators\n", len(MonikerMap))
+
+	// Sync MonikerMap to addr_monikers table
+	for addr, moniker := range MonikerMap {
+		if err := database.UpsertAddrMoniker(db, addr, moniker); err != nil {
+			log.Printf("⚠️ Failed to upsert addr_moniker %s: %v", addr, err)
+		}
+	}
+	log.Printf("✅ addr_monikers synced (%d entries)", len(MonikerMap))
 }
 func doWithRetry(attempts int, sleep time.Duration, fn func() error) error {
 	var err error

@@ -805,6 +805,30 @@ func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	json.NewEncoder(w).Encode(info)
 }
 
+// ======================ADDR MONIKER====================================
+func GetAddrMonikerHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	EnableCORS(w)
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	addr := r.URL.Query().Get("addr")
+	if addr == "" {
+		http.Error(w, "Missing addr parameter", http.StatusBadRequest)
+		return
+	}
+	moniker, err := database.GetMonikerByAddr(db, addr)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get moniker: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if moniker == "" {
+		http.Error(w, "Address not found", http.StatusNotFound)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"addr": addr, "moniker": moniker})
+}
+
 // ======================CORS=============================================
 func EnableCORS(w http.ResponseWriter, r ...*http.Request) {
 	origin := ""
@@ -1070,6 +1094,18 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
+	mux.HandleFunc("/addr_moniker", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			GetAddrMonikerHandler(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// Starting the HTTP server -
 	addr := ":" + internal.Config.BackendPort
 

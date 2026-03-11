@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -298,6 +299,29 @@ func UpdateAlertContact(db *gorm.DB, id int, userID, moniker, namecontact, menti
 }
 func DeleteAlertContact(db *gorm.DB, id int) error {
 	return db.Delete(&AlertContact{}, id).Error
+}
+
+// UpsertAddrMoniker inserts or updates the moniker for a given validator address.
+func UpsertAddrMoniker(db *gorm.DB, addr, moniker string) error {
+	return db.Exec(`
+		INSERT INTO addr_monikers (addr, moniker)
+		VALUES (?, ?)
+		ON CONFLICT(addr) DO UPDATE SET moniker = excluded.moniker
+	`, addr, moniker).Error
+}
+
+// GetMonikerByAddr returns the moniker for a given validator address.
+// Returns an empty string (no error) if the address is not found.
+func GetMonikerByAddr(db *gorm.DB, addr string) (string, error) {
+	var result struct{ Moniker string }
+	err := db.Table("addr_monikers").
+		Select("moniker").
+		Where("addr = ?", addr).
+		First(&result).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	return result.Moniker, err
 }
 
 // ==================================== Purge ==========================================

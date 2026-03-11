@@ -174,5 +174,9 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	CreateMissingBlocksView(db)
 
+	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_block_height ON daily_participations(block_height);")
+	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_date ON daily_participations(date);")
+	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr ON daily_participations(addr);")
+
 	return db, nil
 }

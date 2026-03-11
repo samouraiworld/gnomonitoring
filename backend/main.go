@@ -59,9 +59,10 @@ func main() {
 	defer cancel()
 
 	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db)
+	callbackHandler := telegram.BuildTelegramCallbackHandler(internal.Config.TokenTelegramValidator, db)
 
 	go func() {
-		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, "validator", db); err != nil {
+		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, callbackHandler, "validator", db); err != nil {
 			log.Fatalf("command loop error bot validator : %v", err)
 		}
 	}()
@@ -73,7 +74,7 @@ func main() {
 	handlersgovdao := telegram.BuildTelegramGovdaoHandlers(internal.Config.TokenTelegramGovdao, db)
 
 	go func() {
-		if err := telegram.StartCommandLoop(ctxgovdao, internal.Config.TokenTelegramGovdao, handlersgovdao, "govdao", db); err != nil {
+		if err := telegram.StartCommandLoop(ctxgovdao, internal.Config.TokenTelegramGovdao, handlersgovdao, nil, "govdao", db); err != nil {
 			log.Fatalf("command loop error bot govdao: %v", err)
 		}
 	}()
