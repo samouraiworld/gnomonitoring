@@ -26,8 +26,9 @@ func InsertChatID(db *gorm.DB, chatID int64, chatType string) (bool, error) {
 	}
 
 	if chatType == "validator" {
-		createHourReportTelegram(db, chatID)
-
+		if err := createHourReportTelegram(db, chatID); err != nil {
+			log.Printf("⚠️ createHourReportTelegram: %v", err)
+		}
 	}
 
 	tx := db.Clauses(clause.OnConflict{

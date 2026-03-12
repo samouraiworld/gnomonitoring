@@ -175,14 +175,16 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	CreateMissingBlocksView(db)
+	if err := CreateMissingBlocksView(db); err != nil {
+		log.Printf("⚠️ CreateMissingBlocksView: %v", err)
+	}
 
-	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_block_height ON daily_participations(block_height);")
-	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_date ON daily_participations(date);")
-	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr ON daily_participations(addr);")
-	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr_participated ON daily_participations(addr, participated);")
-	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr_date ON daily_participations(addr, date);")
-	sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_tvs_addr_chatid ON telegram_validator_subs(addr, chat_id);")
+	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_block_height ON daily_participations(block_height);")
+	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_date ON daily_participations(date);")
+	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr ON daily_participations(addr);")
+	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr_participated ON daily_participations(addr, participated);")
+	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr_date ON daily_participations(addr, date);")
+	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_tvs_addr_chatid ON telegram_validator_subs(addr, chat_id);")
 
 	return db, nil
 }
