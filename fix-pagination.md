@@ -1,76 +1,76 @@
-# Fix Pagination — Analyse et Correctifs
+# Fix Pagination — Analysis and Fixes
 
-## Contexte
+## Context
 
-La pagination via inline buttons a été implémentée dans `backend/internal/telegram/validator.go` et `backend/internal/telegram/telegram.go`. Elle fonctionne correctement fonctionnellement, mais génère une charge CPU anormalement élevée à chaque navigation.
+Pagination via inline buttons has been implemented in `backend/internal/telegram/validator.go` and `backend/internal/telegram/telegram.go`. It works correctly from a functional standpoint, but produces abnormally high CPU usage on each page navigation.
 
 ---
 
-## Problème central
+## Core problem
 
-Chaque clic sur ⬅️ Prev ou ➡️ Next déclenche cette chaîne complète :
+Each click on ⬅️ Prev or ➡️ Next triggers this full chain:
 
 ```text
 callback → buildPaginatedResponse
          → formatUptime / formatParticipationRAte / FormatTxcontrib / ...
-         → database.*Metrics(db)   ← FULL TABLE SCAN à chaque fois
-         → sort.Slice(all, ...)    ← TRI INTÉGRAL en mémoire Go
-         → filter*(all, filter)    ← FILTRE INTÉGRAL en mémoire Go
+         → database.*Metrics(db)   ← FULL TABLE SCAN each time
+         → sort.Slice(all, ...)    ← FULL IN-MEMORY SORT in Go
+         → filter*(all, filter)    ← FULL IN-MEMORY FILTER in Go
          → paginate(len, page, limit) → slice [start:end]
 ```
 
-Les données de participation ne changent pas à la seconde. Pourtant, naviguer de la page 1 à la page 3 déclenche 3 requêtes SQL complètes + 3 tris + 3 filtres identiques.
+Participation data does not change every second. Yet navigating from page 1 to page 3 triggers 3 full SQL queries + 3 sorts + 3 identical filters.
 
 ---
 
-## Problème 1 — `http.Client` recréé à chaque appel Telegram
+## Problem 1 — `http.Client` recreated on every Telegram call
 
-**Fichier** : `backend/internal/telegram/telegram.go`
+**File**: `backend/internal/telegram/telegram.go`
 
-**Localisation** : lignes 88, 132, 174, 208 — dans chaque fonction HTTP (`SendMessageTelegram`, `SendMessageTelegramWithMarkup`, `EditMessageTelegramWithMarkup`, `AnswerCallbackQuery`)
+**Location**: lines 88, 132, 174, 208 — in each HTTP function (`SendMessageTelegram`, `SendMessageTelegramWithMarkup`, `EditMessageTelegramWithMarkup`, `AnswerCallbackQuery`)
 
-**Code actuel** :
+**Current code**:
 
 ```go
 client := &http.Client{Timeout: 10 * time.Second}
 ```
 
-**Problème** : Chaque navigation génère 3 appels HTTP vers l'API Telegram (AnswerCallbackQuery + EditMessageText + éventuellement un autre). Chacun instancie un nouveau `http.Client`, ce qui empêche toute réutilisation du pool de connexions TCP (`keep-alive`). Le transport TCP est réétabli à chaque appel.
+**Problem**: Each navigation generates 3 HTTP calls to the Telegram API (AnswerCallbackQuery + EditMessageText + potentially another). Each one instantiates a new `http.Client`, preventing any TCP connection pool reuse (`keep-alive`). The TCP transport is re-established on every call.
 
-**Impact** : Élevé — c'est la source principale de CPU inutile.
+**Impact**: High — this is the main source of unnecessary CPU usage.
 
-**Fix** : Déclarer un client partagé au niveau du package :
+**Fix**: Declare a shared client at package level:
 
 ```go
-// à ajouter en haut de telegram.go, avec les autres vars
+// add at the top of telegram.go, with the other vars
 var telegramHTTPClient = &http.Client{Timeout: 10 * time.Second}
 ```
 
-Puis remplacer les 4 instanciations locales par `telegramHTTPClient`.
+Then replace the 4 local instantiations with `telegramHTTPClient`.
 
 ---
 
-## Problème 2 — `AnswerCallbackQuery` ne ferme pas `resp.Body`
+## Problem 2 — `AnswerCallbackQuery` does not close `resp.Body`
 
-**Fichier** : `backend/internal/telegram/telegram.go`
+**File**: `backend/internal/telegram/telegram.go`
 
-**Localisation** : fonction `AnswerCallbackQuery`, ligne ~210
+**Location**: function `AnswerCallbackQuery`, line ~210
 
-**Code actuel** :
+**Current code**:
 
 ```go
 resp, err := client.Do(req)
 if err != nil {
     return fmt.Errorf("do request: %w", err)
 }
-return nil  // ← resp.Body jamais fermé
+return nil  // ← resp.Body never closed
 ```
 
-**Problème** : Sans `defer resp.Body.Close()`, la connexion TCP n'est jamais rendue au pool de transport. Avec de nombreux clics sur les boutons, les file descriptors s'accumulent jusqu'à saturation.
+**Problem**: Without `defer resp.Body.Close()`, the TCP connection is never returned to the transport pool. With many button clicks, file descriptors accumulate until exhaustion.
 
-**Impact** : Élevé — leak de connexions progressif.
+**Impact**: High — progressive connection leak.
 
-**Fix** :
+**Fix**:
 
 ```go
 resp, err := client.Do(req)
@@ -83,17 +83,17 @@ return nil
 
 ---
 
-## Problème 3 — Pas de cache entre les pages
+## Problem 3 — No cache between pages
 
-**Fichiers** : `backend/internal/telegram/validator.go`
+**Files**: `backend/internal/telegram/validator.go`
 
-**Localisation** : toutes les fonctions `format*` — `formatUptime`, `formatParticipationRAte`, `FormatTxcontrib`, `formatMissing`, `formatOperationTime`
+**Location**: all `format*` functions — `formatUptime`, `formatParticipationRAte`, `FormatTxcontrib`, `formatMissing`, `formatOperationTime`
 
-**Problème** : Un utilisateur qui navigue pages 1 → 2 → 3 sur `/uptime` déclenche 3 appels complets à `database.UptimeMetricsaddr(db)`. Les données ne changent pas à cette échelle de temps.
+**Problem**: A user navigating pages 1 → 2 → 3 on `/uptime` triggers 3 full calls to `database.UptimeMetricsaddr(db)`. The data does not change at this time scale.
 
-**Impact** : Moyen — redondant, mais acceptable avec peu d'utilisateurs simultanés.
+**Impact**: Medium — redundant, but acceptable with few concurrent users.
 
-**Fix** : Cache in-memory avec TTL de 30 à 60 secondes, clé `(cmdKey, period)` :
+**Fix**: In-memory cache with TTL of 30 to 60 seconds, key `(cmdKey, period)`:
 
 ```go
 type cacheEntry struct {
@@ -123,7 +123,7 @@ func setCached(key string, data any, ttl time.Duration) {
 }
 ```
 
-Utilisation dans `formatUptime` :
+Usage in `formatUptime`:
 
 ```go
 const cacheTTL = 45 * time.Second
@@ -138,23 +138,23 @@ func formatUptime(db *gorm.DB, page, limit int, filter, sortOrder string) (...) 
         if err != nil { ... }
         setCached(key, results, cacheTTL)
     }
-    // suite identique...
+    // rest unchanged...
 }
 ```
 
 ---
 
-## Problème 4 — Tri et filtre : deux passes Go au lieu de SQL
+## Problem 4 — Sort and filter: two Go passes instead of SQL
 
-**Fichiers** : `backend/internal/telegram/validator.go` + `backend/internal/database/db_metrics.go`
+**Files**: `backend/internal/telegram/validator.go` + `backend/internal/database/db_metrics.go`
 
-**Localisation** : toutes les fonctions `format*`
+**Location**: all `format*` functions
 
-**Problème** : Le tri (`sort.Slice`) et le filtre (`filter*`) sont effectués en Go sur l'intégralité du résultat. L'ordre n'est pas cohérent entre les commandes (certaines filtrent avant de trier, d'autres après). Avec des données croissantes, ce sera coûteux.
+**Problem**: Sorting (`sort.Slice`) and filtering (`filter*`) are done in Go over the entire result set. The order is inconsistent across commands (some filter before sorting, others after). With growing data, this will become costly.
 
-**Impact** : Moyen — acceptable aujourd'hui avec ~50 validators, problématique à l'échelle.
+**Impact**: Medium — acceptable today with ~50 validators, problematic at scale.
 
-**Fix idéal** : Pousser `ORDER BY`, `WHERE moniker LIKE ?`, `LIMIT ? OFFSET ?` directement dans les requêtes SQL de `db_metrics.go`. Exemple pour `UptimeMetricsaddr` :
+**Ideal fix**: Push `ORDER BY`, `WHERE moniker LIKE ?`, `LIMIT ? OFFSET ?` directly into the SQL queries in `db_metrics.go`. Example for `UptimeMetricsaddr`:
 
 ```go
 func UptimeMetricsaddr(db *gorm.DB, filter string, sortOrder string, limit, offset int) ([]UptimeMetrics, error) {
@@ -173,23 +173,23 @@ func UptimeMetricsaddr(db *gorm.DB, filter string, sortOrder string, limit, offs
 }
 ```
 
-Cela supprime les `sort.Slice` et `filter*` de `validator.go` et pousse le travail sur SQLite qui utilise ses index.
+This removes the `sort.Slice` and `filter*` calls from `validator.go` and pushes the work to SQLite which uses its indexes.
 
-**Fix minimal (sans toucher aux signatures DB)** : Au moins combiner filtre et tri en une seule passe, et s'assurer que le filtre est appliqué avant le tri dans toutes les commandes (cohérence).
+**Minimal fix (without touching DB signatures)**: At least combine filter and sort in a single pass, and ensure the filter is applied before sorting in all commands (consistency).
 
 ---
 
-## Problème 5 — `searchState` non purgé proactivement
+## Problem 5 — `searchState` not proactively purged
 
-**Fichier** : `backend/internal/telegram/validator.go`
+**File**: `backend/internal/telegram/validator.go`
 
-**Localisation** : variable `searchState` ligne ~800, fonction `HandleSearchInput`
+**Location**: variable `searchState` line ~800, function `HandleSearchInput`
 
-**Problème** : Les états expirés ne sont supprimés que lorsque le même `chatID` envoie un nouveau message. La map grossit sans limite avec le temps.
+**Problem**: Expired states are only removed when the same `chatID` sends a new message. The map grows without bound over time.
 
-**Impact** : Faible — fuite mémoire lente.
+**Impact**: Low — slow memory leak.
 
-**Fix** : Lancer un ticker de nettoyage au démarrage du bot :
+**Fix**: Launch a cleanup ticker at bot startup:
 
 ```go
 func startSearchStateCleanup() {
@@ -209,23 +209,23 @@ func startSearchStateCleanup() {
 }
 ```
 
-À appeler depuis `BuildTelegramHandlers` ou `BuildTelegramCallbackHandler`.
+Call from `BuildTelegramHandlers` or `BuildTelegramCallbackHandler`.
 
 ---
 
-## Récapitulatif par priorité
+## Summary by priority
 
-| # | Problème | Fichier | Impact | Difficulté |
+| # | Problem | File | Impact | Difficulty |
 | --- | -------- | ------- | ------ | ---------- |
-| 1 | `http.Client` recréé à chaque appel | `telegram.go` | **Élevé** | Trivial (1 ligne) |
-| 2 | `resp.Body` non fermé dans `AnswerCallbackQuery` | `telegram.go` | **Élevé** | Trivial (1 ligne) |
-| 3 | Pas de cache entre les pages | `validator.go` | Moyen | ~30 lignes |
-| 4 | Sort + filtre en Go au lieu de SQL | `validator.go` + `db_metrics.go` | Moyen | Refacto significatif |
-| 5 | `searchState` non purgé | `validator.go` | Faible | ~15 lignes |
+| 1 | `http.Client` recreated on each call | `telegram.go` | **High** | Trivial (1 line) |
+| 2 | `resp.Body` not closed in `AnswerCallbackQuery` | `telegram.go` | **High** | Trivial (1 line) |
+| 3 | No cache between pages | `validator.go` | Medium | ~30 lines |
+| 4 | Sort + filter in Go instead of SQL | `validator.go` + `db_metrics.go` | Medium | Significant refactor |
+| 5 | `searchState` not purged | `validator.go` | Low | ~15 lines |
 
-## Ordre d'application recommandé
+## Recommended application order
 
-1. **Appliquer 1 et 2 immédiatement** — corrections d'une ligne, risque zéro, gain immédiat.
-2. **Appliquer 5** — quick win, prévient la fuite mémoire.
-3. **Appliquer 3** — réduit les requêtes DB redondantes lors de la navigation.
-4. **Appliquer 4** — refacto plus profonde, à faire sur une branche dédiée.
+1. **Apply 1 and 2 immediately** — one-line fixes, zero risk, immediate gain.
+2. **Apply 5** — quick win, prevents the memory leak.
+3. **Apply 3** — reduces redundant DB queries during navigation.
+4. **Apply 4** — deeper refactor, to be done on a dedicated branch.

@@ -1,40 +1,40 @@
 # feat-add-endpoint-addr-moniker
 
-## Objectif
+## Goal
 
-1. Créer un endpoint `GET /addr_moniker?addr=...` pour résoudre un moniker depuis une adresse.
-2. Modifier `valoper.go` pour peupler la table `addr_monikers` (upsert) lors de `InitMonikerMap`.
-3. Préparer la suppression de la colonne `moniker` de `daily_participations` (normalisation).
+1. Create a `GET /addr_moniker?addr=...` endpoint to resolve a moniker from a validator address.
+2. Modify `valoper.go` to populate the `addr_monikers` table (upsert) during `InitMonikerMap`.
+3. Prepare the removal of the `moniker` column from `daily_participations` (normalization).
 
 ---
 
-## Analyse d'impact
+## Impact Analysis
 
-### Niveau de risque : ÉLEVÉ
+### Risk level: HIGH
 
-La colonne `moniker` est présente à **6 couches** du système :
+The `moniker` column is present at **6 layers** of the system:
 
-| Couche | Nb de points touchés |
+| Layer | Number of affected points |
 | --- | --- |
-| Insertion dans `daily_participations` | 5 fonctions |
-| Requêtes métriques SQL | 6 requêtes |
-| Vue SQLite `daily_missing_series` | 1 vue (critique) |
-| Détection d'alertes | 2 fonctions |
-| Lookups Telegram | 3 fonctions |
-| Structs de réponse API/bot | 6 structs |
+| Insert into `daily_participations` | 5 functions |
+| SQL metric queries | 6 queries |
+| SQLite view `daily_missing_series` | 1 view (critical) |
+| Alert detection | 2 functions |
+| Telegram lookups | 3 functions |
+| API/bot response structs | 6 structs |
 
 ---
 
-## Phase 1 — Peupler `addr_monikers` depuis `valoper.go`
+## Phase 1 — Populate `addr_monikers` from `valoper.go`
 
-### Fichier : `backend/internal/gnovalidator/valoper.go`
+### File: `backend/internal/gnovalidator/valoper.go`
 
-#### Changement : fin de `InitMonikerMap()` (après la boucle qui construit `MonikerMap`)
+#### Change: end of `InitMonikerMap()` (after the loop that builds `MonikerMap`)
 
-Après la boucle finale qui remplit `MonikerMap`, ajouter un upsert vers `addr_monikers` :
+After the final loop that fills `MonikerMap`, add an upsert to `addr_monikers`:
 
 ```go
-// Après avoir construit MonikerMap, persister dans addr_monikers
+// After building MonikerMap, persist to addr_monikers
 for addr, moniker := range MonikerMap {
     if err := database.UpsertAddrMoniker(db, addr, moniker); err != nil {
         log.Printf("⚠️ Failed to upsert addr_moniker %s: %v", addr, err)
@@ -43,9 +43,9 @@ for addr, moniker := range MonikerMap {
 log.Printf("✅ addr_monikers table synced (%d entries)", len(MonikerMap))
 ```
 
-### Fichier : `backend/internal/database/db.go`
+### File: `backend/internal/database/db.go`
 
-#### Nouvelle fonction à ajouter
+#### New function to add
 
 ```go
 func UpsertAddrMoniker(db *gorm.DB, addr, moniker string) error {
@@ -57,9 +57,9 @@ func UpsertAddrMoniker(db *gorm.DB, addr, moniker string) error {
 }
 ```
 
-### Modèle `AddrMoniker` dans `db_init.go`
+### `AddrMoniker` model in `db_init.go`
 
-Vérifier que le modèle a bien une contrainte unique sur `addr` :
+Verify that the model has a unique constraint on `addr`:
 
 ```go
 type AddrMoniker struct {
@@ -68,7 +68,7 @@ type AddrMoniker struct {
 }
 ```
 
-Si `Addr` n'est pas `primaryKey` ou n'a pas d'index unique, la migration suivante est nécessaire :
+If `Addr` is not a `primaryKey` or has no unique index, the following migration is required:
 
 ```sql
 CREATE UNIQUE INDEX IF NOT EXISTS idx_addr_monikers_addr ON addr_monikers(addr);
@@ -76,11 +76,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_addr_monikers_addr ON addr_monikers(addr);
 
 ---
 
-## Phase 2 — Nouvel endpoint API `GET /addr_moniker`
+## Phase 2 — New API endpoint `GET /addr_moniker`
 
-### Fichier : `backend/internal/database/db.go` (lookup)
+### File: `backend/internal/database/db.go` (lookup)
 
-#### Nouvelle fonction de lookup
+#### New lookup function
 
 ```go
 func GetMonikerByAddr(db *gorm.DB, addr string) (string, error) {
@@ -96,9 +96,9 @@ func GetMonikerByAddr(db *gorm.DB, addr string) (string, error) {
 }
 ```
 
-### Fichier : `backend/internal/api/api.go`
+### File: `backend/internal/api/api.go`
 
-#### Nouveau handler
+#### New handler
 
 ```go
 func GetAddrMonikerHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
@@ -125,7 +125,7 @@ func GetAddrMonikerHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) 
 }
 ```
 
-#### Enregistrement dans `StartWebhookAPI()`
+#### Registration in `StartWebhookAPI()`
 
 ```go
 mux.HandleFunc("/addr_moniker", func(w http.ResponseWriter, r *http.Request) {
@@ -141,34 +141,34 @@ mux.HandleFunc("/addr_moniker", func(w http.ResponseWriter, r *http.Request) {
 })
 ```
 
-Endpoint public, pas de middleware Clerk (cohérent avec `/uptime`, `/block_height`, etc.).
+Public endpoint, no Clerk middleware (consistent with `/uptime`, `/block_height`, etc.).
 
 ---
 
-## Phase 3 — Suppression de `moniker` de `daily_participations`
+## Phase 3 — Remove `moniker` from `daily_participations`
 
-### 3.1 — Requête de migration de données
+### 3.1 — Data migration query
 
-Avant de supprimer la colonne, rétro-peupler `addr_monikers` depuis les données existantes :
+Before dropping the column, back-populate `addr_monikers` from existing data:
 
 ```sql
--- Peupler addr_monikers depuis daily_participations (données historiques)
+-- Populate addr_monikers from daily_participations (historical data)
 INSERT INTO addr_monikers (addr, moniker)
 SELECT DISTINCT addr, moniker
 FROM daily_participations
 WHERE moniker IS NOT NULL AND moniker != '' AND moniker != 'unknown'
 ON CONFLICT(addr) DO UPDATE SET moniker = excluded.moniker;
 
--- Vérifier le résultat
+-- Verify the result
 SELECT COUNT(*) FROM addr_monikers;
 ```
 
-### 3.2 — Suppression de la colonne (SQLite)
+### 3.2 — Drop the column (SQLite)
 
-SQLite ne supporte pas `ALTER TABLE DROP COLUMN` avant la version 3.35. La migration passe par une recréation de table :
+SQLite does not support `ALTER TABLE DROP COLUMN` before version 3.35. The migration requires recreating the table:
 
 ```sql
--- Étape 1 : Créer la nouvelle table sans moniker
+-- Step 1: Create the new table without moniker
 CREATE TABLE daily_participations_new (
     date            DATETIME,
     block_height    INTEGER,
@@ -178,43 +178,43 @@ CREATE TABLE daily_participations_new (
     PRIMARY KEY (block_height, addr)
 );
 
--- Étape 2 : Copier les données
+-- Step 2: Copy data
 INSERT INTO daily_participations_new (date, block_height, addr, participated, tx_contribution)
 SELECT date, block_height, addr, participated, tx_contribution
 FROM daily_participations;
 
--- Étape 3 : Supprimer l'ancienne table
+-- Step 3: Drop the old table
 DROP TABLE daily_participations;
 
--- Étape 4 : Renommer
+-- Step 4: Rename
 ALTER TABLE daily_participations_new RENAME TO daily_participations;
 
--- Étape 5 : Recréer les index si nécessaire
+-- Step 5: Recreate indexes if needed
 CREATE INDEX IF NOT EXISTS idx_dp_addr ON daily_participations(addr);
 CREATE INDEX IF NOT EXISTS idx_dp_date ON daily_participations(date);
 ```
 
-> ⚠️ Cette migration doit être effectuée hors production, avec backup préalable (`cp db/webhooks.db db/webhooks.db.bak`).
+> ⚠️ This migration must be run outside of production, with a prior backup (`cp db/webhooks.db db/webhooks.db.bak`).
 
 ---
 
-## Phase 4 — Modifications SQL des requêtes métriques
+## Phase 4 — SQL metric query changes
 
-Toutes les requêtes suivantes doivent remplacer `dp.moniker` ou `moniker` par un `LEFT JOIN addr_monikers`.
+All the following queries must replace `dp.moniker` or `moniker` with a `LEFT JOIN addr_monikers`.
 
-### Pattern de JOIN à utiliser
+### JOIN pattern to use
 
 ```sql
 LEFT JOIN addr_monikers am ON am.addr = dp.addr
 ```
 
-Et remplacer `moniker` dans SELECT/GROUP BY par `COALESCE(am.moniker, dp.addr) AS moniker`.
+And replace `moniker` in SELECT/GROUP BY with `COALESCE(am.moniker, dp.addr) AS moniker`.
 
 ---
 
 ### 4.1 — `GetCurrentPeriodParticipationRate()` — `db_metrics.go`
 
-**Avant :**
+**Before:**
 
 ```sql
 SELECT addr, moniker,
@@ -225,7 +225,7 @@ GROUP BY addr, moniker
 ORDER BY participation_rate ASC
 ```
 
-**Après :**
+**After:**
 
 ```sql
 SELECT dp.addr,
@@ -242,7 +242,7 @@ ORDER BY participation_rate ASC
 
 ### 4.2 — `UptimeMetricsaddr()` — `db_metrics.go`
 
-**Après :**
+**After:**
 
 ```sql
 WITH bounds AS (...),
@@ -268,7 +268,7 @@ ORDER BY uptime ASC
 
 ### 4.3 — `OperationTimeMetricsaddr()` — `db_metrics.go`
 
-**Après :**
+**After:**
 
 ```sql
 SELECT
@@ -288,7 +288,7 @@ GROUP BY dp.addr
 
 ### 4.4 — `TxContrib()` — `db_metrics.go`
 
-**Après :**
+**After:**
 
 ```sql
 SELECT
@@ -305,7 +305,7 @@ GROUP BY dp.addr
 
 ### 4.5 — `MissingBlock()` — `db_metrics.go`
 
-**Après :**
+**After:**
 
 ```sql
 SELECT
@@ -322,7 +322,7 @@ GROUP BY dp.addr
 
 ### 4.6 — `CalculateRate()` — `gnovalidator_report.go`
 
-**Après :**
+**After:**
 
 ```sql
 SELECT
@@ -338,13 +338,13 @@ GROUP BY dp.addr
 
 ---
 
-## Phase 5 — Réécriture de la vue `daily_missing_series`
+## Phase 5 — Rewrite the `daily_missing_series` view
 
-**Fichier : `backend/internal/database/db.go` — `CreateMissingBlocksView()`**
+**File: `backend/internal/database/db.go` — `CreateMissingBlocksView()`**
 
-C'est le changement le plus critique car cette vue alimente le système d'alertes en temps réel.
+This is the most critical change as this view feeds the real-time alert system.
 
-**Après :**
+**After:**
 
 ```sql
 CREATE VIEW IF NOT EXISTS daily_missing_series AS
@@ -390,15 +390,15 @@ WHERE participated = 0
 ORDER BY addr, date, seq_id, block_height;
 ```
 
-> ⚠️ La vue doit être `DROP`pée puis recrée au démarrage. Modifier `CreateMissingBlocksView()` pour faire un `DROP VIEW IF EXISTS daily_missing_series` avant le `CREATE VIEW`.
+> ⚠️ The view must be `DROP`ped then recreated at startup. Modify `CreateMissingBlocksView()` to do a `DROP VIEW IF EXISTS daily_missing_series` before the `CREATE VIEW`.
 
 ---
 
-## Phase 6 — Requêtes Telegram (`db_telegram.go`)
+## Phase 6 — Telegram queries (`db_telegram.go`)
 
 ### `GetValidatorStatusList()`
 
-**Après :**
+**After:**
 
 ```sql
 WITH v AS (
@@ -415,7 +415,7 @@ ORDER BY status DESC
 
 ### `GetAllValidators()`
 
-**Après :**
+**After:**
 
 ```sql
 SELECT DISTINCT am.addr, COALESCE(am.moniker, dp.addr) AS moniker
@@ -425,7 +425,7 @@ LEFT JOIN addr_monikers am ON am.addr = dp.addr
 
 ### `ResolveAddrs()`
 
-**Après :**
+**After:**
 
 ```go
 err := db.Raw(`
@@ -437,18 +437,18 @@ err := db.Raw(`
 
 ---
 
-## Phase 7 — Suppressions dans le code d'insertion
+## Phase 7 — Removals in insertion code
 
 ### `gnovalidator_realtime.go` — `SaveParticipation()`
 
 ```go
-// Avant
+// Before
 stmt := `INSERT OR REPLACE INTO daily_participations
     (date, block_height, moniker, addr, participated, tx_contribution)
     VALUES (?, ?, ?, ?, ?, ?)`
 tx.Exec(stmt, timeStp, blockHeight, moniker, valAddr, ...)
 
-// Après
+// After
 stmt := `INSERT OR REPLACE INTO daily_participations
     (date, block_height, addr, participated, tx_contribution)
     VALUES (?, ?, ?, ?, ?)`
@@ -458,21 +458,21 @@ tx.Exec(stmt, timeStp, blockHeight, valAddr, ...)
 ### `sync.go` — `dpRow` struct + `flushChunk()`
 
 ```go
-// Supprimer le champ Moniker du struct dpRow
+// Remove the Moniker field from the dpRow struct
 type dpRow struct {
     Date           time.Time
     BlockHeight    int64
-    // Moniker supprimé
+    // Moniker removed
     Addr           string
     Participated   bool
     TxContribution bool
 }
 
-// flushChunk() : retirer moniker du INSERT et du ON CONFLICT UPDATE
+// flushChunk(): remove moniker from INSERT and ON CONFLICT UPDATE
 q := `INSERT INTO daily_participations
     (date, block_height, addr, participated, tx_contribution)
     VALUES `
-// ON CONFLICT : retirer "moniker = excluded.moniker"
+// ON CONFLICT: remove "moniker = excluded.moniker"
 ```
 
 ### `db_init.go` — `DailyParticipation` struct
@@ -481,7 +481,7 @@ q := `INSERT INTO daily_participations
 type DailyParticipation struct {
     Date           time.Time
     BlockHeight    int64
-    // Moniker string   ← SUPPRIMER
+    // Moniker string   ← REMOVE
     Addr           string
     Participated   bool
     TxContribution bool
@@ -490,38 +490,38 @@ type DailyParticipation struct {
 
 ---
 
-## Récapitulatif des fichiers à modifier
+## Summary of files to modify
 
-| Fichier | Modifications | Priorité |
+| File | Changes | Priority |
 | --- | --- | --- |
-| `database/db.go` | `UpsertAddrMoniker()`, `GetMonikerByAddr()`, réécriture vue `daily_missing_series` | **Critique** |
-| `database/db_init.go` | Retirer `Moniker` de `DailyParticipation`, index unique sur `addr_monikers` | **Critique** |
-| `database/db_metrics.go` | 5 requêtes SQL avec JOIN `addr_monikers` | **Critique** |
-| `gnovalidator/valoper.go` | Appel `UpsertAddrMoniker` à la fin de `InitMonikerMap` | **Critique** |
-| `gnovalidator/gnovalidator_realtime.go` | Retirer `moniker` des INSERT, `WatchValidatorAlerts`, `SendResolveAlerts` | **Critique** |
-| `gnovalidator/sync.go` | Retirer `Moniker` de `dpRow`, `flushChunk`, `BackfillRange`, `BackfillParallel` | **Critique** |
-| `gnovalidator/gnovalidator_report.go` | Réécrire `CalculateRate()` avec JOIN | Élevée |
-| `database/db_telegram.go` | 3 requêtes avec JOIN `addr_monikers` | Élevée |
-| `api/api.go` | Nouveau handler `GetAddrMonikerHandler` + route `/addr_moniker` | Moyenne |
-| `gnovalidator_report_test.go` | Adapter les fixtures de test | Faible |
+| `database/db.go` | `UpsertAddrMoniker()`, `GetMonikerByAddr()`, rewrite `daily_missing_series` view | **Critical** |
+| `database/db_init.go` | Remove `Moniker` from `DailyParticipation`, unique index on `addr_monikers` | **Critical** |
+| `database/db_metrics.go` | 5 SQL queries with JOIN `addr_monikers` | **Critical** |
+| `gnovalidator/valoper.go` | Call `UpsertAddrMoniker` at end of `InitMonikerMap` | **Critical** |
+| `gnovalidator/gnovalidator_realtime.go` | Remove `moniker` from INSERTs, `WatchValidatorAlerts`, `SendResolveAlerts` | **Critical** |
+| `gnovalidator/sync.go` | Remove `Moniker` from `dpRow`, `flushChunk`, `BackfillRange`, `BackfillParallel` | **Critical** |
+| `gnovalidator/gnovalidator_report.go` | Rewrite `CalculateRate()` with JOIN | High |
+| `database/db_telegram.go` | 3 queries with JOIN `addr_monikers` | High |
+| `api/api.go` | New handler `GetAddrMonikerHandler` + route `/addr_moniker` | Medium |
+| `gnovalidator_report_test.go` | Update test fixtures | Low |
 
-## Fichiers sans modification nécessaire
+## Files with no required changes
 
-- `telegram/validator.go` — les formatters reçoivent des structs déjà résolus, pas d'accès direct à la DB
-- `telegram/telegram.go` — idem
-- `gnovalidator/Prometheus.go` — pas d'accès à `daily_participations`
-- `internal/fonction.go` — reçoit moniker en paramètre
+- `telegram/validator.go` — formatters receive already-resolved structs, no direct DB access
+- `telegram/telegram.go` — same
+- `gnovalidator/Prometheus.go` — no access to `daily_participations`
+- `internal/fonction.go` — receives moniker as a parameter
 
 ---
 
-## Ordre d'exécution recommandé
+## Recommended execution order
 
-1. **Ajouter `UpsertAddrMoniker`** dans `db.go` et l'appeler depuis `valoper.go` → peupler la table sans rien casser.
-2. **Ajouter le nouvel endpoint** `/addr_moniker` → testable immédiatement après l'étape 1.
-3. **Réécrire les 5 requêtes métriques** avec JOIN → les tester en parallèle de l'ancien code.
-4. **Réécrire la vue** `daily_missing_series` → tester le système d'alertes en staging.
-5. **Réécrire les 3 requêtes Telegram** dans `db_telegram.go`.
-6. **Réécrire `CalculateRate()`** dans `gnovalidator_report.go`.
-7. **Exécuter la migration SQL** (backup → INSERT INTO addr_monikers → recréation table).
-8. **Supprimer `Moniker`** de `DailyParticipation`, `dpRow`, tous les INSERT.
-9. **Lancer `go build ./...` et les tests**.
+1. **Add `UpsertAddrMoniker`** in `db.go` and call it from `valoper.go` → populate the table without breaking anything.
+2. **Add the new endpoint** `/addr_moniker` → immediately testable after step 1.
+3. **Rewrite the 5 metric queries** with JOIN → test in parallel with the old code.
+4. **Rewrite the view** `daily_missing_series` → test the alert system in staging.
+5. **Rewrite the 3 Telegram queries** in `db_telegram.go`.
+6. **Rewrite `CalculateRate()`** in `gnovalidator_report.go`.
+7. **Run the SQL migration** (backup → INSERT INTO addr_monikers → table recreation).
+8. **Remove `Moniker`** from `DailyParticipation`, `dpRow`, all INSERTs.
+9. **Run `go build ./...` and tests**.

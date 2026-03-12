@@ -1,50 +1,50 @@
 # Fix — Validator First Active Block
 
-## Problème
+## Problem
 
-Lors d'un backfill (`BackfillParallel` / `BackfillRange`), le code itère sur `monikerMap`
-qui contient **l'ensemble des validateurs actifs aujourd'hui**.
+During a backfill (`BackfillParallel` / `BackfillRange`), the code iterates over `monikerMap`
+which contains **all validators active today**.
 
-Pour chaque bloc, tout validateur absent des precommits reçoit une ligne
-`participated = false` dans `daily_participations`.
+For each block, any validator absent from the precommits receives a
+`participated = false` row in `daily_participations`.
 
-Or un validateur accepté par la GovDAO au bloc 900 n'existait pas aux blocs 0–899.
-En lui créant des lignes `participated = false` sur ces blocs, on lui attribue
-des milliers de blocs manqués fictifs, ce qui fausse :
+However, a validator accepted by the GovDAO at block 900 did not exist at blocks 0–899.
+By creating `participated = false` rows for these blocks, the system attributes
+thousands of fictitious missed blocks to that validator, which corrupts:
 
-- l'uptime (`UptimeMetricsaddr`)
-- les blocs manqués (`MissingBlock`, `CalculateConsecutiveMissedBlocks`)
-- les alertes (seuils WARNING/CRITICAL déclenchés à tort)
+- uptime (`UptimeMetricsaddr`)
+- missed blocks (`MissingBlock`, `CalculateConsecutiveMissedBlocks`)
+- alerts (WARNING/CRITICAL thresholds incorrectly triggered)
 
 ---
 
-## Cause racine
+## Root Cause
 
-`BackfillParallel` (sync.go:211) et `BackfillRange` (sync.go:130) :
+`BackfillParallel` (sync.go:211) and `BackfillRange` (sync.go:130):
 
 ```go
 // participated false
-for addr, mon := range monikerMap {      // monikerMap = validateurs ACTUELS
+for addr, mon := range monikerMap {      // monikerMap = CURRENT validators
     if _, ok := seen[addr]; ok { continue }
     rows = append(rows, dpRow{
-        ...
-        Participated: false,             // inséré même avant l'activation
+        ...,
+        Participated: false,             // inserted even before activation
     })
 }
 ```
 
-`monikerMap` ne contient aucune information sur le bloc d'activation de chaque
-validateur. La fonction ne peut donc pas savoir si un validateur était déjà actif
-au bloc `j.H`.
+`monikerMap` contains no information about each validator's activation block.
+The function therefore cannot know whether a validator was already active
+at block `j.H`.
 
 ---
 
-## Plan d'action
+## Action Plan
 
-### Phase 1 — Modèle de données : ajouter `first_active_block`
+### Phase 1 — Data model: add `first_active_block`
 
-Ajouter un champ `first_active_block` à la struct `AddrMoniker` dans
-`db_init.go` :
+Add a `first_active_block` field to the `AddrMoniker` struct in
+`db_init.go`:
 
 ```go
 type AddrMoniker struct {
@@ -54,14 +54,14 @@ type AddrMoniker struct {
 }
 ```
 
-`-1` = inconnu. GORM gère la migration via `AutoMigrate` (ajout de colonne).
+`-1` = unknown. GORM handles the migration via `AutoMigrate` (column addition).
 
 ---
 
-### Phase 2 — Peupler `first_active_block` pour les validateurs existants
+### Phase 2 — Populate `first_active_block` for existing validators
 
-Pour les validateurs déjà présents dans `daily_participations`, le premier bloc
-où `participated = 1` EST leur bloc d'activation réel :
+For validators already present in `daily_participations`, the first block
+where `participated = 1` IS their real activation block:
 
 ```sql
 UPDATE addr_monikers
@@ -74,81 +74,81 @@ SET first_active_block = (
 WHERE first_active_block = -1;
 ```
 
-À exécuter une seule fois au démarrage, dans `InitDB` ou lors de
-l'initialisation de la MonikerMap, après `AutoMigrate`.
+To be run once at startup, in `InitDB` or during
+`MonikerMap` initialization, after `AutoMigrate`.
 
-Pour les validateurs **jamais vus** dans `daily_participations`,
-`first_active_block` reste `-1` (inconnu — sera déterminé dynamiquement).
+For validators **never seen** in `daily_participations`,
+`first_active_block` stays at `-1` (unknown — will be determined dynamically).
 
 ---
 
-### Phase 3 — Détecter `first_active_block` dynamiquement
+### Phase 3 — Detect `first_active_block` dynamically
 
-#### 3a. Pendant le backfill
+#### 3a. During backfill
 
-Dans le worker de `BackfillParallel`, quand un validateur apparaît dans les
-precommits d'un bloc (`participated = true`) **et que son `first_active_block`
-est `-1`** dans la map transmise, enregistrer ce bloc comme son activation :
+In the `BackfillParallel` worker, when a validator appears in the
+precommits of a block (`participated = true`) **and their `first_active_block`
+is `-1`** in the transmitted map, record this block as their activation:
 
 ```go
-// Lors du traitement des precommits (participated = true)
+// When processing precommits (participated = true)
 if firstActiveBlocks[addr] == -1 {
-    firstActiveBlocks[addr] = j.H   // premier bloc observé
-    // + UpsertAddrMoniker avec first_active_block = j.H
+    firstActiveBlocks[addr] = j.H   // first observed block
+    // + UpsertAddrMoniker with first_active_block = j.H
 }
 ```
 
-#### 3b. Pendant le temps réel (`CollectParticipation`)
+#### 3b. During real-time (`CollectParticipation`)
 
-Même logique : quand un validateur apparaît pour la première fois dans les
-precommits du bloc courant et que son `first_active_block` est `-1`, mettre
-à jour `addr_monikers`.
+Same logic: when a validator appears for the first time in the
+precommits of the current block and their `first_active_block` is `-1`, update
+`addr_monikers`.
 
-#### 3c. Option alternative : interroger valopers.Render
+#### 3c. Alternative option: query valopers.Render
 
-`valopers.Render(":addr")` expose potentiellement une date d'enregistrement.
-Si la réponse contient le bloc de la GovDAO qui a accepté le validateur, on
-peut l'utiliser directement dans `InitMonikerMap`.
+`valopers.Render(":addr")` potentially exposes a registration date.
+If the response contains the GovDAO block that accepted the validator, it can
+be used directly in `InitMonikerMap`.
 
-À investiguer lors de l'implémentation — c'est plus précis mais dépend de la
-structure du realm.
+To investigate during implementation — this is more precise but depends on the
+realm structure.
 
 ---
 
-### Phase 4 — Modifier `BackfillParallel` et `BackfillRange`
+### Phase 4 — Modify `BackfillParallel` and `BackfillRange`
 
-Passer une map `firstActiveBlocks map[string]int64` aux deux fonctions.
+Pass a `firstActiveBlocks map[string]int64` map to both functions.
 
-Dans la boucle "participated false", sauter les blocs antérieurs à l'activation :
+In the "participated false" loop, skip blocks prior to activation:
 
 ```go
 for addr, mon := range monikerMap {
     if _, ok := seen[addr]; ok {
-        continue // déjà ajouté comme participated=true
+        continue // already added as participated=true
     }
     fab := firstActiveBlocks[addr]
     if fab > 0 && j.H < fab {
-        continue // validateur pas encore actif à ce bloc
+        continue // validator not yet active at this block
     }
     rows = append(rows, dpRow{
-        ...
+        ...,
         Participated: false,
     })
 }
 ```
 
-`fab == -1` (inconnu) → on insère quand même (comportement actuel conservé,
-le pire cas est un faux négatif sur les premiers blocs d'un validateur inconnu).
+`fab == -1` (unknown) → still insert (preserves current behavior;
+worst case is a false negative on the first blocks of an unknown validator).
 
 ---
 
-### Phase 5 — Modifier `CollectParticipation` (temps réel)
+### Phase 5 — Modify `CollectParticipation` (real-time)
 
-Même garde dans la boucle des `participated = false` :
+Same guard in the `participated = false` loop:
 
 ```go
 for valAddr, moniker := range MonikerMap {
-    fab := getFirstActiveBlock(valAddr) // lit addr_monikers ou cache mémoire
+    fab := getFirstActiveBlock(valAddr) // reads addr_monikers or in-memory cache
     if fab > 0 && currentHeight < fab {
         continue
     }
@@ -158,9 +158,9 @@ for valAddr, moniker := range MonikerMap {
 
 ---
 
-### Phase 6 — Nettoyage des données existantes (migration one-shot)
+### Phase 6 — Cleanup existing data (one-shot migration)
 
-Après déploiement, supprimer les lignes parasites déjà en base :
+After deployment, delete the spurious rows already in the database:
 
 ```sql
 DELETE FROM daily_participations dp
@@ -173,29 +173,29 @@ WHERE participated = 0
   );
 ```
 
-**Attention :** requête lourde sur grande table — à exécuter hors production
-ou en mode maintenance (WAL mode préserve les lectures concurrentes).
+**Warning:** Heavy query on a large table — run outside of production
+or in maintenance mode (WAL mode preserves concurrent reads).
 
 ---
 
-## Résumé des fichiers à modifier
+## Summary of files to modify
 
-| Fichier | Changement |
+| File | Change |
 | --- | --- |
-| `db_init.go` | Ajouter `FirstActiveBlock int64` à `AddrMoniker` |
-| `db_init.go` | Requête SQL one-shot de peuplement au démarrage |
-| `db.go` | `UpsertAddrMoniker` accepte `firstActiveBlock int64` |
-| `sync.go` | `BackfillParallel` + `BackfillRange` : param `firstActiveBlocks` + garde |
-| `gnovalidator_realtime.go` | `CollectParticipation` : garde sur `first_active_block` |
-| `valoper.go` | `InitMonikerMap` : charger `first_active_block` depuis DB en mémoire |
+| `db_init.go` | Add `FirstActiveBlock int64` to `AddrMoniker` |
+| `db_init.go` | One-shot SQL population query at startup |
+| `db.go` | `UpsertAddrMoniker` accepts `firstActiveBlock int64` |
+| `sync.go` | `BackfillParallel` + `BackfillRange`: `firstActiveBlocks` param + guard |
+| `gnovalidator_realtime.go` | `CollectParticipation`: guard on `first_active_block` |
+| `valoper.go` | `InitMonikerMap`: load `first_active_block` from DB into memory |
 
 ---
 
-## Ordre d'implémentation recommandé
+## Recommended implementation order
 
-1. Phase 1 — struct + AutoMigrate (non breaking)
-2. Phase 2 — peuplement au démarrage (requête SQL idempotente)
-3. Phase 4 — backfill corrigé
-4. Phase 5 — temps réel corrigé
-5. Phase 3b — détection dynamique pendant les deux boucles
-6. Phase 6 — nettoyage des données (après validation en staging)
+1. Phase 1 — struct + AutoMigrate (non-breaking)
+2. Phase 2 — populate at startup (idempotent SQL query)
+3. Phase 4 — corrected backfill
+4. Phase 5 — corrected real-time
+5. Phase 3b — dynamic detection during both loops
+6. Phase 6 — data cleanup (after staging validation)
