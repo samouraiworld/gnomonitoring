@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/api"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
@@ -23,7 +24,11 @@ func TestGetWebhooks(t *testing.T) {
 	err := db.Create(&database.WebhookGovDAO{UserID: userID, Description: "Test", URL: "http://localhost", Type: "discord"}).Error
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodGet, "/webhooks?user_id="+userID, nil)
+	internal.Config.DevMode = true
+	defer func() { internal.Config.DevMode = false }()
+
+	req := httptest.NewRequest(http.MethodGet, "/webhooks", nil)
+	req.Header.Set("X-Debug-UserID", userID)
 	w := httptest.NewRecorder()
 
 	api.ListWebhooksHandler(w, req, db)
@@ -47,7 +52,7 @@ func TestGetAlerts(t *testing.T) {
 		SentAt:      time.Now(),
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/alerts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/alerts?period=current_month", nil)
 	w := httptest.NewRecorder()
 
 	api.Getlastincident(w, req, db)
@@ -70,7 +75,11 @@ func TestGetHourReports(t *testing.T) {
 		Timezone:          "UTC",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/reports?user_id=moniker1", nil)
+	internal.Config.DevMode = true
+	defer func() { internal.Config.DevMode = false }()
+
+	req := httptest.NewRequest(http.MethodGet, "/reports", nil)
+	req.Header.Set("X-Debug-UserID", "moniker1")
 	w := httptest.NewRecorder()
 
 	api.GetReportHourHandler(w, req, db)
