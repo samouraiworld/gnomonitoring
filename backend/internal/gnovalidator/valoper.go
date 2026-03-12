@@ -158,7 +158,7 @@ func InitMonikerMap(db *gorm.DB) {
 		return
 	}
 
-	//Step 2 — Create Gno client for valopers.Render
+	// Step 2 — Create Gno client for valopers.Render
 	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
 	if err != nil {
 		log.Printf("❌ Failed to create RPC client: %v", err)

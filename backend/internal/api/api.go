@@ -101,7 +101,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		w.Write([]byte("Webhook already exists"))
 		return
 	}
-	//for send ultimate Govdao
+	// for send ultimate Govdao
 	govdaolist, err := database.GetLastGovDaoInfo(db)
 	if err != nil {
 		http.Error(w, "error get lastID GovDao: "+err.Error(), http.StatusInternalServerError)
