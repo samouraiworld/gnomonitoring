@@ -101,13 +101,15 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		w.Write([]byte("Webhook already exists"))
 		return
 	}
-	//for send ultimate Govdao
+	// for send ultimate Govdao
 	govdaolist, err := database.GetLastGovDaoInfo(db)
 	if err != nil {
 		http.Error(w, "error get lastID GovDao: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	internal.SendReportGovdao(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, webhook.Type, webhook.URL)
+	if err := internal.SendReportGovdao(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, webhook.Type, webhook.URL); err != nil {
+		log.Printf("❌ SendReportGovdao: %v", err)
+	}
 	// lastid = lastid - 1
 
 	// If not exist insert
@@ -447,7 +449,9 @@ func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB
 		http.Error(w, fmt.Sprintf("Failed to update report hour: %v", err), http.StatusInternalServerError)
 		return
 	}
-	scheduler.Schedulerinstance.ReloadForUser(userID, db)
+	if err := scheduler.Schedulerinstance.ReloadForUser(userID, db); err != nil {
+		log.Printf("❌ ReloadForUser: %v", err)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 func GetReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {

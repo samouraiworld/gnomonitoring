@@ -80,7 +80,7 @@ func SendDailyStatsForUser(db *gorm.DB, userID *string, chatID *int64, loc *time
 	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
 
 	rates, minBlock, maxBlock := CalculateRate(db, yesterday)
-	//rates, minBlock, maxBlock := CalculateRate(db, "2025-10-18")
+	// rates, minBlock, maxBlock := CalculateRate(db, "2025-10-18")
 	if len(rates) == 0 {
 		log.Printf("⚠️ No participation data found on date %s", yesterday)
 		return
@@ -223,7 +223,7 @@ func SendUserReportInChunks(userID string, fullMsg string, db *gorm.DB, maxLen i
 		buffer.WriteString("\n")
 	}
 
-	//send ultimate part
+	// send ultimate part
 	if buffer.Len() > 0 {
 		err := internal.SendUserReportAlert(userID, buffer.String(), db)
 		if err != nil {

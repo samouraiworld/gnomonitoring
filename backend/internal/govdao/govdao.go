@@ -211,7 +211,9 @@ func WebsocketGovdao(db *gorm.DB) {
 		initMsg := gqlMessage{
 			Type: "connection_init",
 		}
-		c.WriteJSON(initMsg)
+		if err := c.WriteJSON(initMsg); err != nil {
+			log.Printf("❌ WriteJSON initMsg: %v", err)
+		}
 
 		query := `
         subscription {
@@ -248,7 +250,9 @@ func WebsocketGovdao(db *gorm.DB) {
 				"query": query,
 			},
 		}
-		c.WriteJSON(startMsg)
+		if err := c.WriteJSON(startMsg); err != nil {
+			log.Printf("❌ WriteJSON startMsg: %v", err)
+		}
 
 		readErr := false
 		for {
@@ -381,7 +385,7 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 					// Build Url
 					url := fmt.Sprintf("%s/r/gov/dao:%s", internal.Config.Gnoweb, attr.Value)
 
-					//Convert ID to Int
+					// Convert ID to Int
 					idInt, err := strconv.Atoi(attr.Value)
 					if err != nil {
 						log.Printf("Error converting id to int: %v", err)
@@ -420,11 +424,13 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 
 					// Insert to db
 					log.Printf("ID: %d", idInt)
-					database.InsertGovdao(db, idInt, url, title, txurl, status)
-					switch who {
-					case "socket":
-						internal.MultiSendReportGovdao(idInt, title, url, txurl, db)
-
+					if err := database.InsertGovdao(db, idInt, url, title, txurl, status); err != nil {
+						log.Printf("❌ InsertGovdao: %v", err)
+					}
+					if who == "socket" {
+						if err := internal.MultiSendReportGovdao(idInt, title, url, txurl, db); err != nil {
+							log.Printf("❌ MultiSendReportGovdao: %v", err)
+						}
 					}
 
 				}
@@ -496,7 +502,9 @@ func CheckProposalStatus(db *gorm.DB) {
 				" 🔗source: %s \n "+
 				" ACCEPTED",
 				p.Id, p.Title, p.Url)
-			internal.SendInfoGovdao(msg, db)
+			if err := internal.SendInfoGovdao(msg, db); err != nil {
+				log.Printf("❌ SendInfoGovdao: %v", err)
+			}
 
 			// Send Telegram message
 			msgT := fmt.Sprintf(
@@ -507,7 +515,9 @@ func CheckProposalStatus(db *gorm.DB) {
 				p.Title,
 				p.Url,
 			)
-			telegram.MsgTelegram(msgT, internal.Config.TokenTelegramValidator, "govdao", db)
+			if err := telegram.MsgTelegram(msgT, internal.Config.TokenTelegramValidator, "govdao", db); err != nil {
+				log.Printf("❌ MsgTelegram: %v", err)
+			}
 
 			log.Printf("❌ Failed to update govdao status id=%d: %v", p.Id, err)
 			// update GovDao (explicit WHERE to handle id=0)

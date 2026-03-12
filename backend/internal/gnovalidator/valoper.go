@@ -1,13 +1,11 @@
 package gnovalidator
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -23,19 +21,6 @@ import (
 type Valoper struct {
 	Name    string
 	Address string
-}
-
-var httpClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{
-			NextProtos: []string{"http/1.1"},
-		},
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 10 * time.Second,
-		}).DialContext,
-	},
-	Timeout: 15 * time.Second,
 }
 
 func GetValopers(client gnoclient.Client) ([]Valoper, error) {
@@ -59,7 +44,7 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 		re := regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnops/valopers:([a-z0-9]+)\)`)
 		matches := re.FindAllStringSubmatch(data, -1)
 
-		//If no result, we stop the loop
+		// If no result, we stop the loop
 		if len(matches) == 0 {
 			break
 		}
@@ -110,7 +95,7 @@ func GetGenesisMonikers(rpcURL string) (map[string]string, error) {
 		}
 	}
 
-	//Check that the next token is indeed an array [
+	// Check that the next token is indeed an array [
 	tok, err := decoder.Token()
 	if err != nil {
 		return nil, fmt.Errorf("error reading validators array start: %w", err)
@@ -144,7 +129,7 @@ func InitMonikerMap(db *gorm.DB) {
 	var resp *http.Response
 	err := doWithRetry(3, 2*time.Second, func() error {
 		var e error
-		resp, e = http.Get(url)
+		resp, e = http.Get(url) // nolint:bodyclose // closed via defer resp.Body.Close() below
 		return e
 	})
 	if err != nil {
@@ -155,7 +140,8 @@ func InitMonikerMap(db *gorm.DB) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalf("Error reading validator response: %v", err)
+		log.Printf("❌ Error reading validator response: %v", err)
+		return
 	}
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("❌ Invalid HTTP status %d from /validators: %s", resp.StatusCode, string(body))
@@ -172,10 +158,11 @@ func InitMonikerMap(db *gorm.DB) {
 		return
 	}
 
-	//Step 2 — Create Gno client for valopers.Render
+	// Step 2 — Create Gno client for valopers.Render
 	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
 	if err != nil {
-		log.Fatalf("Failed to create RPC client: %v", err)
+		log.Printf("❌ Failed to create RPC client: %v", err)
+		return
 	}
 	client := gnoclient.Client{RPCClient: rpcClient}
 

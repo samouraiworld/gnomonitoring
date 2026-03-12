@@ -216,13 +216,13 @@ func AnswerCallbackQuery(botToken, callbackID string) error {
 	return nil
 }
 
-func MsgTelegram(msg string, Token, TypeChatid string, db *gorm.DB) (err error) {
+func MsgTelegram(msg string, token, typeChatid string, db *gorm.DB) (err error) {
 
-	if Token == "" {
+	if token == "" {
 		return fmt.Errorf("token is empty")
 	}
 
-	ids, err := database.GetAllChatIDs(db, TypeChatid)
+	ids, err := database.GetAllChatIDs(db, typeChatid)
 	if err != nil {
 		log.Printf("❌ GetAllChatIDs failed: %v", err)
 		return err
@@ -230,7 +230,7 @@ func MsgTelegram(msg string, Token, TypeChatid string, db *gorm.DB) (err error) 
 
 	for _, chatID := range ids {
 
-		err := SendMessageTelegram(Token, chatID, msg)
+		err := SendMessageTelegram(token, chatID, msg)
 		if err != nil {
 			fmt.Printf("❌ Error for  %d: %v\n", chatID, err)
 		} else {
@@ -240,13 +240,13 @@ func MsgTelegram(msg string, Token, TypeChatid string, db *gorm.DB) (err error) 
 
 	return nil
 }
-func MsgTelegramAlert(msg string, addr, Token, TypeChatid string, db *gorm.DB) (err error) {
+func MsgTelegramAlert(msg string, addr, token, typeChatid string, db *gorm.DB) (err error) {
 
-	if Token == "" {
+	if token == "" {
 		return fmt.Errorf("token is empty")
 	}
 
-	ids, err := database.GetAllChatIDs(db, TypeChatid)
+	ids, err := database.GetAllChatIDs(db, typeChatid)
 	if err != nil {
 		log.Printf("❌ GetAllChatIDs failed: %v", err)
 		return err
@@ -269,7 +269,7 @@ func MsgTelegramAlert(msg string, addr, Token, TypeChatid string, db *gorm.DB) (
 
 			if s.Addr == addr {
 
-				if err := SendMessageTelegram(Token, chatID, msg); err != nil {
+				if err := SendMessageTelegram(token, chatID, msg); err != nil {
 					log.Printf("❌ send failed for chat_id=%d: %v", chatID, err)
 					continue
 				} else {

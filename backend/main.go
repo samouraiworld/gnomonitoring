@@ -16,10 +16,10 @@ import (
 
 func main() {
 	internal.LoadConfig()
-	//========================Init Flags ==================== //
+	// ========================Init Flags ==================== //
 	internal.InitFlags()
 
-	//======================== Init DB ==================== //
+	// ======================== Init DB ==================== //
 
 	db, err := database.InitDB("./db/webhooks.db")
 	if err != nil {
@@ -54,7 +54,7 @@ func main() {
 	go govdao.StartGovDAo(db)
 	go govdao.StartProposalWatcher(db)
 
-	//======================= Telegram bot validator
+	// ======================= Telegram bot validator ========================= //
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -67,7 +67,7 @@ func main() {
 		}
 	}()
 
-	// ======================= Telegram govdao bot ======================================
+	// ======================= Telegram govdao bot ====================================== //
 	ctxgovdao, cancelgovdao := context.WithCancel(context.Background())
 	defer cancelgovdao()
 
@@ -87,6 +87,6 @@ func main() {
 
 	// ====================== Run API ============================================== //
 
-	api.StartWebhookAPI(db) //API
+	api.StartWebhookAPI(db) // API
 	select {}
 }

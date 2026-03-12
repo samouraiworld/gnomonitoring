@@ -107,7 +107,7 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 	}
 	for _, wh := range webhooks {
 
-		//================== Build msg ===============
+		// ================== Build msg ===============
 
 		var emoji, prefix string
 		switch wh.Type {
@@ -173,7 +173,7 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 
 					fullMsg += "\n <@" + r.MentionTag + ">"
 				}
-				//log.Println(fullMsg)
+				// log.Println(fullMsg)
 				if level == "WARNING" {
 					emoji = "⚠️"
 					prefix = ""
@@ -228,7 +228,9 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 		)
 	}
 
-	telegram.MsgTelegramAlert(fullMsg, addr, Config.TokenTelegramValidator, "validator", db)
+	if err := telegram.MsgTelegramAlert(fullMsg, addr, Config.TokenTelegramValidator, "validator", db); err != nil {
+		log.Printf("❌ MsgTelegramAlert: %v", err)
+	}
 
 	return nil
 }
@@ -296,7 +298,9 @@ func SendResolveValidator(msg string, addr string, db *gorm.DB) error {
 		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
 
 	}
-	telegram.MsgTelegramAlert(msg, addr, Config.TokenTelegramValidator, "validator", db)
+	if err := telegram.MsgTelegramAlert(msg, addr, Config.TokenTelegramValidator, "validator", db); err != nil {
+		log.Printf("❌ MsgTelegramAlert: %v", err)
+	}
 
 	return nil
 }
@@ -333,7 +337,9 @@ func SendInfoValidator(msg string, level string, db *gorm.DB) error {
 		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
 
 	}
-	telegram.MsgTelegram(msg, Config.TokenTelegramValidator, "validator", db)
+	if err := telegram.MsgTelegram(msg, Config.TokenTelegramValidator, "validator", db); err != nil {
+		log.Printf("❌ MsgTelegram: %v", err)
+	}
 	return nil
 }
 
@@ -350,9 +356,9 @@ func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) 
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 	for _, wh := range webhooks {
-
-		SendReportGovdao(id, title, urlgnoweb, urltx, wh.Type, wh.URL)
-
+		if err := SendReportGovdao(id, title, urlgnoweb, urltx, wh.Type, wh.URL); err != nil {
+			log.Printf("❌ SendReportGovdao: %v", err)
+		}
 	}
 	// build msg for telegram and senb at all chatid
 	msg := telegram.FormatTelegramMsg(id, title, urlgnoweb, urltx)

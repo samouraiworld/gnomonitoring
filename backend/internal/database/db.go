@@ -146,7 +146,9 @@ func InsertMonitoringWebhook(userID, url, description, typ string, db *gorm.DB) 
 		Type:        typ,
 	}
 
-	createHourReport(db, userID)
+	if err := createHourReport(db, userID); err != nil {
+		log.Printf("⚠️ createHourReport: %v", err)
+	}
 
 	return db.Create(&wh).Error
 }
@@ -200,7 +202,7 @@ func GetWebhookByID(db *gorm.DB, userID, table string) (*WebhookValidator, error
 	return &wh, nil
 }
 
-//============================== USERS ===================================================
+// ============================== USERS ===================================================
 
 func InsertUser(userID, email, name string, db *gorm.DB) error {
 	u := User{
@@ -254,19 +256,19 @@ func GetUserById(db *gorm.DB, userID string) (*User, error) {
 }
 
 // ============================== Report Hour =============================================
-func UpdateHeureReport(db *gorm.DB, H, M int, T, userID string) error {
+func UpdateHeureReport(db *gorm.DB, h, m int, t, userID string) error {
 	// Validate timezone
-	if _, err := time.LoadLocation(T); err != nil {
-		log.Printf("Invalid timezone '%s', defaulting to UTC", T)
-		T = "UTC"
+	if _, err := time.LoadLocation(t); err != nil {
+		log.Printf("Invalid timezone '%s', defaulting to UTC", t)
+		t = "UTC"
 	}
 	return db.
 		Model(&HourReport{}).
 		Where("user_id = ?", userID).
 		Updates(map[string]interface{}{
-			"daily_report_hour":   H,
-			"daily_report_minute": M,
-			"timezone":            T,
+			"daily_report_hour":   h,
+			"daily_report_minute": m,
+			"timezone":            t,
 		}).Error
 }
 func GetHourReport(db *gorm.DB, userID string) (*HourReport, error) {

@@ -26,8 +26,9 @@ func InsertChatID(db *gorm.DB, chatID int64, chatType string) (bool, error) {
 	}
 
 	if chatType == "validator" {
-		createHourReportTelegram(db, chatID)
-
+		if err := createHourReportTelegram(db, chatID); err != nil {
+			log.Printf("⚠️ createHourReportTelegram: %v", err)
+		}
 	}
 
 	tx := db.Clauses(clause.OnConflict{
@@ -47,10 +48,10 @@ func InsertChatID(db *gorm.DB, chatID int64, chatType string) (bool, error) {
 func DeleteChatByID(db *gorm.DB, chatID int64) error {
 	return db.Where("chat_id = ?", chatID).Delete(&Telegram{}).Error
 }
-func GetAllChatIDs(db *gorm.DB, TypeChatid string) ([]int64, error) {
+func GetAllChatIDs(db *gorm.DB, typeChatid string) ([]int64, error) {
 	var chats []Telegram
 
-	if err := db.Where("type = ?", TypeChatid).Find(&chats).Error; err != nil {
+	if err := db.Where("type = ?", typeChatid).Find(&chats).Error; err != nil {
 		return nil, err
 	}
 
@@ -64,30 +65,30 @@ func GetAllChatIDs(db *gorm.DB, TypeChatid string) ([]int64, error) {
 // ============================ Telegram validato =============================================
 // ================== Telegram hours report ================================
 
-func UpdateTelegramHeureReport(db *gorm.DB, H, M int, T string, chatid int64) error {
+func UpdateTelegramHeureReport(db *gorm.DB, h, m int, t string, chatid int64) error {
 	// Validate timezone
-	if _, err := time.LoadLocation(T); err != nil {
-		log.Printf("Invalid timezone '%s', defaulting to UTC", T)
-		T = "UTC"
+	if _, err := time.LoadLocation(t); err != nil {
+		log.Printf("Invalid timezone '%s', defaulting to UTC", t)
+		t = "UTC"
 	}
 	return db.
 		Model(&TelegramHourReport{}).
 		Where("chat_id = ?", chatid).
 		Updates(map[string]interface{}{
-			"daily_report_hour":   H,
-			"daily_report_minute": M,
-			"timezone":            T,
+			"daily_report_hour":   h,
+			"daily_report_minute": m,
+			"timezone":            t,
 		}).Error
 }
 
-func ActivateTelegramReport(db *gorm.DB, IsActivate bool, chatid int64) error {
+func ActivateTelegramReport(db *gorm.DB, isActivate bool, chatid int64) error {
 	// Validate timezone
 
 	return db.
 		Model(&TelegramHourReport{}).
 		Where("chat_id = ?", chatid).
 		Updates(map[string]interface{}{
-			"activate": IsActivate,
+			"activate": isActivate,
 		}).Error
 }
 
@@ -251,7 +252,7 @@ func UpdateTelegramValidatorSubStatus(db *gorm.DB, chatID int64, addr, moniker, 
 		return fmt.Errorf("database lookup failed: %w", err)
 	}
 
-	//update status
+	// update status
 	if sub.Activate == activate {
 		log.Printf("⚙️ Subscription for %s already set to %t", addr, activate)
 		return nil

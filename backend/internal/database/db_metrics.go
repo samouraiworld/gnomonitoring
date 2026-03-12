@@ -52,12 +52,14 @@ func GetAlertLog(db *gorm.DB, period string) ([]AlertSummary, error) {
 	case "all_time":
 		var minS, maxS sql.NullString
 		const layout = "2006-01-02 15:04:05.999999999-07:00"
-		db.Raw(`
+		if err := db.Raw(`
 				SELECT
 					MIN(sent_at),
 					MAX(sent_at)
 				FROM alert_logs
-				`).Row().Scan(&minS, &maxS)
+				`).Row().Scan(&minS, &maxS); err != nil {
+			return nil, fmt.Errorf("error scanning alert log bounds: %w", err)
+		}
 
 		startf, err := time.Parse(layout, minS.String)
 		if err != nil {

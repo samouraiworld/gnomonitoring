@@ -27,3 +27,9 @@ issues:
   exclude-rules:
     - path: "_test.go"
       linters: [errcheck]
+    # json.Encode / w.Write in HTTP handlers: error is tied to the TCP connection,
+    # there is nothing useful to do if it fails.
+    - source: "json\\.NewEncoder\\(w\\)\\.Encode"
+      linters: [errcheck]
+    - source: "w\\.Write\\("
+      linters: [errcheck]
