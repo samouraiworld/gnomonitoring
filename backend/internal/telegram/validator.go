@@ -156,7 +156,9 @@ func formatParticipationRAte(db *gorm.DB, period string, page, limit int, filter
 	var rates []database.ParticipationRate
 	cacheKey := "status:" + period
 	if cached, ok := getCached(cacheKey); ok {
-		rates = cached.([]database.ParticipationRate)
+		if v, ok := cached.([]database.ParticipationRate); ok {
+			rates = v
+		}
 	} else {
 		var fetchErr error
 		rates, fetchErr = database.GetCurrentPeriodParticipationRate(db, period)
@@ -208,7 +210,9 @@ func formatUptime(db *gorm.DB, page, limit int, filter, sortOrder string) (msg s
 
 	var results []database.UptimeMetrics
 	if cached, ok := getCached("uptime"); ok {
-		results = cached.([]database.UptimeMetrics)
+		if v, ok := cached.([]database.UptimeMetrics); ok {
+			results = v
+		}
 	} else {
 		var fetchErr error
 		results, fetchErr = database.UptimeMetricsaddr(db)
@@ -260,7 +264,9 @@ func formatOperationTime(db *gorm.DB, page, limit int, filter string) (msg strin
 
 	var results []database.OperationTimeMetrics
 	if cached, ok := getCached("operation_time"); ok {
-		results = cached.([]database.OperationTimeMetrics)
+		if v, ok := cached.([]database.OperationTimeMetrics); ok {
+			results = v
+		}
 	} else {
 		var fetchErr error
 		results, fetchErr = database.OperationTimeMetricsaddr(db)
@@ -299,7 +305,9 @@ func FormatTxcontrib(db *gorm.DB, period string, page, limit int, filter, sortOr
 	var txcontrib []database.TxContribMetrics
 	cacheKey := "tx_contrib:" + period
 	if cached, ok := getCached(cacheKey); ok {
-		txcontrib = cached.([]database.TxContribMetrics)
+		if v, ok := cached.([]database.TxContribMetrics); ok {
+			txcontrib = v
+		}
 	} else {
 		var fetchErr error
 		txcontrib, fetchErr = database.TxContrib(db, period)
@@ -339,7 +347,9 @@ func formatMissing(db *gorm.DB, period string, page, limit int, filter string) (
 	var rows []database.MissingBlockMetrics
 	cacheKey := "missing:" + period
 	if cached, ok := getCached(cacheKey); ok {
-		rows = cached.([]database.MissingBlockMetrics)
+		if v, ok := cached.([]database.MissingBlockMetrics); ok {
+			rows = v
+		}
 	} else {
 		var fetchErr error
 		rows, fetchErr = database.MissingBlock(db, period)
@@ -366,11 +376,12 @@ func formatMissing(db *gorm.DB, period string, page, limit int, filter string) (
 
 	for i, r := range rows[start:end] {
 		emoji := "🟢"
-		if r.MissingBlock > 50 {
+		switch {
+		case r.MissingBlock > 50:
 			emoji = "🔴"
-		} else if r.MissingBlock > 20 {
+		case r.MissingBlock > 20:
 			emoji = "🟠"
-		} else if r.MissingBlock > 5 {
+		case r.MissingBlock > 5:
 			emoji = "🟡"
 		}
 

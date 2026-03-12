@@ -216,7 +216,7 @@ func AnswerCallbackQuery(botToken, callbackID string) error {
 	return nil
 }
 
-func MsgTelegram(Msg string, Token, TypeChatid string, db *gorm.DB) (err error) {
+func MsgTelegram(msg string, Token, TypeChatid string, db *gorm.DB) (err error) {
 
 	if Token == "" {
 		return fmt.Errorf("token is empty")
@@ -230,17 +230,17 @@ func MsgTelegram(Msg string, Token, TypeChatid string, db *gorm.DB) (err error) 
 
 	for _, chatID := range ids {
 
-		err := SendMessageTelegram(Token, chatID, Msg)
+		err := SendMessageTelegram(Token, chatID, msg)
 		if err != nil {
 			fmt.Printf("❌ Error for  %d: %v\n", chatID, err)
 		} else {
-			fmt.Printf("✅ Msg Send  %d\n Msg: %s", chatID, Msg)
+			fmt.Printf("✅ Msg Send  %d\n Msg: %s", chatID, msg)
 		}
 	}
 
 	return nil
 }
-func MsgTelegramAlert(Msg string, addr, Token, TypeChatid string, db *gorm.DB) (err error) {
+func MsgTelegramAlert(msg string, addr, Token, TypeChatid string, db *gorm.DB) (err error) {
 
 	if Token == "" {
 		return fmt.Errorf("token is empty")
@@ -269,7 +269,7 @@ func MsgTelegramAlert(Msg string, addr, Token, TypeChatid string, db *gorm.DB) (
 
 			if s.Addr == addr {
 
-				if err := SendMessageTelegram(Token, chatID, Msg); err != nil {
+				if err := SendMessageTelegram(Token, chatID, msg); err != nil {
 					log.Printf("❌ send failed for chat_id=%d: %v", chatID, err)
 					continue
 				} else {
@@ -305,7 +305,7 @@ func extractCommand(msg *message) (cmd, args string, ok bool) {
 // - token: ton bot token
 // - stopCtx: to shut down properly (SIGINT/SIGTERM)
 
-func StartCommandLoop(stopCtx context.Context, token string, handlers map[string]func(int64, string), callbackHandler func(int64, int, string), TypeChatid string, db *gorm.DB) error {
+func StartCommandLoop(stopCtx context.Context, token string, handlers map[string]func(int64, string), callbackHandler func(int64, int, string), typeChatid string, db *gorm.DB) error {
 	base := "https://api.telegram.org/bot" + url.PathEscape(token) + "/getUpdates"
 	offset := 0
 	httpClient := &http.Client{Timeout: 50 * time.Second}
@@ -363,25 +363,27 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 			// For save Chat ID into db (fire-and-forget, idempotent upsert)
 			chatIDToInsert := up.Message.Chat.ID
 			go func() {
-				insert, err := database.InsertChatID(db, chatIDToInsert, TypeChatid)
+				insert, err := database.InsertChatID(db, chatIDToInsert, typeChatid)
 				if err != nil {
 					log.Printf("⚠️ InsertChatID failed for chat_id=%d: %v", chatIDToInsert, err)
 					return
 				}
-				if insert && TypeChatid == "govdao" {
+				if insert && typeChatid == "govdao" {
 					log.Println("Send ultimate govdao telegram")
 					govdaolist, err := database.GetLastGovDaoInfo(db)
 					if err != nil {
 						log.Printf("error get lastid govdao: %s", err)
 						return
 					}
-					SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, chatIDToInsert)
+					if err := SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, chatIDToInsert); err != nil {
+					log.Printf("❌ SendReportGovdaoTelegram failed for chat_id=%d: %v", chatIDToInsert, err)
+				}
 				}
 			}()
-			if HandleSearchInput(token, db, TypeChatid, up.Message.Chat.ID, up.Message.Text) {
+			if HandleSearchInput(token, db, typeChatid, up.Message.Chat.ID, up.Message.Text) {
 				continue
 			}
-			//========================
+			// ========================
 			cmd, args, ok := extractCommand(up.Message)
 			if !ok {
 				continue
