@@ -1,0 +1,31 @@
+version: "2"
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - misspell
+    - bodyclose
+    - gocritic
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+
+  staticcheck:
+    checks: ["all", "-SA1019"]
+
+run:
+  timeout: 5m
+  tests: true
+
+issues:
+  max-same-issues: 5
+  exclude-rules:
+    - path: "_test.go"
+      linters: [errcheck]

@@ -7,25 +7,64 @@ on:
       - develop
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Run Go Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.22
+          go-version: "1.23"
+          cache-dependency-path: backend/go.sum
 
-      - name: Install dependencies
-        run: cd backend && go mod tidy
+      - name: Install CGO dependencies
+        run: sudo apt-get install -y gcc libc-dev libsqlite3-dev
 
-      - name: Run tests for gnovalidator
-        run: cd backend && go test -v ./internal/gnovalidator/
+      - name: Verify go.mod / go.sum are tidy
+        run: |
+          cd backend
+          go mod tidy
+          git diff --exit-code go.mod go.sum
 
-      - name: Run tests for internal
-        run: cd backend && go test -v ./internal/
+      - name: Run tests (race detector + coverage)
+        run: |
+          cd backend
+          go test \
+            -v \
+            -race \
+            -timeout 10m \
+            -coverprofile=coverage.out \
+            -covermode=atomic \
+            ./...
+
+      - name: Coverage summary
+        run: |
+          cd backend
+          go tool cover -func=coverage.out | tail -1
+
+      - name: Enforce minimum coverage (30%)
+        run: |
+          cd backend
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${COVERAGE}%"
+          if awk "BEGIN {exit !($COVERAGE < 30)}"; then
+            echo "Coverage ${COVERAGE}% is below 30% threshold"
+            exit 1
+          fi
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: backend/coverage.out
+          retention-days: 7
