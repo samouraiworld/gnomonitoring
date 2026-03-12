@@ -92,7 +92,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, from, to int64, moniker
 			end = to
 		}
 
-		//Sequential download
+		// Sequential download
 		for h := start; h <= end; h++ {
 			block, err := client.Block(h)
 			if err != nil || block == nil || block.Block == nil || block.Block.LastCommit == nil {

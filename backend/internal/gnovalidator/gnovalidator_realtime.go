@@ -77,7 +77,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				timeMu.Lock()
 				sinceRPCErr := time.Since(lastRPCErrorAlert)
 				timeMu.Unlock()
-			if sinceRPCErr > 10*time.Minute {
+				if sinceRPCErr > 10*time.Minute {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
 					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
 					log.Println(msg)
@@ -243,7 +243,7 @@ func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
 		for range ticker.C {
 			log.Println("🔁 Refresh MonikerMap...")
 
-			//Copy old map
+			// Copy old map
 			oldMap := make(map[string]string)
 			MonikerMutex.RLock()
 			for k, v := range MonikerMap {

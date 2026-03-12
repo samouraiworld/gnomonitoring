@@ -44,7 +44,7 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 		re := regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnops/valopers:([a-z0-9]+)\)`)
 		matches := re.FindAllStringSubmatch(data, -1)
 
-		//If no result, we stop the loop
+		// If no result, we stop the loop
 		if len(matches) == 0 {
 			break
 		}
@@ -95,7 +95,7 @@ func GetGenesisMonikers(rpcURL string) (map[string]string, error) {
 		}
 	}
 
-	//Check that the next token is indeed an array [
+	// Check that the next token is indeed an array [
 	tok, err := decoder.Token()
 	if err != nil {
 		return nil, fmt.Errorf("error reading validators array start: %w", err)
@@ -129,7 +129,7 @@ func InitMonikerMap(db *gorm.DB) {
 	var resp *http.Response
 	err := doWithRetry(3, 2*time.Second, func() error {
 		var e error
-		resp, e = http.Get(url)
+		resp, e = http.Get(url) // nolint:bodyclose // closed via defer resp.Body.Close() below
 		return e
 	})
 	if err != nil {
@@ -161,7 +161,8 @@ func InitMonikerMap(db *gorm.DB) {
 	//Step 2 — Create Gno client for valopers.Render
 	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
 	if err != nil {
-		log.Fatalf("Failed to create RPC client: %v", err)
+		log.Printf("❌ Failed to create RPC client: %v", err)
+		return
 	}
 	client := gnoclient.Client{RPCClient: rpcClient}
 
