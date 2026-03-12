@@ -219,7 +219,7 @@ Response:
 Operation Time represents the number of days between a validator’s last successful participation and its most recent downtime.
 
 ```bash
-curl -X GET 'localhost:8989/operation_time'
+curl -X GET ‘localhost:8989/operation_time’
 ```
 
 Response:
@@ -229,6 +229,167 @@ Response:
 "addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t",
 "lastDownDate":"2025-10-14 08:00:00+00:00",
 "lastUpDate":"2025-10-18 16:29:24.242186417+00:00","operationTime":4.4}....
+```
+
+**First Seen Metrics:**
+
+Returns the first block date at which each validator was observed participating.
+
+```bash
+curl -X GET ‘localhost:8989/first_seen’
+```
+
+Response:
+
+```json
+[{"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01","firstSeen":"2025-09-01 12:00:00+00:00"},
+{"addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","moniker":"onbloc-val-02","firstSeen":"2025-09-02 08:30:00+00:00"}]
+```
+
+**Block Height:**
+
+Returns the last block height stored in the database.
+
+```bash
+curl -X GET ‘localhost:8989/block_height’
+```
+
+Response:
+
+```json
+{"last_stored": 123456}
+```
+
+**Info:**
+
+Returns the configured Gnoweb and RPC endpoint URLs.
+
+```bash
+curl -X GET ‘localhost:8989/info’
+```
+
+Response:
+
+```json
+{"gnoweb":"https://test9.testnets.gno.land","rpc":"https://rpc.test9.testnets.gno.land"}
+```
+
+**Addr Moniker:**
+
+Returns the moniker for a given validator address.
+
+```bash
+curl -X GET ‘localhost:8989/addr_moniker?addr=g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t’
+```
+
+Response:
+
+```json
+{"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01"}
+```
+
+---
+
+#### 👤 User Management (protected)
+
+All endpoints below require a valid Clerk `Authorization: Bearer <token>` header (or `X-Debug-UserID` in dev mode).
+
+**Create user:**
+
+```bash
+curl -X POST ‘localhost:8989/users’ \
+  -H ‘Authorization: Bearer <token>’ \
+  -H ‘Content-Type: application/json’ \
+  -d ‘{"name":"Alice","email":"alice@example.com"}’
+```
+
+**Get user:**
+
+```bash
+curl -X GET ‘localhost:8989/users?user_id=<user_id>’ \
+  -H ‘Authorization: Bearer <token>’
+```
+
+**Update user:**
+
+```bash
+curl -X PUT ‘localhost:8989/users’ \
+  -H ‘Authorization: Bearer <token>’ \
+  -H ‘Content-Type: application/json’ \
+  -d ‘{"name":"Alice Updated","email":"alice2@example.com"}’
+```
+
+**Delete user:**
+
+```bash
+curl -X DELETE ‘localhost:8989/users’ \
+  -H ‘Authorization: Bearer <token>’
+```
+
+---
+
+#### 🔔 Alert Contacts (protected)
+
+Manage contacts that receive mention tags in CRITICAL alerts.
+
+**List contacts:**
+
+```bash
+curl -X GET ‘localhost:8989/alert-contacts’ \
+  -H ‘Authorization: Bearer <token>’
+```
+
+**Add contact:**
+
+```bash
+curl -X POST ‘localhost:8989/alert-contacts’ \
+  -H ‘Authorization: Bearer <token>’ \
+  -H ‘Content-Type: application/json’ \
+  -d ‘{"moniker":"gnocore-val-01","namecontact":"Bob","mention_tag":"123456789","id_webhook":1}’
+```
+
+**Update contact:**
+
+```bash
+curl -X PUT ‘localhost:8989/alert-contacts’ \
+  -H ‘Authorization: Bearer <token>’ \
+  -H ‘Content-Type: application/json’ \
+  -d ‘{"id":1,"moniker":"gnocore-val-01","namecontact":"Bob","mention_tag":"987654321","id_webhook":1}’
+```
+
+**Delete contact:**
+
+```bash
+curl -X DELETE ‘localhost:8989/alert-contacts?id=1’ \
+  -H ‘Authorization: Bearer <token>’
+```
+
+---
+
+#### 🕘 Daily Report Schedule (protected)
+
+Configure the hour at which the daily report is sent.
+
+**Get current schedule:**
+
+```bash
+curl -X GET ‘localhost:8989/usersH’ \
+  -H ‘Authorization: Bearer <token>’
+```
+
+Response:
+
+```json
+{"user_id":"...","daily_report_hour":9,"daily_report_minute":0,"timezone":"Europe/Paris"}
+```
+
+**Update schedule:**
+
+```bash
+curl -X PUT ‘localhost:8989/usersH’ \
+  -H ‘Authorization: Bearer <token>’ \
+  -H ‘Content-Type: application/json’ \
+  -d ‘{"hour":8,"minute":30,"timezone":"America/New_York"}’
 ```
 
 ---
