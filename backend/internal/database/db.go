@@ -202,7 +202,7 @@ func GetWebhookByID(db *gorm.DB, userID, table string) (*WebhookValidator, error
 	return &wh, nil
 }
 
-//============================== USERS ===================================================
+// ============================== USERS ===================================================
 
 func InsertUser(userID, email, name string, db *gorm.DB) error {
 	u := User{

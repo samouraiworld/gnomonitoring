@@ -119,8 +119,12 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 					}
 					if send_at.IsZero() {
 
-						internal.SendInfoValidator(msg, "CRITICAL", db)
-						database.InsertAlertlog(db, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg)
+						if err := internal.SendInfoValidator(msg, "CRITICAL", db); err != nil {
+							log.Printf("❌ SendInfoValidator: %v", err)
+						}
+						if err := database.InsertAlertlog(db, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg); err != nil {
+							log.Printf("❌ InsertAlertlog: %v", err)
+						}
 					}
 
 					alertSent.Store(true)
@@ -137,8 +141,12 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 
 				if alertSent.Load() && !restoredNotified.Load() {
 					msg := "✅ Activity Restored: Gno.land is back to normal."
-					internal.SendInfoValidator(msg, "INFO", db)
-					database.InsertAlertlog(db, "all", "all", "RESOLVED", latest, latest, false, time.Now(), msg)
+					if err := internal.SendInfoValidator(msg, "INFO", db); err != nil {
+						log.Printf("❌ SendInfoValidator: %v", err)
+					}
+					if err := database.InsertAlertlog(db, "all", "all", "RESOLVED", latest, latest, false, time.Now(), msg); err != nil {
+						log.Printf("❌ InsertAlertlog: %v", err)
+					}
 					restoredNotified.Store(true)
 					alertSent.Store(false)
 				}
@@ -252,7 +260,9 @@ func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
 				if _, exists := oldMap[addr]; !exists {
 					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
 					log.Println(msg)
-					internal.SendInfoValidator(msg, "info", db)
+					if err := internal.SendInfoValidator(msg, "info", db); err != nil {
+						log.Printf("❌ SendInfoValidator: %v", err)
+					}
 				}
 			}
 			MonikerMutex.RUnlock()
@@ -311,7 +321,9 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 
 				if count > 0 {
 					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
-					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now(), "")
+					if err := database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now(), ""); err != nil {
+						log.Printf("❌ InsertAlertlog: %v", err)
+					}
 
 					continue
 				}
@@ -332,7 +344,9 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 				}
 				if countint > 0 {
 					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
-					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now(), "")
+					if err := database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now(), ""); err != nil {
+						log.Printf("❌ InsertAlertlog: %v", err)
+					}
 
 					continue
 				}
@@ -356,13 +370,19 @@ func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
 					// Activer un mute 1h
 					log.Printf("🚫 Too many alerte for %s, muting for 1h", moniker)
 
-					database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now(), "")
+					if err := database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
+						log.Printf("❌ InsertAlertlog: %v", err)
+					}
 
 					continue
 				}
 
-				internal.SendAllValidatorAlerts(missed, today, level, addr, moniker, start_height, end_height, db)
-				database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now(), "")
+				if err := internal.SendAllValidatorAlerts(missed, today, level, addr, moniker, start_height, end_height, db); err != nil {
+					log.Printf("❌ SendAllValidatorAlerts: %v", err)
+				}
+				if err := database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
+					log.Printf("❌ InsertAlertlog: %v", err)
+				}
 
 			}
 
@@ -434,7 +454,9 @@ func SendResolveAlerts(db *gorm.DB) {
 		if recentResolves >= 4 {
 			// Activer un mute d'1h
 			log.Printf("🚫 Too many resolves for %s, muting for 1h", a.Moniker)
-			database.InsertAlertlog(db, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now(), "")
+			if err := database.InsertAlertlog(db, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
+				log.Printf("❌ InsertAlertlog: %v", err)
+			}
 			continue
 		}
 
@@ -453,9 +475,13 @@ func SendResolveAlerts(db *gorm.DB) {
 			continue
 		}
 		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s) at Block %d ", a.Moniker, a.Addr, a.EndHeight+1)
-		internal.SendResolveValidator(resolveMsg, a.Addr, db)
+		if err := internal.SendResolveValidator(resolveMsg, a.Addr, db); err != nil {
+			log.Printf("❌ SendResolveValidator: %v", err)
+		}
 
-		database.InsertAlertlog(db, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), "")
+		if err := database.InsertAlertlog(db, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
+			log.Printf("❌ InsertAlertlog: %v", err)
+		}
 
 	}
 

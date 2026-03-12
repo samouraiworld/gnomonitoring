@@ -1,13 +1,11 @@
 package gnovalidator
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -23,19 +21,6 @@ import (
 type Valoper struct {
 	Name    string
 	Address string
-}
-
-var httpClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{
-			NextProtos: []string{"http/1.1"},
-		},
-		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 10 * time.Second,
-		}).DialContext,
-	},
-	Timeout: 15 * time.Second,
 }
 
 func GetValopers(client gnoclient.Client) ([]Valoper, error) {
@@ -155,7 +140,8 @@ func InitMonikerMap(db *gorm.DB) {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalf("Error reading validator response: %v", err)
+		log.Printf("❌ Error reading validator response: %v", err)
+		return
 	}
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("❌ Invalid HTTP status %d from /validators: %s", resp.StatusCode, string(body))
