@@ -332,13 +332,11 @@ func GetFirstSeen(db *gorm.DB) ([]FirstSeenMetrics, error) {
 func GetTimeOfBlock(db *gorm.DB, numBlock int64) (time.Time, error) {
 	var blockTime time.Time
 
-	query := fmt.Sprintf(`
-		SELECT DISTINCT date 
-		FROM daily_participations 
-		WHERE block_height = %d;
-	`, numBlock)
-
-	err := db.Raw(query).Scan(&blockTime).Error
+	err := db.Raw(`
+		SELECT DISTINCT date
+		FROM daily_participations
+		WHERE block_height = ?
+	`, numBlock).Scan(&blockTime).Error
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to get time of block %d: %w", numBlock, err)
 	}
@@ -348,13 +346,11 @@ func GetTimeOfBlock(db *gorm.DB, numBlock int64) (time.Time, error) {
 func GetTimeOfAlert(db *gorm.DB, numBlock int64) (time.Time, error) {
 	var blockTime time.Time
 
-	query := fmt.Sprintf(`
-		SELECT DISTINCT sent_at 
-		FROM alert_logs 
-		WHERE start_height = %d and end_height =%d;
-	`, numBlock, numBlock)
-
-	err := db.Raw(query).Scan(&blockTime).Error
+	err := db.Raw(`
+		SELECT DISTINCT sent_at
+		FROM alert_logs
+		WHERE start_height = ? AND end_height = ?
+	`, numBlock, numBlock).Scan(&blockTime).Error
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to get time of block %d: %w", numBlock, err)
 	}
