@@ -1,10 +1,8 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -366,10 +364,9 @@ func GetUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// for get userid with apiclerk
-	userID := r.URL.Query().Get("user_id")
-	if userID == "" {
-		http.Error(w, "Missing user_id", http.StatusBadRequest)
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -506,6 +503,26 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
+	// F6: validate mention_tag is a numeric Discord/Slack snowflake (or empty)
+	for _, c := range input.MentionTag {
+		if c < '0' || c > '9' {
+			http.Error(w, "Invalid mention_tag: must be numeric", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// F7: verify the referenced webhook belongs to the calling user
+	if input.IDwebhook != 0 {
+		var count int64
+		db.Model(&database.WebhookValidator{}).
+			Where("id = ? AND user_id = ?", input.IDwebhook, userID).
+			Count(&count)
+		if count == 0 {
+			http.Error(w, "Webhook not found", http.StatusBadRequest)
+			return
+		}
+	}
+
 	err = database.InsertAlertContact(db, input.UserID, input.Moniker, input.NameContact, input.MentionTag, input.IDwebhook)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to insert alert contact: %v", err), http.StatusInternalServerError)
@@ -553,9 +570,6 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		MentionTag  string `json:"mention_tag"`
 		IDwebhook   int    `json:"id_webhook"`
 	}
-	bodyBytes, _ := io.ReadAll(r.Body)
-	log.Println("Raw body:", string(bodyBytes))
-	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
@@ -564,6 +578,14 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// F6: validate mention_tag is numeric (Discord/Slack snowflake) or empty
+	for _, c := range data.MentionTag {
+		if c < '0' || c > '9' {
+			http.Error(w, "Invalid mention_tag: must be numeric", http.StatusBadRequest)
+			return
+		}
 	}
 
 	err = database.UpdateAlertContact(db, data.ID, userID, data.Moniker, data.NameContact, data.MentionTag, data.IDwebhook)
@@ -582,6 +604,12 @@ func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
+	userID, err := authUserIDFromContext(r)
+	if err != nil {
+		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+
 	idStr := r.URL.Query().Get("id")
 	if idStr == "" {
 		http.Error(w, "Missing id", http.StatusBadRequest)
@@ -594,7 +622,7 @@ func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
-	err = database.DeleteAlertContact(db, id)
+	err = database.DeleteAlertContact(db, id, userID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to delete alert contact: %v", err), http.StatusInternalServerError)
 		return

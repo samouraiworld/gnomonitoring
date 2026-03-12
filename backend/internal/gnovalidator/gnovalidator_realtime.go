@@ -57,7 +57,6 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 
 		lastStored, err := GetLastStoredHeight(db)
 
-		println("return lastStored:", lastStored)
 		if lastStored == 0 {
 			log.Printf("⚠️ Database empty get last block: %v", err)
 			lastStored = 0
@@ -69,7 +68,6 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 		}
 
 		currentHeight := lastStored + 1
-		println(currentHeight)
 		for {
 
 			latest, err := client.LatestBlockHeight()
@@ -77,19 +75,15 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				log.Printf("Error retrieving last block: %v", err)
 
 				timeMu.Lock()
-			timeMu.Lock()
-			sinceRPCErr := time.Since(lastRPCErrorAlert)
-			timeMu.Unlock()
-			timeMu.Unlock()
+				sinceRPCErr := time.Since(lastRPCErrorAlert)
+				timeMu.Unlock()
 			if sinceRPCErr > 10*time.Minute {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
 					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
 					log.Println(msg)
 					timeMu.Lock()
-				timeMu.Lock()
-				lastRPCErrorAlert = time.Now()
-				timeMu.Unlock()
-				timeMu.Unlock()
+					lastRPCErrorAlert = time.Now()
+					timeMu.Unlock()
 				}
 				time.Sleep(10 * time.Second)
 				continue
@@ -97,9 +91,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 			// Stagnation detection
 			lph := lastProgressHeight.Load()
 			timeMu.Lock()
-			timeMu.Lock()
 			lpt := lastProgressTime
-			timeMu.Unlock()
 			timeMu.Unlock()
 			if lph != -1 && latest == lph {
 				if !alertSent.Load() && time.Since(lpt) > 2*time.Minute {
@@ -153,9 +145,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 			}
 
 			timeMu.Lock()
-			timeMu.Lock()
 			lastRPCErrorAlert = time.Time{}
-			timeMu.Unlock()
 			timeMu.Unlock()
 
 			if latest <= currentHeight {

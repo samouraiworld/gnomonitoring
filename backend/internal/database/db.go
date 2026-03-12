@@ -170,13 +170,29 @@ func ListMonitoringWebhooks(db *gorm.DB, userID string) ([]WebhookValidator, err
 
 // =============================== gnovalidator y Govdao ======================================
 func UpdateMonitoringWebhook(db *gorm.DB, id int, userID, description, newURL, newType, tablename string) error {
-	stmt := fmt.Sprintf("UPDATE %s SET url = ?, description = ?, type = ? WHERE user_id = ? AND id = ?", tablename)
+	var stmt string
+	switch tablename {
+	case "webhook_gov_daos":
+		stmt = "UPDATE webhook_gov_daos SET url = ?, description = ?, type = ? WHERE user_id = ? AND id = ?"
+	case "webhook_validators":
+		stmt = "UPDATE webhook_validators SET url = ?, description = ?, type = ? WHERE user_id = ? AND id = ?"
+	default:
+		return fmt.Errorf("unknown table: %q", tablename)
+	}
 	return db.Exec(stmt, newURL, description, newType, userID, id).Error
 }
 
 func GetWebhookByID(db *gorm.DB, userID, table string) (*WebhookValidator, error) {
 	var wh WebhookValidator
-	query := fmt.Sprintf("SELECT user_id, description, url, type FROM %s WHERE user_id = ?", table)
+	var query string
+	switch table {
+	case "webhook_gov_daos":
+		query = "SELECT user_id, description, url, type FROM webhook_gov_daos WHERE user_id = ?"
+	case "webhook_validators":
+		query = "SELECT user_id, description, url, type FROM webhook_validators WHERE user_id = ?"
+	default:
+		return nil, fmt.Errorf("unknown table: %q", table)
+	}
 	err := db.Raw(query, userID).Scan(&wh).Error
 	if err != nil {
 		return nil, err
@@ -228,6 +244,9 @@ func GetUserById(db *gorm.DB, userID string) (*User, error) {
 		Select("user_id, nameuser, email").
 		Where("user_id = ?", userID).
 		First(&usr).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -297,8 +316,8 @@ func UpdateAlertContact(db *gorm.DB, id int, userID, moniker, namecontact, menti
 			"id_webhook":  idwebhook,
 		}).Error
 }
-func DeleteAlertContact(db *gorm.DB, id int) error {
-	return db.Delete(&AlertContact{}, id).Error
+func DeleteAlertContact(db *gorm.DB, id int, userID string) error {
+	return db.Where("id = ? AND user_id = ?", id, userID).Delete(&AlertContact{}).Error
 }
 
 // UpsertAddrMoniker inserts or updates the moniker for a given validator address.
