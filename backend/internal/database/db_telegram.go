@@ -185,9 +185,10 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64, chainID string) ([]Valida
 
 	query := `
 		WITH v AS (
-			SELECT DISTINCT moniker, addr
-			FROM daily_participations
-			WHERE chain_id = ?
+			SELECT DISTINCT dp.addr, COALESCE(am.moniker, dp.addr) AS moniker
+			FROM daily_participations dp
+			LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+			WHERE dp.chain_id = ?
 		)
 		SELECT
 			v.moniker,
@@ -217,9 +218,10 @@ func GetAllValidators(db *gorm.DB, chainID string) ([]AddrMoniker, error) {
 	var results []AddrMoniker
 
 	query := `
-			SELECT DISTINCT moniker, addr
-			FROM daily_participations
-			WHERE chain_id = ?;`
+			SELECT DISTINCT dp.addr, COALESCE(am.moniker, dp.addr) AS moniker
+			FROM daily_participations dp
+			LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+			WHERE dp.chain_id = ?;`
 
 	err := db.Raw(query, chainID).Scan(&results).Error
 	if err != nil {
@@ -232,10 +234,11 @@ func GetAllValidators(db *gorm.DB, chainID string) ([]AddrMoniker, error) {
 func ResolveAddrs(db *gorm.DB, chainID string, addrs []string) ([]AddrMoniker, error) {
 	var results []AddrMoniker
 
-	err := db.Table("daily_participations").
-		Select("DISTINCT addr, moniker").
-		Where("chain_id = ? AND addr IN ?", chainID, addrs).
-		Scan(&results).Error
+	err := db.Raw(`
+		SELECT DISTINCT am.addr, COALESCE(am.moniker, am.addr) AS moniker
+		FROM addr_monikers am
+		WHERE am.chain_id = ? AND am.addr IN ?
+	`, chainID, addrs).Scan(&results).Error
 	if err != nil {
 		return nil, err
 	}

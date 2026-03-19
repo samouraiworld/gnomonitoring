@@ -279,6 +279,18 @@ func TestGetUptime_ChainIsolation(t *testing.T) {
 
 	now := time.Now()
 
+	// Seed addr_monikers for both chains
+	db.Create(&database.AddrMoniker{
+		ChainID: "chainAlpha",
+		Addr:    "g1alpha",
+		Moniker: "AlphaValidator",
+	})
+	db.Create(&database.AddrMoniker{
+		ChainID: "chainBeta",
+		Addr:    "g1beta",
+		Moniker: "BetaValidator",
+	})
+
 	// Seed 5 participation rows for chainAlpha (unique address).
 	for i := range 5 {
 		db.Create(&database.DailyParticipation{
