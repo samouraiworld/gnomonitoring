@@ -1,5 +1,21 @@
 # feat-add-endpoint-addr-moniker
 
+## Implementation Status (2026-03-19)
+
+| Phase | Status | Completion |
+|-------|--------|-----------|
+| Phase 1 | ✅ Complete | UpsertAddrMoniker with chainID; InitMonikerMap populates addr_monikers |
+| Phase 2 | ✅ Complete | Endpoint `/addr_moniker?addr=...&chain=...` working with validation |
+| Phase 3 | ⏳ Pending | SQL migration to drop moniker from daily_participations |
+| Phase 4 | ✅ Complete | 6 metric queries rewritten with LEFT JOIN on addr_monikers |
+| Phase 5 | ✅ Complete | daily_missing_series view created with multi-chain support |
+| Phase 6 | ✅ Complete | 3 Telegram queries updated with JOIN pattern |
+| Phase 7 | ⏳ Blocked | Struct field removal depends on Phase 3 migration |
+
+**All tests passing (34/34).** Code builds cleanly.
+
+---
+
 ## Goal
 
 1. Create a `GET /addr_moniker?addr=...` endpoint to resolve a moniker from a validator address.
