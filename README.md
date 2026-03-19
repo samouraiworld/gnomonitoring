@@ -53,7 +53,199 @@ docker compose up -d
 
 ---
 
-<!-- ### ✅ Gno Validator Monitoring -->
+## 🌍 Multi-Chain Support
+
+Gnomonitoring now supports monitoring multiple Gno.land blockchains simultaneously from a single deployment. Each chain runs independently while sharing the same database and REST API.
+
+### Overview
+
+Instead of deploying separate instances per chain, you can configure multiple chains in one `config.yaml`. Each chain:
+
+- Has its own RPC endpoint, GraphQL indexer, and Gnoweb UI
+- Maintains independent validator monitoring loops
+- Stores data isolated by chain ID in SQLite
+- Sends alerts and reports scoped to its validators
+- Works seamlessly with webhooks, Telegram bots, and Prometheus metrics
+
+### Configuration
+
+Edit `config.yaml` to define your chains:
+
+```yaml
+backend_port: "8989"
+metrics_port: 8888
+dev_mode: true
+clerk_secret_key: "sk_test...."
+token_telegram_validator: ""
+token_telegram_govdao: ""
+
+# Default chain used when no ?chain= query parameter is supplied
+default_chain: "test12"
+
+# Multi-chain configuration
+chains:
+  test12:
+    rpc_endpoint: "https://rpc.test12.testnets.gno.land"
+    graphql: "https://indexer.test12.testnets.gno.land/graphql/query"
+    gnoweb: "https://test12.testnets.gno.land"
+    enabled: true
+
+  gnoland1:
+    rpc_endpoint: "https://rpc.betanet.testnets.gno.land"
+    graphql: "https://indexer.betanet.testnets.gno.land/graphql/query"
+    gnoweb: "https://betanet.testnets.gno.land"
+    enabled: true
+
+  test11:
+    rpc_endpoint: "https://rpc.test11.testnets.gno.land"
+    graphql: "https://indexer.test11.testnets.gno.land/graphql/query"
+    gnoweb: "https://test11.testnets.gno.land"
+    enabled: false  # Disable by setting to false
+```
+
+**Key points:**
+
+- Each chain gets a unique identifier (e.g., `test12`, `gnoland1`)
+- Set `enabled: true` to monitor a chain
+- Set `enabled: false` to disable a chain without removing it
+- `default_chain` is used when clients don't specify a chain parameter
+- All disabled chains are ignored during startup
+
+### API Endpoints with Chain Parameter
+
+Most API endpoints accept an optional `?chain=<chain_id>` query parameter to scope results to a specific chain. If omitted, the default chain is used.
+
+**Examples:**
+
+```bash
+# Get participation rate for default chain (test12)
+curl 'http://localhost:8989/Participation?period=current_month'
+
+# Get participation rate for specific chain
+curl 'http://localhost:8989/Participation?chain=gnoland1&period=current_month'
+
+# Get uptime for test12 chain
+curl 'http://localhost:8989/uptime?chain=test12'
+
+# Get block height for gnoland1 chain
+curl 'http://localhost:8989/block_height?chain=gnoland1'
+
+# Get missing blocks for test11 chain
+curl 'http://localhost:8989/missing_block?chain=test11'
+```
+
+### Webhook Management with Chain Scoping
+
+Webhooks can be created for a specific chain or globally to receive alerts from all chains.
+
+**Create a webhook for a specific chain:**
+
+```bash
+curl -L -X POST 'http://localhost:8989/webhooks/validator?chain=gnoland1' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <Clerk_Token>' \
+  -d '{
+    "URL": "https://discord.com/api/webhooks/...",
+    "Type": "discord",
+    "Description": "GnoLand1 Alerts"
+  }'
+```
+
+**Create a global webhook (all chains):**
+
+```bash
+curl -L -X POST 'http://localhost:8989/webhooks/validator' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <Clerk_Token>' \
+  -d '{
+    "URL": "https://discord.com/api/webhooks/...",
+    "Type": "discord",
+    "Description": "All Chains Alerts"
+  }'
+```
+
+**Alert messages include chain labels:**
+
+When an alert is sent, it includes the chain identifier:
+
+```text
+[test12] WARNING: Validator gnocore-val-01 missed 5 blocks (#12345-#12349)
+[gnoland1] CRITICAL: Validator onbloc-val-02 missed 30 blocks (#67890-#67919)
+```
+
+### Telegram Bot Multi-Chain Support
+
+The Telegram validator bot includes commands to switch between chains on a per-chat basis.
+
+**New commands:**
+
+- `/chain` - Display current active chain and list all enabled chains
+
+```text
+Current chain: test12
+
+Available chains:
+- test12
+- gnoland1
+- test11
+
+Use /setchain <chain> to switch chains.
+```
+
+- `/setchain <chain_id>` - Switch the active chain for this chat
+
+```text
+/setchain gnoland1
+→ Active chain set to gnoland1
+
+/setchain
+→ Using default chain: test12
+```
+
+**Updated commands (all work per-chain context):**
+
+- `/status` - Get validator participation rate on active chain
+- `/uptime` - Get validator uptime on active chain
+- `/tx_contrib` - Get validator transaction contribution on active chain
+- `/missing` - List validators with missed blocks on active chain
+- `/subscribe on <address>` - Subscribe to validator alerts on active chain
+- `/subscribe off <address>` - Unsubscribe from validator alerts on active chain
+- `/subscribe list` - Show your subscriptions on active chain
+
+**Hourly reports per chain:**
+
+When you activate `/report`, you receive daily reports for your currently active chain. Switch chains with `/setchain` and activate reports on each chain independently.
+
+### Prometheus Metrics with Chain Labels
+
+All Prometheus metrics include a `chain` label to distinguish data by chain:
+
+```text
+gnoland_missed_blocks{chain="test12",moniker="gnocore-val-01",validator_address="g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t"} 5
+gnoland_missed_blocks{chain="gnoland1",moniker="onbloc-val-02",validator_address="g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2"} 12
+
+gnoland_validator_participation_rate{chain="test12",moniker="gnocore-val-01",validator_address="g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t"} 99.98
+gnoland_validator_participation_rate{chain="gnoland1",moniker="onbloc-val-02",validator_address="g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2"} 98.5
+```
+
+Use Prometheus relabeling or Grafana to group metrics by chain:
+
+```yaml
+metric_relabel_configs:
+  - source_labels: [chain]
+    regex: (.+)
+    action: keep
+```
+
+### Known Limitations
+
+1. **GovDAO Bot Single-Chain**: The GovDAO bot monitors proposals only on the `default_chain`. To monitor proposals on multiple chains, deploy separate instances.
+
+2. **Prometheus Memory**: Each (chain × validator × metric) creates a new time series. With 5 chains and 100 validators, expect ~1500 metric series. Monitor Prometheus memory usage; archive old data if needed.
+
+3. **SQLite Scaling**: Suitable for up to 1M records per chain per year. With 5 chains at 200K records/year each, SQLite handles 1M total records. Beyond 5M records, implement data archiving or migrate to PostgreSQL.
+
+---
 
 #### 🔗 Webhook Management (Discord / Slack)
 
@@ -416,11 +608,13 @@ List of  metrics:
   ⮑ Params: ```limit``` (optional, default: 10)
  ```/status limit=5```
 
-**/executedproposals — show the last executed proposals**
-  ⮑ Params: ```limit``` (optional, default: 10)
- ```/executedproposals limit=5```
+#### /executedproposals — show the last executed proposals
 
-**/lastproposal — show the most recent proposal**
+⮑ Params: ```limit``` (optional, default: 10)
+
+```/executedproposals limit=5```
+
+#### /lastproposal — show the most recent proposal
 
 ##### 🌐 Gnovalidator bot
 

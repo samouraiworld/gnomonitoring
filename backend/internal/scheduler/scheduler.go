@@ -113,8 +113,8 @@ func (s *Scheduler) ReloadForUser(userID string, db *gorm.DB) error {
 		Timezone          string
 	}
 	err := s.db.Raw(`
-		SELECT daily_report_hour, daily_report_minute, timezone 
-		FROM hour_reports 
+		SELECT daily_report_hour, daily_report_minute, timezone
+		FROM hour_reports
 		WHERE user_id = ?
 	`, userID).Scan(&config).Error
 
@@ -124,4 +124,23 @@ func (s *Scheduler) ReloadForUser(userID string, db *gorm.DB) error {
 	s.StartForUser(userID, config.DailyReportHour, config.DailyReportMinute, config.Timezone, db)
 	return nil
 
+}
+
+func (s *Scheduler) ReloadForTelegram(chatID int64, chainID string, db *gorm.DB) error {
+	var config struct {
+		DailyReportHour   int
+		DailyReportMinute int
+		Timezone          string
+	}
+	err := s.db.Raw(`
+		SELECT daily_report_hour, daily_report_minute, timezone
+		FROM telegram_hour_reports
+		WHERE chat_id = ? AND chain_id = ?
+	`, chatID, chainID).Scan(&config).Error
+
+	if err != nil {
+		return fmt.Errorf("failed to reload telegram config: %w", err)
+	}
+	s.StartForTelegram(chatID, chainID, config.DailyReportHour, config.DailyReportMinute, config.Timezone, db)
+	return nil
 }
