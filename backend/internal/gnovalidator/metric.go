@@ -5,7 +5,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func CalculateValidatorRates(db *gorm.DB) ([]ValidatorStat, error) {
+func CalculateValidatorRates(db *gorm.DB, chainID string) ([]ValidatorStat, error) {
 	var results []struct {
 		Addr               string
 		Moniker            string
@@ -15,6 +15,7 @@ func CalculateValidatorRates(db *gorm.DB) ([]ValidatorStat, error) {
 
 	err := db.Model(&database.DailyParticipation{}).
 		Select("addr, moniker, COUNT(*) as total_blocks, SUM(CASE WHEN participated THEN 1 ELSE 0 END) as participated_blocks").
+		Where("chain_id = ?", chainID).
 		Group("addr, moniker").
 		Scan(&results).Error
 	if err != nil {
@@ -37,7 +38,7 @@ func CalculateValidatorRates(db *gorm.DB) ([]ValidatorStat, error) {
 	return stats, nil
 }
 
-func CalculateMissedBlocks(db *gorm.DB) ([]MissedBlockStat, error) {
+func CalculateMissedBlocks(db *gorm.DB, chainID string) ([]MissedBlockStat, error) {
 	var results []struct {
 		Addr    string
 		Moniker string
@@ -46,6 +47,7 @@ func CalculateMissedBlocks(db *gorm.DB) ([]MissedBlockStat, error) {
 
 	err := db.Model(&database.DailyParticipation{}).
 		Select("addr, moniker, SUM(CASE WHEN participated = false THEN 1 ELSE 0 END) as missed").
+		Where("chain_id = ?", chainID).
 		Group("addr, moniker").
 		Scan(&results).Error
 	if err != nil {
@@ -64,15 +66,16 @@ func CalculateMissedBlocks(db *gorm.DB) ([]MissedBlockStat, error) {
 	return stats, nil
 }
 
-func CalculateConsecutiveMissedBlocks(db *gorm.DB) ([]ConsecutiveMissedStat, error) {
+func CalculateConsecutiveMissedBlocks(db *gorm.DB, chainID string) ([]ConsecutiveMissedStat, error) {
 	var rows []database.DailyParticipation
 
 	err := db.Raw(`
 		SELECT addr, moniker, participated, block_height
 		FROM daily_participations
-		WHERE block_height > (SELECT MAX(block_height) FROM daily_participations) - 200
+		WHERE chain_id = ?
+		AND block_height > (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - 200
 		ORDER BY addr, block_height ASC
-	`).Scan(&rows).Error
+	`, chainID, chainID).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}

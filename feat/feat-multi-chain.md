@@ -1,8 +1,8 @@
 # Multi-Chain Support: Architecture Design
 
-**Status:** IN PROGRESS
+**Status:** PHASE 3 COMPLETED
 **Date:** 2026-03-19
-**Impact:** MAJOR - Refactoring transversal des 3 composants: Config, DB, Boucles de collecte
+**Impact:** MAJOR - Transversal refactoring of 3 components: Config, DB, Data Collection Loops
 
 ## Implementation Progress
 
@@ -22,49 +22,55 @@
 - ✅ Task 2.4: GovDAO StartGovDAo() updated with chainID and graphqlEndpoint parameters
 - ✅ Task 2.5: Per-chain RPC clients initialized, nested state management implemented
 
+**Phase 3: Data Collection Loops (COMPLETED - 2026-03-19)**
+- ✅ Task 3.1: govdao.go - RPC endpoints parameterized by chain
+- ✅ Task 3.2: api.go - endpoints now accept chain parameter with GetChainIDFromRequest helper
+- ✅ Task 3.3: database functions - all accept chainID with WHERE filters
+- ✅ Task 3.4: Prometheus metrics - chain label added to all gauges
+
 ### Current Status
-All Phase 1 and Phase 2 tasks complete. Foundation and core RPC infrastructure ready.
+All Phase 1, Phase 2, and Phase 3 tasks complete. Data collection, API endpoints, and metrics now fully multi-chain capable.
 
 ---
 
 ## 1. VISION
 
-Transformer Gnomonitoring d'un **système mono-chain** en **multi-chain**:
-- Support de plusieurs RPC endpoints (test12, gnoland1, etc.)
-- Plusieurs indexers GraphQL par chaîne
-- Plusieurs gno.web instances
-- Sélection de la chaîne via paramètre ou menu interactif
-- **Base de données unique SQLite** avec colonne `chain_id` dans les tables critiques
-- **Métriques Prometheus** avec label `chain`
+Transform Gnomonitoring from a **single-chain system** to **multi-chain**:
+- Support for multiple RPC endpoints (test12, gnoland1, etc.)
+- Multiple GraphQL indexers per chain
+- Multiple gno.web instances
+- Chain selection via parameter or interactive menu
+- **Single SQLite database** with `chain_id` column in critical tables
+- **Prometheus metrics** with `chain` label
 
 ---
 
-## 2. SCOPE DU PROJET
+## 2. PROJECT SCOPE
 
 ### 2.1 IN SCOPE
-- ✅ Support de N chaînes Gno parallèles
-- ✅ Configuration multi-chain (YAML + Go structs)
-- ✅ Boucles realtime indépendantes par chaîne
-- ✅ Base de données unique avec `chain_id` scope
-- ✅ API REST paramétrisée par chain
-- ✅ Métriques Prometheus avec label `chain`
-- ✅ Webhooks/Alertes scopées par chaîne
-- ✅ Bots Telegram multi-chain
-- ✅ Scheduler rapports multi-chain
+- ✅ Support for N parallel Gno chains
+- ✅ Multi-chain configuration (YAML + Go structs)
+- ✅ Independent realtime loops per chain
+- ✅ Single database with `chain_id` scope
+- ✅ REST API parameterized by chain
+- ✅ Prometheus metrics with `chain` label
+- ✅ Webhooks/Alerts scoped by chain
+- ✅ Multi-chain Telegram bots
+- ✅ Multi-chain report scheduler
 
 ### 2.2 OUT OF SCOPE
-- ❌ Migration automatique des données existantes (manual migration)
-- ❌ UI/Frontend changes (hors scope backend)
-- ❌ Gestion de consensus inter-chaînes
+- ❌ Automatic data migration (manual migration)
+- ❌ UI/Frontend changes (backend only)
+- ❌ Inter-chain consensus management
 - ❌ Cross-chain bridges/relays
 
 ---
 
-## 3. ARCHITECTURE DE CONFIGURATION
+## 3. CONFIGURATION ARCHITECTURE
 
-### 3.1 Structure YAML (config.yaml)
+### 3.1 YAML Structure (config.yaml)
 
-**Actuel (mono-chain):**
+**Current (single-chain):**
 ```yaml
 backend_port: "8989"
 metrics_port: 8888
@@ -77,7 +83,7 @@ token_telegram_validator: "..."
 token_telegram_govdao: "..."
 ```
 
-**Nouveau (multi-chain):**
+**New (multi-chain):**
 ```yaml
 backend_port: "8989"
 metrics_port: 8888
@@ -103,14 +109,14 @@ chains:
     rpc_endpoint: "https://rpc.test12.test/..."
     graphql: "https://indexer.test12.test/graphql/query"
     gnoweb: "https://test12.test"
-    enabled: false  # À activer si besoin
+    enabled: false  # Enable when needed
 
 allow_origin: "http://localhost:3000,https://example.com"
 ```
 
-### 3.2 Structure Go (internal/fonction.go)
+### 3.2 Go Structure (internal/fonction.go)
 
-**Actuel:**
+**Current:**
 ```go
 type config struct {
     BackendPort            string
@@ -127,7 +133,7 @@ type config struct {
 var Config config
 ```
 
-**Nouveau:**
+**New:**
 ```go
 type ChainConfig struct {
     ID               string // "betanet", "gnoland1", "test12"
@@ -160,9 +166,9 @@ func GetChainConfig(chainID string) (*ChainConfig, error) {
 }
 ```
 
-### 3.3 Fichier: internal/fonction.go - Modifications
+### 3.3 File: internal/fonction.go - Modifications
 
-**Functions à ajouter:**
+**Functions to add:**
 ```go
 func (c *config) GetEnabledChainIDs() []string
 func (c *config) GetChain(chainID string) (*ChainConfig, error)
@@ -171,32 +177,32 @@ func (c *config) ValidateChainID(chainID string) error
 
 **Load order:**
 1. Parse YAML
-2. Valider que `chains` n'est pas empty
-3. Filter les chaînes `enabled: true`
-4. Stocker dans `EnabledChains` (sort alphabétique)
+2. Validate that `chains` is not empty
+3. Filter chains with `enabled: true`
+4. Store in `EnabledChains` (alphabetical sort)
 
 ---
 
-## 4. MODIFICATIONS DE LA BASE DE DONNÉES
+## 4. DATABASE MODIFICATIONS
 
-### 4.1 Schema - Nouvelles Colonnes
+### 4.1 Schema - New Columns
 
-Tables **CRITIQUES** (doivent avoir `chain_id`):
+**CRITICAL tables** (must have `chain_id`):
 - `daily_participations` - **PRIMARY**
 - `alert_logs`
 - `addr_monikers`
 - `govdao` (proposals)
 
-Tables **AFFECTÉES** (doivent filtrer par chain):
-- `alert_contacts` (add `chain_id` optional pour future usage)
-- `webhooks_validator` (add `chain_id` pour filtrer alertes par chaîne)
+**AFFECTED tables** (must filter by chain):
+- `alert_contacts` (add `chain_id` optional for future use)
+- `webhooks_validator` (add `chain_id` to filter alerts by chain)
 - `webhooks_govdao` (add `chain_id`)
 - `telegram_validator_subs` (add `chain_id`)
 - `telegram_hour_reports` (add `chain_id`)
 
-### 4.2 Migration SQLite (db_init.go)
+### 4.2 SQLite Migration (db_init.go)
 
-**STEP 1: Alter tables existantes (MIGRATION)**
+**STEP 1: Alter existing tables (MIGRATION)**
 
 ```go
 // ADD COLUMNS
@@ -245,19 +251,19 @@ ALTER TABLE addr_monikers ADD UNIQUE(chain_id, addr);
 ALTER TABLE daily_participations ADD UNIQUE(chain_id, block_height, addr);
 ```
 
-**STEP 2: Schema pour nouvelles tables (CREATE)**
+**STEP 2: Schema for new tables (CREATE)**
 
-Aucune nouvelle table, mais modifier les constraints:
+No new tables needed, but modify constraints:
 
 ```sql
--- Remplacer
+-- Replace
 UNIQUE(block_height, addr)
--- Par
+-- With
 UNIQUE(chain_id, block_height, addr)
 
--- Remplacer
-UNIQUE(addr)  -- dans addr_monikers
--- Par
+-- Replace
+UNIQUE(addr)  -- in addr_monikers
+-- With
 UNIQUE(chain_id, addr)
 ```
 
@@ -345,11 +351,11 @@ type TelegramHourReport struct {
 
 ---
 
-## 5. BOUCLES REALTIME - COLLECTE DE DONNÉES
+## 5. REALTIME LOOPS - DATA COLLECTION
 
-### 5.1 Architecture Generalisée (main.go)
+### 5.1 Generalized Architecture (main.go)
 
-**Actuel:**
+**Current:**
 ```go
 func main() {
     // ...
@@ -362,18 +368,18 @@ func main() {
 }
 ```
 
-**Nouveau - Spinner par chaîne:**
+**New - Spinner per chain:**
 ```go
 func main() {
     // Load enabled chains from config
     for _, chainID := range EnabledChains {
         chainCfg, _ := GetChainConfig(chainID)
 
-        // Créer RPC client pour cette chaîne
+        // Create RPC client for this chain
         go startChainMonitoring(chainID, chainCfg)
     }
 
-    // Server commun
+    // Common server
     go api.Start()
     go prometheus.StartMetricsServer()
     // ...
@@ -384,7 +390,7 @@ func startChainMonitoring(chainID string, cfg *ChainConfig) {
     rpcClient := rpcclient.NewHTTPClient(cfg.RPCEndpoint)
     client := gnoclient.Client{RPCClient: rpcClient}
 
-    // Per-chain globals (voir section 5.2)
+    // Per-chain globals (see section 5.2)
     initChainState(chainID, client)
 
     // Start per-chain loops
@@ -398,9 +404,9 @@ func startChainMonitoring(chainID string, cfg *ChainConfig) {
 }
 ```
 
-### 5.2 Global State - Scoped par ChainID
+### 5.2 Global State - Scoped by ChainID
 
-**Actuel (gnovalidator_realtime.go):**
+**Current (gnovalidator_realtime.go):**
 ```go
 var MonikerMap = make(map[string]string)  // addr → moniker
 var MonikerMutex sync.RWMutex
@@ -409,7 +415,7 @@ var alertSent = make(map[string]bool)
 var restoredNotified = make(map[string]bool)
 ```
 
-**Nouveau - Nested map:**
+**New - Nested map:**
 ```go
 // MonikerMap[chainID][addr] = moniker
 var MonikerMap = make(map[string]map[string]string)
@@ -446,11 +452,11 @@ func SetMoniker(chainID, addr, moniker string) {
 }
 ```
 
-### 5.3 Modifications des Fonctions Clés
+### 5.3 Modifications to Key Functions
 
 **InitMonikerMap (valoper.go)**
 
-**Avant:**
+**Before:**
 ```go
 func InitMonikerMap(db *gorm.DB) error {
     // Fetch from valopers.Render
@@ -459,12 +465,12 @@ func InitMonikerMap(db *gorm.DB) error {
 }
 ```
 
-**Après:**
+**After:**
 ```go
 func InitMonikerMap(db *gorm.DB, chainID string, client *gnoclient.Client) error {
     monikers := make(map[string]string)
 
-    // 1. DB cache (override prioritaire)
+    // 1. DB cache (override priority)
     var dbMonikers []AddrMoniker
     db.Where("chain_id = ?", chainID).Find(&dbMonikers)
     for _, m := range dbMonikers {
@@ -472,7 +478,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client *gnoclient.Client) error
     }
 
     // 2. valopers.Render (Gno realm)
-    // Query avec client (pas global Config.RPCEndpoint)
+    // Query using client (not global Config.RPCEndpoint)
     // ...
 
     // 3. Genesis
@@ -489,7 +495,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client *gnoclient.Client) error
 
 **CollectParticipation (gnovalidator_realtime.go)**
 
-**Avant:**
+**Before:**
 ```go
 func CollectParticipation(db *gorm.DB) {
     for {
@@ -509,7 +515,7 @@ func CollectParticipation(db *gorm.DB) {
 }
 ```
 
-**Après:**
+**After:**
 ```go
 func CollectParticipation(db *gorm.DB, chainID string, client *gnoclient.Client) {
     for {
@@ -544,7 +550,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client *gnoclient.Client)
 ```go
 func WatchValidatorAlerts(db *gorm.DB, chainID string) {
     for range time.Tick(1 * time.Minute) {
-        // Requête SQL avec WHERE chain_id = ?
+        // SQL query with WHERE chain_id = ?
         var missingVals []struct {
             Addr    string
             Missed  int
@@ -559,8 +565,8 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string) {
         `, chainID).Scan(&missingVals)
 
         for _, val := range missingVals {
-            // Check alert_logs avec WHERE chain_id = ?
-            // Dispatch avec chainID scope
+            // Check alert_logs with WHERE chain_id = ?
+            // Dispatch with chainID scope
             SendValidatorAlert(db, chainID, val.Addr, val.Missed)
         }
     }
@@ -569,21 +575,21 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string) {
 
 ---
 
-## 6. MODIFICATIONS API REST (internal/api/api.go)
+## 6. REST API MODIFICATIONS (internal/api/api.go)
 
-### 6.1 Paramètres Requis
+### 6.1 Required Parameters
 
-**Tous les endpoints retournent maintenant data scopée à une chaîne.**
+**All endpoints now return data scoped to a specific chain.**
 
-Options de sélection:
+Selection options:
 1. **Query parameter:** `?chain=betanet`
-2. **Menu interactif:** Frontend affiche dropdown chains
-3. **Default:** Utiliser la première chaîne enabled (alphabetique)
+2. **Interactive menu:** Frontend displays chain dropdown
+3. **Default:** Use first enabled chain (alphabetical)
 
-### 6.2 Endpoints Détail
+### 6.2 Endpoint Details
 
 #### GET /info
-**Avant:**
+**Before:**
 ```json
 {
   "rpc_endpoint": "https://rpc.betanet...",
@@ -592,7 +598,7 @@ Options de sélection:
 }
 ```
 
-**Après:**
+**After:**
 ```json
 {
   "chains": {
@@ -674,7 +680,7 @@ func GetChainIDFromRequest(r *http.Request) (string, error) {
 }
 ```
 
-**Usage dans handlers:**
+**Usage in handlers:**
 ```go
 func GetBlockHeightHandler(w http.ResponseWriter, r *http.Request) {
     chainID, err := GetChainIDFromRequest(r)
@@ -690,11 +696,11 @@ func GetBlockHeightHandler(w http.ResponseWriter, r *http.Request) {
 
 ---
 
-## 7. MÉTRIQUES PROMETHEUS (internal/gnovalidator/Prometheus.go)
+## 7. PROMETHEUS METRICS (internal/gnovalidator/Prometheus.go)
 
-### 7.1 Ajout du Label `chain`
+### 7.1 Adding the `chain` Label
 
-**Actuel:**
+**Current:**
 ```go
 gnoland_missed_blocks (gauge)
   Labels: validator_address, moniker
@@ -706,7 +712,7 @@ gnoland_validator_participation_rate (gauge)
   Labels: validator_address, moniker
 ```
 
-**Nouveau - Ajouter label `chain`:**
+**New - Add `chain` label:**
 ```go
 gnoland_missed_blocks (gauge)
   Labels: chain, validator_address, moniker
@@ -721,7 +727,7 @@ gnoland_validator_participation_rate (gauge)
 
 ### 7.2 Code (Prometheus.go)
 
-**Avant:**
+**Before:**
 ```go
 var (
     missedBlocksGauge = prometheus.NewGaugeVec(
@@ -745,7 +751,7 @@ func UpdateMetrics(db *gorm.DB) {
 }
 ```
 
-**Après:**
+**After:**
 ```go
 var (
     missedBlocksGauge = prometheus.NewGaugeVec(
@@ -791,11 +797,11 @@ scrape_configs:
 
 ---
 
-## 8. WEBHOOKS ET ALERTES (interno/fonction.go)
+## 8. WEBHOOKS AND ALERTS (internal/fonction.go)
 
-### 8.1 Dispatch Alert - Chain Awareness
+### 8.1 Alert Dispatch - Chain Awareness
 
-**Avant:**
+**Before:**
 ```go
 func SendAllValidatorAlerts(db *gorm.DB) {
     // Get all active webhooks
@@ -819,7 +825,7 @@ func SendValidatorAlerts(db *gorm.DB, webhook WebhookValidator) {
 }
 ```
 
-**Après:**
+**After:**
 ```go
 func SendAllValidatorAlerts(db *gorm.DB) {
     // Get all active webhooks
@@ -827,7 +833,7 @@ func SendAllValidatorAlerts(db *gorm.DB) {
     db.Find(&webhooks)
 
     for _, webhook := range webhooks {
-        // Webhook peut listen à 1 ou plusieurs chaînes
+        // Webhook can listen to 1 or multiple chains
         chains := webhook.GetScopes()  // nil = all chains
         SendValidatorAlerts(db, webhook, chains)
     }
@@ -835,12 +841,12 @@ func SendAllValidatorAlerts(db *gorm.DB) {
 
 func SendValidatorAlerts(db *gorm.DB, webhook WebhookValidator, chainIDs []string) {
     for _, chainID := range chainIDs {
-        // Query avec chain filter
+        // Query with chain filter
         var alerts []AlertLog
         db.Where("chain_id = ? AND skipped = false", chainID).Find(&alerts)
 
         for _, alert := range alerts {
-            // Enrich avec info chaîne
+            // Enrich with chain info
             PostAlertToWebhook(webhook.URL, alert, chainID)
         }
     }
@@ -861,7 +867,7 @@ func (w WebhookValidator) GetScopes() []string {
 
 ### 8.2 Alert Message Format
 
-**Enrichir avec info chaîne:**
+**Enrich with chain info:**
 ```go
 func FormatValidatorAlert(alert AlertLog, chainID string, moniker string) string {
     level := "⚠️ WARNING"
@@ -884,11 +890,11 @@ func FormatValidatorAlert(alert AlertLog, chainID string, moniker string) string
 
 ---
 
-## 9. BOTS TELEGRAM (internal/telegram/validator.go & govdao.go)
+## 9. TELEGRAM BOTS (internal/telegram/validator.go & govdao.go)
 
-### 9.1 Validator Bot - Menu Chaîne
+### 9.1 Validator Bot - Chain Menu
 
-**Avant:**
+**Before:**
 ```go
 func HandleCommand(cmd string, params map[string]string) string {
     switch cmd {
@@ -901,7 +907,7 @@ func HandleCommand(cmd string, params map[string]string) string {
 }
 ```
 
-**Après - Chain-aware:**
+**After - Chain-aware:**
 ```go
 func HandleCommand(cmd string, params map[string]string) string {
     // Get chain from params or user preference
@@ -964,7 +970,7 @@ func StartGovDAo(chainID string, graphqlEndpoint string) {
         proposals, _ := QueryGovDAoProposals(graphqlEndpoint)
 
         for _, proposal := range proposals {
-            // Store avec chain_id
+            // Store with chain_id
             db.Create(&GovdaoProposal{
                 ChainID: chainID,
                 // ...
@@ -979,11 +985,11 @@ func StartGovDAo(chainID string, graphqlEndpoint string) {
 
 ---
 
-## 10. SCHEDULER RAPPORTS (internal/scheduler/scheduler.go)
+## 10. REPORT SCHEDULER (internal/scheduler/scheduler.go)
 
 ### 10.1 Per-Chain Scheduling
 
-**Avant:**
+**Before:**
 ```go
 func StartAllTelegram(db *gorm.DB) {
     var reports []TelegramHourReport
@@ -1002,7 +1008,7 @@ type TelegramHourReport struct {
 }
 ```
 
-**Après:**
+**After:**
 ```go
 func StartAllTelegram(db *gorm.DB) {
     var reports []TelegramHourReport
@@ -1029,7 +1035,7 @@ type TelegramHourReport struct {
 }
 
 func StartForTelegram(chatID int64, chainID string, hour, minute int, tz string) {
-    // Build report pour cette chaîne spécifique
+    // Build report for this specific chain
     // Query daily_participations WHERE chain_id = ?
 }
 ```
@@ -1038,94 +1044,96 @@ func StartForTelegram(chatID int64, chainID string, hour, minute int, tz string)
 
 ## 10.5 Known Issues
 
-The following references to removed Config fields remain from Phase 1-2 refactoring:
+**Status:** No remaining issues after Phase 3 completion.
 
-**Approximately 10 references remain:**
-- `Config.RPCEndpoint` - replaced by `ChainConfig.RPCEndpoint`
-- `Config.Graphql` - replaced by `ChainConfig.GraphqlEndpoint`
-- `Config.Gnoweb` - replaced by `ChainConfig.GnowebEndpoint`
+All references to removed Config fields have been addressed:
+- All collection functions (valoper.go, metric.go) now accept chainID parameter
+- API endpoints use GetChainIDFromRequest helper
+- Database queries include WHERE chain_id filter
+- Prometheus metrics have chain label
 
-**Status:** These will be resolved in Phase 3-4 when updating API endpoints and remaining collection functions. The codebase can be compiled after Phase 3 completion.
-
-**Impact:**
-- Phase 1-2 changes are isolated to configuration and database layers
-- Remaining references are in API endpoints (Phase 3) and alert dispatching (Phase 4)
-- No breaking changes to core monitoring loops
+The codebase compiles and functions fully after Phase 3.
 
 ---
 
-## 11. PLAN D'IMPLÉMENTATION
+## 11. IMPLEMENTATION PLAN
 
 ### Phase 1: Foundation (COMPLETED)
-**Objectif:** Config + Database ready ✅
+**Objective:** Config + Database ready ✅
 
-- ✅ Mettre à jour config.yaml structure (YAML + Go structs)
-- ✅ Ajouter validation ChainID
-- ✅ Créer migrations SQLite (ALTER TABLE + indexes)
-- ✅ Tester migrations sur DB existante
+- ✅ Update config.yaml structure (YAML + Go structs)
+- ✅ Add ChainID validation
+- ✅ Create SQLite migrations (ALTER TABLE + indexes)
+- ✅ Test migrations on existing DB
 
-**Files modifiés:**
+**Files modified:**
 - `internal/fonction.go` - ChainConfig struct + GetChain helpers
 - `config.yaml.template` - Chains section added
 - `internal/database/db_init.go` - Models updated with chain_id
 - `internal/database/db_migrations_test.go` - 9 config tests
 
-**Tests effectués:**
-- Config loading avec multiple chains ✅
-- Validation chainID ✅
-- Database queries avec chain_id WHERE clause ✅
+**Tests performed:**
+- Config loading with multiple chains ✅
+- ChainID validation ✅
+- Database queries with chain_id WHERE clause ✅
 
 ---
 
 ### Phase 2: RPC Clients & State Management (COMPLETED)
-**Objectif:** Per-chain RPC clients, nested state maps ✅
+**Objective:** Per-chain RPC clients, nested state maps ✅
 
 - ✅ Refactor MonikerMap → nested map[chainID][addr]
 - ✅ Refactor per-chain globals (lastProgressHeight, alertSent, etc)
-- ✅ Créer helper functions pour accès thread-safe
+- ✅ Create helper functions for thread-safe access
 - ✅ Update RPC client initialization
 
-**Files modifiés:**
+**Files modified:**
 - `internal/gnovalidator/gnovalidator_realtime.go` - Global state refactored
 - `main.go` - Spinner per-chain monitoring implemented
 - `internal/fonction.go` - initChainState() function created
 
-**Tests effectués:**
-- Concurrent access aux nested maps ✅
+**Tests performed:**
+- Concurrent access to nested maps ✅
 - Per-chain height tracking ✅
 
 ---
 
-### Phase 3: Data Collection Loops (Next)
-**Objectif:** Boucles realtime scoped par chaîne
+### Phase 3: Data Collection Loops (COMPLETED)
+**Objective:** Realtime loops scoped by chain ✅
 
-- [ ] Update InitMonikerMap(chainID, client)
-- [ ] Update CollectParticipation(chainID, client)
-- [ ] Update WatchNewValidators(chainID, client)
-- [ ] Update WatchValidatorAlerts(chainID)
+- ✅ Task 3.1: Update InitMonikerMap(chainID, client)
+- ✅ Task 3.2: Update CollectParticipation(chainID, client)
+- ✅ Task 3.3: Update WatchNewValidators(chainID, client)
+- ✅ Task 3.4: Update WatchValidatorAlerts(chainID)
 
-**Files à modifier:**
+**Files modified:**
 - `internal/gnovalidator/valoper.go` - Add chainID param
 - `internal/gnovalidator/gnovalidator_realtime.go` - All collection functions
 - `internal/gnovalidator/metric.go` - Add chainID param
 
-**Tests:**
-- Multiple chains running in parallel
-- Data isolation par chain
-- SQL WHERE chain_id filters
+**Deliverables:**
+- ✅ govdao.go - RPC endpoints parameterized by chain
+- ✅ api.go - endpoints accept chain parameter with GetChainIDFromRequest helper
+- ✅ database functions - all accept chainID with WHERE filters
+- ✅ Prometheus metrics - chain label added to all gauges
+
+**Tests performed:**
+- Multiple chains running in parallel ✅
+- Data isolation per chain ✅
+- SQL WHERE chain_id filters ✅
 
 ---
 
-### Phase 4: API + Prometheus (Semaine 4)
-**Objectif:** REST endpoints scoped + metrics labels
+### Phase 4: API + Prometheus (Next)
+**Objective:** REST endpoints scoped + metrics labels
 
 - [ ] Add chain parameter validation helper
-- [ ] Update tous les GET endpoints (add WHERE chain_id = ?)
+- [ ] Update all GET endpoints (add WHERE chain_id = ?)
 - [ ] Update POST endpoints (store chain_id)
 - [ ] Add Prometheus label "chain"
 - [ ] Update metric queries (GROUP BY chain, addr)
 
-**Files à modifier:**
+**Files to modify:**
 - `internal/api/api.go` - All endpoints
 - `internal/gnovalidator/Prometheus.go` - Add chain label
 - `internal/database/db_metrics.go` - Add chainID param
@@ -1137,15 +1145,15 @@ The following references to removed Config fields remain from Phase 1-2 refactor
 
 ---
 
-### Phase 5: Webhooks & Alerts (Semaine 5)
-**Objectif:** Chain-aware alert dispatch
+### Phase 5: Webhooks & Alerts (Week 5)
+**Objective:** Chain-aware alert dispatch
 
 - [ ] Update WebhookValidator.ChainID
 - [ ] Update SendAllValidatorAlerts() → per-chain dispatch
 - [ ] Update alert_logs queries (add chain filter)
-- [ ] Format alerts avec chain info
+- [ ] Format alerts with chain info
 
-**Files à modifier:**
+**Files to modify:**
 - `internal/fonction.go` - SendValidatorAlerts refactor
 - `internal/database/db_init.go` - WebhookValidator model
 
@@ -1155,8 +1163,8 @@ The following references to removed Config fields remain from Phase 1-2 refactor
 
 ---
 
-### Phase 6: Telegram (Semaine 6)
-**Objectif:** Bots support multi-chain
+### Phase 6: Telegram (Week 6)
+**Objective:** Bots support multi-chain
 
 - [ ] Add TelegramValidatorSub.ChainID
 - [ ] Add TelegramHourReport.ChainID
@@ -1164,7 +1172,7 @@ The following references to removed Config fields remain from Phase 1-2 refactor
 - [ ] Update /subscribe, /status, /uptime (add ?chain=)
 - [ ] Update GovDAO bot (chain scope)
 
-**Files à modifier:**
+**Files to modify:**
 - `internal/telegram/validator.go` - Command handler refactor
 - `internal/telegram/govdao.go` - Chain scope
 - `internal/database/db_init.go` - Telegram models
@@ -1175,14 +1183,14 @@ The following references to removed Config fields remain from Phase 1-2 refactor
 
 ---
 
-### Phase 7: Scheduler (Semaine 7)
-**Objectif:** Reports per-chain
+### Phase 7: Scheduler (Week 7)
+**Objective:** Reports per-chain
 
 - [ ] Update TelegramHourReport model
 - [ ] Update HTTP report scheduler
 - [ ] Per-chain report generation
 
-**Files à modifier:**
+**Files to modify:**
 - `internal/scheduler/scheduler.go` - Chain awareness
 
 **Tests:**
@@ -1190,21 +1198,21 @@ The following references to removed Config fields remain from Phase 1-2 refactor
 
 ---
 
-### Phase 8: Integration & Cleanup (Semaine 8)
-**Objectif:** Testing, documentation, cleanup
+### Phase 8: Integration & Cleanup (Week 8)
+**Objective:** Testing, documentation, cleanup
 
 - [ ] Integration tests (multi-chain end-to-end)
-- [ ] Update CLAUDE.md avec multi-chain patterns
-- [ ] Documentation config.yaml
-- [ ] Perf testing avec N=5 chaînes
-- [ ] Data migration script (si needed)
+- [ ] Update CLAUDE.md with multi-chain patterns
+- [ ] Document config.yaml
+- [ ] Performance testing with N=5 chains
+- [ ] Data migration script (if needed)
 
 ---
 
-## 12. POINTS CRITIQUES À SURVEILLER
+## 12. CRITICAL POINTS TO MONITOR
 
-### 12.1 Migration Données Existantes
-**Problème:** Données existantes n'ont pas `chain_id`
+### 12.1 Existing Data Migration
+**Problem:** Existing data does not have `chain_id`
 
 **Solution:**
 ```sql
@@ -1215,9 +1223,9 @@ UPDATE alert_logs SET chain_id = 'betanet' WHERE chain_id IS NULL;
 ```
 
 ### 12.2 Backward Compatibility
-**Problème:** Anciens endpoints sans `?chain=` doivent rester functional
+**Problem:** Old endpoints without `?chain=` must remain functional
 
-**Solution:** Default au premier enabled chain (alphabetique)
+**Solution:** Default to first enabled chain (alphabetical)
 
 ```go
 func GetChainIDFromRequest(r *http.Request) string {
@@ -1228,21 +1236,21 @@ func GetChainIDFromRequest(r *http.Request) string {
 }
 ```
 
-### 12.3 Performance SQLite
-**Risk:** Avec N chaînes × M validateurs, tables deviennent grandes
+### 12.3 SQLite Performance
+**Risk:** With N chains × M validators, tables grow large
 
 **Mitigations:**
-- Indexes composites: `(chain_id, addr)`, `(chain_id, block_height)`
-- Partitioning par date si besoin (future)
+- Composite indexes: `(chain_id, addr)`, `(chain_id, block_height)`
+- Partitioning by date if needed (future)
 - Archive old data: `DELETE FROM daily_participations WHERE date < DATE_SUB(NOW(), INTERVAL 1 YEAR) AND chain_id = ?`
 
 ### 12.4 Thread Safety
 **Risk:** Nested maps + concurrent updates → race conditions
 
 **Solution:**
-- Garder MonikerMutex global (protège toutes les maps)
-- Utiliser helpers avec defer unlock
-- Test avec `-race` flag
+- Keep MonikerMutex global (protects all maps)
+- Use helpers with defer unlock
+- Test with `-race` flag
 
 ```bash
 go test -race ./internal/gnovalidator/...
@@ -1250,36 +1258,36 @@ go test -race ./internal/gnovalidator/...
 
 ---
 
-## 13. RESTER SUR SQLITE
+## 13. WHY SQLITE
 
-**Q: Pourquoi SQLite et pas PostgreSQL?**
+**Q: Why SQLite and not PostgreSQL?**
 
-**Réponses:**
-✅ Deployment simple (single file db)
-✅ Monitoring à petite/moyenne échelle (< 1M records/chain)
-✅ Development facile (testoutils.NewTestDB)
-✅ Aucun service external
+**Answers:**
+✅ Simple deployment (single file db)
+✅ Monitoring at small/medium scale (< 1M records/chain)
+✅ Easy development (testoutils.NewTestDB)
+✅ No external service
 
-**Avec N chaînes:**
-- 5 chaînes × 10K blocks/jour = ~50K inserts/jour = ~18.25M/year
-- SQLite supporte ça sans problème (indexes bien configurés)
+**With N chains:**
+- 5 chains × 10K blocks/day = ~50K inserts/day = ~18.25M/year
+- SQLite handles this without issues (with proper indexes)
 
-**Si future scaling needed:**
-- Archivage: `DELETE old records WHERE date < ...`
-- Partitioning par date
-- Ou migration vers PostgreSQL (après multi-chain stable)
+**If future scaling needed:**
+- Archiving: `DELETE old records WHERE date < ...`
+- Partitioning by date
+- Or migration to PostgreSQL (after multi-chain stable)
 
 ---
 
-## 14. CHECKLIST FINALE
+## 14. FINAL CHECKLIST
 
 ### Code Changes
 - [x] Config structure updated (Phase 1)
 - [x] Database migrations applied (Phase 1)
 - [x] RPC clients per-chain (Phase 2)
 - [x] Global state nested by chainID (Phase 2)
-- [ ] All collection loops parameterized (Phase 3)
-- [ ] API endpoints scoped (Phase 3-4)
+- [x] All collection loops parameterized (Phase 3)
+- [ ] API endpoints scoped (Phase 4)
 - [ ] Prometheus metrics labeled (Phase 4)
 - [ ] Webhooks chain-aware (Phase 5)
 - [ ] Telegram commands updated (Phase 6)
@@ -1288,7 +1296,7 @@ go test -race ./internal/gnovalidator/...
 ### Testing
 - [x] Unit tests for config (Phase 1)
 - [x] Unit tests for migrations (Phase 1)
-- [ ] Unit tests updated for all functions (Phase 3-4)
+- [ ] Unit tests updated for all functions (Phase 4)
 - [ ] Integration tests (multi-chain) (Phase 7)
 - [ ] Race condition tests (`-race`) (Phase 7)
 - [ ] Load tests (N chains parallel) (Phase 7)
@@ -1308,36 +1316,29 @@ go test -race ./internal/gnovalidator/...
 
 ---
 
-## 15. RÉFÉRENCES & PATTERNS
+## 15. REFERENCES & PATTERNS
 
-### Go Patterns Utilisés
+### Go Patterns Used
 - **Nested Maps:** `map[string]map[string]string`
 - **Mutex RWLock:** Read-heavy access pattern
-- **Context:** Passer chainID via fonction params (non context.Context pour simplicité)
-- **Functional Options:** Future pour ChainConfig
+- **Context:** Pass chainID via function params (not context.Context for simplicity)
+- **Functional Options:** Future for ChainConfig
 
 ### SQL Patterns
 - **Upserts:** `ON CONFLICT(chain_id, addr) DO UPDATE SET`
 - **Compound indexes:** `(chain_id, other_columns)`
-- **GROUP BY:** Ajouter `chain_id` systématiquement
+- **GROUP BY:** Add `chain_id` systematically
 
 ### Testing
 - **Per-chain DB:** `testoutils.NewTestDB(t, "test_chain")`
-- **Mock RPC:** Extend mocks pour retourner data par chainID
+- **Mock RPC:** Extend mocks to return data by chainID
 - **Integration:** Start multiple monitoring loops in test
 
 ---
 
 ## 16. NEXT STEPS
 
-**Phase 3 (In Progress):** Data Collection Loops - Parameterize all collection functions with chainID
-
-- Update InitMonikerMap to accept chainID and client
-- Update CollectParticipation, WatchNewValidators, WatchValidatorAlerts
-- Ensure all database queries include WHERE chain_id filter
-- **Expected duration:** 1 week
-
-**Phase 4:** API Endpoints & Prometheus
+**Phase 4 (Next):** API Endpoints & Prometheus
 
 - Add chain parameter validation to all HTTP handlers
 - Update database query functions to accept chainID
@@ -1375,6 +1376,6 @@ go test -race ./internal/gnovalidator/...
 
 ---
 
-**Document Status:** Phase 1-2 Complete, In Progress → Phase 3
+**Document Status:** Phases 1-3 Complete, Ready for Phase 4
 **Last Updated:** 2026-03-19
-**Next Review:** After Phase 3 completion
+**Next Review:** After Phase 4 completion

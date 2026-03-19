@@ -183,12 +183,12 @@ func CalculateRate(db *gorm.DB, date string) (map[string]ValidatorRate, int64, i
 	return rates, minHeight, maxHeight
 }
 
-func GetLastStoredHeight(db *gorm.DB) (int64, error) {
+func GetLastStoredHeight(db *gorm.DB, chainID string) (int64, error) {
 	var result struct {
 		MaxHeight int64
 	}
 
-	err := db.Raw(`SELECT MAX(block_height) AS max_height FROM daily_participations`).Scan(&result).Error
+	err := db.Raw(`SELECT MAX(block_height) AS max_height FROM daily_participations WHERE chain_id = ?`, chainID).Scan(&result).Error
 	if err != nil {
 		return 0, fmt.Errorf("error reading last stored block: %w", err)
 	}

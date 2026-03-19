@@ -181,7 +181,7 @@ func ExtractGovDAOIDs(txs []Transaction) []string {
 	return ids
 }
 
-func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string) {
+func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
 	wsURL := strings.Replace(graphqlEndpoint, "http", "ws", 1)
 
 	const (
@@ -275,7 +275,7 @@ func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string) {
 			}
 
 			tx := msg.Payload.Data.GetTransactions
-			ProcessProposal(tx, "socket", db, chainID, graphqlEndpoint)
+			ProcessProposal(tx, "socket", db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
 		}
 
 		c.Close()
@@ -292,8 +292,8 @@ func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string) {
 	}
 
 }
-func ExtractTitle(proposalID int) (string, error) {
-	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
+func ExtractTitle(proposalID int, rpcEndpoint string) (string, error) {
+	rpcClient, err := rpcclient.NewHTTPClient(rpcEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to connect to RPC: %v", err)
 	}
@@ -363,25 +363,25 @@ func GetTxsByBlockHeight(height int, graphqlEndpoint string) (*TxBlock, error) {
 	return &respData.GetBlocks[0].Txs[0], nil
 }
 
-func InitGovdao(db *gorm.DB, chainID string, graphqlEndpoint string) {
+func InitGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
 	Trans, err := FetchGovDAOEvents(graphqlEndpoint)
 	if err != nil {
 		log.Printf("Error fetch govdao %s", err)
 		return
 	}
 	for _, tx := range Trans {
-		ProcessProposal(tx, "Fetch", db, chainID, graphqlEndpoint)
+		ProcessProposal(tx, "Fetch", db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
 	}
 
 }
 
-func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, graphqlEndpoint string) {
+func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
 	for _, ev := range tx.Response.Events {
 		if ev.Type == "ProposalCreated" {
 			for _, attr := range ev.Attrs {
 				if attr.Key == "id" {
 					// Build Url
-					url := fmt.Sprintf("%s/r/gov/dao:%s", internal.Config.Gnoweb, attr.Value)
+					url := fmt.Sprintf("%s/r/gov/dao:%s", gnowebEndpoint, attr.Value)
 
 					// Convert ID to Int
 					idInt, err := strconv.Atoi(attr.Value)
@@ -391,13 +391,13 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, gr
 					}
 
 					// Get Title
-					title, err := ExtractTitle(idInt)
+					title, err := ExtractTitle(idInt, rpcEndpoint)
 					if err != nil {
 						log.Printf("Error fetching title: %v", err)
 						continue
 					}
 
-					status, err := ExtractProposalRender(idInt)
+					status, err := ExtractProposalRender(idInt, rpcEndpoint)
 					if err != nil {
 						log.Printf("Error fetching status: %v", err)
 						continue
@@ -447,9 +447,9 @@ func GnoQueryRender(client *gnoclient.Client, cfg gnoclient.QueryCfg) (string, e
 	return string(res.Response.Data), nil
 }
 
-func ExtractProposalRender(proposalID int) (string, error) {
+func ExtractProposalRender(proposalID int, rpcEndpoint string) (string, error) {
 
-	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
+	rpcClient, err := rpcclient.NewHTTPClient(rpcEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to connect to RPC: %v", err)
 	}
@@ -485,7 +485,12 @@ func CheckProposalStatus(db *gorm.DB) {
 	}
 
 	for _, p := range govdao {
-		currentStatus, err := ExtractProposalRender(p.Id)
+		chainCfg, err := internal.Config.GetChainConfig(p.ChainID)
+		if err != nil {
+			log.Printf("CheckProposalStatus: unknown chain %q for proposal %d: %v", p.ChainID, p.Id, err)
+			continue
+		}
+		currentStatus, err := ExtractProposalRender(p.Id, chainCfg.RPCEndpoint)
 		if err != nil {
 			log.Printf("Error fetching status for %d: %v", p.Id, err)
 			continue
@@ -540,7 +545,7 @@ func StartProposalWatcher(db *gorm.DB) {
 	}
 }
 
-func StartGovDAo(db *gorm.DB, chainID string, graphqlEndpoint string) {
-	InitGovdao(db, chainID, graphqlEndpoint)
-	WebsocketGovdao(db, chainID, graphqlEndpoint)
+func StartGovDAo(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
+	InitGovdao(db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
+	WebsocketGovdao(db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
 }

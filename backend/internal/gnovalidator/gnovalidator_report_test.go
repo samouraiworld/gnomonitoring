@@ -27,7 +27,7 @@ func TestSaveParticipation2(t *testing.T) {
 	}
 
 	// call SavePArticipation
-	err := gnovalidator.SaveParticipation(db, 100, participating, monikerMap, blockTime)
+	err := gnovalidator.SaveParticipation(db, "testchain", 100, participating, monikerMap, blockTime)
 	if err != nil {
 		t.Fatalf("SaveParticipation failed: %v", err)
 	}

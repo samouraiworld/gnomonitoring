@@ -11,8 +11,9 @@ import (
 )
 
 // ====================================== ALERT LOG ======================================
-func InsertAlertlog(db *gorm.DB, addr, moniker, level string, startheight, endheight int64, skipped bool, sent time.Time, msg string) error {
+func InsertAlertlog(db *gorm.DB, chainID, addr, moniker, level string, startheight, endheight int64, skipped bool, sent time.Time, msg string) error {
 	alert := AlertLog{
+		ChainID:     chainID,
 		Addr:        addr,
 		Moniker:     moniker,
 		Level:       level,
@@ -25,7 +26,7 @@ func InsertAlertlog(db *gorm.DB, addr, moniker, level string, startheight, endhe
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&alert).Error
 }
 
-func GetAlertLog(db *gorm.DB, period string) ([]AlertSummary, error) {
+func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 	var alerts []AlertSummary
 
 	var start, end time.Time
@@ -57,7 +58,8 @@ func GetAlertLog(db *gorm.DB, period string) ([]AlertSummary, error) {
 					MIN(sent_at),
 					MAX(sent_at)
 				FROM alert_logs
-				`).Row().Scan(&minS, &maxS); err != nil {
+				WHERE chain_id = ?
+				`, chainID).Row().Scan(&minS, &maxS); err != nil {
 			return nil, fmt.Errorf("error scanning alert log bounds: %w", err)
 		}
 
@@ -85,14 +87,14 @@ func GetAlertLog(db *gorm.DB, period string) ([]AlertSummary, error) {
 		Model(&AlertLog{}).
 		Select("DISTINCT moniker, level,addr, start_height, end_height,msg,sent_at").
 		Order("end_height desc").
-		Where("sent_at BETWEEN ? AND ?", startStr, endStr).
+		Where("chain_id = ? AND sent_at BETWEEN ? AND ?", chainID, startStr, endStr).
 		Limit(10).
 		Scan(&alerts)
 
 	return alerts, result.Error
 }
 
-func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]ParticipationRate, error) {
+func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string) ([]ParticipationRate, error) {
 	log.Println("==========Start Get Participate Rate ")
 	var results []ParticipationRate
 	startStr, endStr, err := getPeriodParams(period)
@@ -109,32 +111,32 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, period string) ([]Participat
 		FROM
 			daily_participations
 		WHERE
-			date >= ? AND date < ?
+			chain_id = ? AND date >= ? AND date < ?
 		GROUP BY
 			addr, moniker
 		ORDER BY
 			participation_rate ASC`
 
-	err = db.Raw(query, startStr, endStr).Scan(&results).Error
+	err = db.Raw(query, chainID, startStr, endStr).Scan(&results).Error
 
 	return results, err
 }
 
 // ====================================== Up Time / tx_contrib Metrics ==========================
-func OperationTimeMetricsaddr(db *gorm.DB) ([]OperationTimeMetrics, error) {
+func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetrics, error) {
 	var results []OperationTimeMetrics
 
 	query := `
 		WITH last_down AS (
 			SELECT addr, moniker, MAX(date) AS last_down_date
 			FROM daily_participations
-			WHERE participated = 0
+			WHERE chain_id = ? AND participated = 0
 			GROUP BY addr
 		),
 		last_up AS (
 			SELECT addr, MAX(date) AS last_up_date
 			FROM daily_participations
-			WHERE participated = 1
+			WHERE chain_id = ? AND participated = 1
 			GROUP BY addr
 		)
 		SELECT
@@ -146,13 +148,13 @@ func OperationTimeMetricsaddr(db *gorm.DB) ([]OperationTimeMetrics, error) {
 		FROM last_down ld
 		LEFT JOIN last_up lu ON lu.addr = ld.addr;`
 
-	if err := db.Raw(query).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
 
 	return results, nil
 }
-func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
+func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 
 	var results []UptimeMetrics
 
@@ -163,6 +165,7 @@ func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
 		WITH recent_blocks AS (
 			SELECT DISTINCT block_height
 			FROM daily_participations
+			WHERE chain_id = ?
 			ORDER BY block_height DESC
 			LIMIT 500
 		),
@@ -183,14 +186,14 @@ func UptimeMetricsaddr(db *gorm.DB) ([]UptimeMetrics, error) {
 		FROM base
 		ORDER BY uptime ASC`
 
-	if err := db.Raw(query).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
 
 	return results, nil
 }
 
-func TxContrib(db *gorm.DB, period string) ([]TxContribMetrics, error) {
+func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) {
 	var results []TxContribMetrics
 
 	startStr, endStr, err := getPeriodParams(period)
@@ -203,13 +206,13 @@ func TxContrib(db *gorm.DB, period string) ([]TxContribMetrics, error) {
 		SELECT
 			moniker,
 			addr,
-			ROUND((SUM(tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations)), 1) AS tx_contrib
+			ROUND((SUM(tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations WHERE chain_id = ?)), 1) AS tx_contrib
 		FROM daily_participations
 		WHERE
-			date >= ? AND date < ?
+			chain_id = ? AND date >= ? AND date < ?
 		GROUP BY addr`
 
-	if err := db.Raw(query, startStr, endStr).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, chainID, startStr, endStr).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
 	}
 
@@ -217,7 +220,7 @@ func TxContrib(db *gorm.DB, period string) ([]TxContribMetrics, error) {
 }
 
 // ===================================== MISSING BLOCK =============================
-func MissingBlock(db *gorm.DB, period string) ([]MissingBlockMetrics, error) {
+func MissingBlock(db *gorm.DB, chainID, period string) ([]MissingBlockMetrics, error) {
 	var results []MissingBlockMetrics
 
 	startStr, endStr, err := getPeriodParams(period)
@@ -233,10 +236,10 @@ func MissingBlock(db *gorm.DB, period string) ([]MissingBlockMetrics, error) {
 			SUM(CASE WHEN participated = 0 THEN 1 ELSE 0 END) AS missing_block
 		FROM daily_participations
 		WHERE
-			date >= ? AND date < ?
+			chain_id = ? AND date >= ? AND date < ?
 		GROUP BY addr`
 
-	if err := db.Raw(query, startStr, endStr).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, startStr, endStr).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request MissingBlock: %s", err)
 	}
 
@@ -253,9 +256,9 @@ func InsertAddrMoniker(db *gorm.DB, addr, moniker string) error {
 	}
 	return db.Create(&addrmoniker).Error
 }
-func GetMoniker(db *gorm.DB) (map[string]string, error) {
+func GetMoniker(db *gorm.DB, chainID string) (map[string]string, error) {
 	var entries []AddrMoniker
-	result := db.Find(&entries)
+	result := db.Where("chain_id = ?", chainID).Find(&entries)
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -311,7 +314,7 @@ func getPeriodParams(period string) (startStr, endStr string, err error) {
 
 // GetFirstSeen returns the earliest participation date for each validator.
 // This can be used as a "start time" / "first seen" metric.
-func GetFirstSeen(db *gorm.DB) ([]FirstSeenMetrics, error) {
+func GetFirstSeen(db *gorm.DB, chainID string) ([]FirstSeenMetrics, error) {
 	var results []FirstSeenMetrics
 
 	query := `
@@ -320,39 +323,39 @@ func GetFirstSeen(db *gorm.DB) ([]FirstSeenMetrics, error) {
 			moniker,
 			MIN(date) AS first_seen
 		FROM daily_participations
-		WHERE participated = 1
+		WHERE chain_id = ? AND participated = 1
 		GROUP BY addr
 		ORDER BY first_seen ASC`
 
-	if err := db.Raw(query).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request FirstSeen: %s", err)
 	}
 
 	return results, nil
 }
 
-func GetTimeOfBlock(db *gorm.DB, numBlock int64) (time.Time, error) {
+func GetTimeOfBlock(db *gorm.DB, chainID string, numBlock int64) (time.Time, error) {
 	var blockTime time.Time
 
 	err := db.Raw(`
 		SELECT DISTINCT date
 		FROM daily_participations
-		WHERE block_height = ?
-	`, numBlock).Scan(&blockTime).Error
+		WHERE chain_id = ? AND block_height = ?
+	`, chainID, numBlock).Scan(&blockTime).Error
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to get time of block %d: %w", numBlock, err)
 	}
 
 	return blockTime, nil
 }
-func GetTimeOfAlert(db *gorm.DB, numBlock int64) (time.Time, error) {
+func GetTimeOfAlert(db *gorm.DB, chainID string, numBlock int64) (time.Time, error) {
 	var blockTime time.Time
 
 	err := db.Raw(`
 		SELECT DISTINCT sent_at
 		FROM alert_logs
-		WHERE start_height = ? AND end_height = ?
-	`, numBlock, numBlock).Scan(&blockTime).Error
+		WHERE chain_id = ? AND start_height = ? AND end_height = ?
+	`, chainID, numBlock, numBlock).Scan(&blockTime).Error
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to get time of block %d: %w", numBlock, err)
 	}

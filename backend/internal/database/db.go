@@ -324,21 +324,21 @@ func DeleteAlertContact(db *gorm.DB, id int, userID string) error {
 }
 
 // UpsertAddrMoniker inserts or updates the moniker for a given validator address.
-func UpsertAddrMoniker(db *gorm.DB, addr, moniker string) error {
+func UpsertAddrMoniker(db *gorm.DB, chainID, addr, moniker string) error {
 	return db.Exec(`
-		INSERT INTO addr_monikers (addr, moniker)
-		VALUES (?, ?)
-		ON CONFLICT(addr) DO UPDATE SET moniker = excluded.moniker
-	`, addr, moniker).Error
+		INSERT INTO addr_monikers (chain_id, addr, moniker)
+		VALUES (?, ?, ?)
+		ON CONFLICT(chain_id, addr) DO UPDATE SET moniker = excluded.moniker
+	`, chainID, addr, moniker).Error
 }
 
 // GetMonikerByAddr returns the moniker for a given validator address.
 // Returns an empty string (no error) if the address is not found.
-func GetMonikerByAddr(db *gorm.DB, addr string) (string, error) {
+func GetMonikerByAddr(db *gorm.DB, chainID, addr string) (string, error) {
 	var result struct{ Moniker string }
 	err := db.Table("addr_monikers").
 		Select("moniker").
-		Where("addr = ?", addr).
+		Where("chain_id = ? AND addr = ?", chainID, addr).
 		First(&result).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", nil

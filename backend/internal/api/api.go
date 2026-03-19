@@ -18,6 +18,24 @@ import (
 	"gorm.io/gorm"
 )
 
+// GetChainIDFromRequest extracts and validates chainID from query parameter
+// Returns default chain if not specified
+func GetChainIDFromRequest(r *http.Request) (string, error) {
+	chainID := r.URL.Query().Get("chain")
+	if chainID == "" {
+		// Default to first enabled chain
+		if len(internal.EnabledChains) > 0 {
+			chainID = internal.EnabledChains[0]
+		} else {
+			return "", fmt.Errorf("no chains enabled")
+		}
+	}
+	if err := internal.Config.ValidateChainID(chainID); err != nil {
+		return "", err
+	}
+	return chainID, nil
+}
+
 // function for get userid with clerk
 func authUserIDFromContext(r *http.Request) (string, error) {
 	// Development mode: allow bypassing auth when explicitly enabled
@@ -644,7 +662,12 @@ func Getblockheight(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 
 	}
-	lastStored, err := gnovalidator.GetLastStoredHeight(db)
+	chainID, err := GetChainIDFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	lastStored, err := gnovalidator.GetLastStoredHeight(db, chainID)
 	if err != nil {
 		log.Printf("❌ Failed to get latest block height: %v", err)
 		return
@@ -664,8 +687,13 @@ func Getlastincident(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Missing period", http.StatusBadRequest)
 		return
 	}
+	chainID, err := GetChainIDFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-	incident, err := database.GetAlertLog(db, period)
+	incident, err := database.GetAlertLog(db, chainID, period)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -686,8 +714,13 @@ func Getarticipation(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Missing period", http.StatusBadRequest)
 		return
 	}
+	chainID, err := GetChainIDFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-	part, err := database.GetCurrentPeriodParticipationRate(db, period)
+	part, err := database.GetCurrentPeriodParticipationRate(db, chainID, period)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get participation rate: %v", err), http.StatusInternalServerError)
 		return
@@ -709,7 +742,12 @@ func GetUptime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 
 	}
-	uptime, err := database.UptimeMetricsaddr(db)
+	chainID, err := GetChainIDFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	uptime, err := database.UptimeMetricsaddr(db, chainID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get Uptime metrics: %v", err), http.StatusInternalServerError)
 		return
@@ -731,7 +769,12 @@ func GetOperationtime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 
 	}
-	uptime, err := database.OperationTimeMetricsaddr(db)
+	chainID, err := GetChainIDFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	uptime, err := database.OperationTimeMetricsaddr(db, chainID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get Operation time  metrics: %v", err), http.StatusInternalServerError)
 		return
@@ -752,7 +795,12 @@ func GetFirstSeen(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	firstSeen, err := database.GetFirstSeen(db)
+	chainID, err := GetChainIDFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	firstSeen, err := database.GetFirstSeen(db, chainID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get First Seen metrics: %v", err), http.StatusInternalServerError)
 		return
@@ -778,7 +826,12 @@ func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 
 	}
-	txcontrib, err := database.TxContrib(db, period)
+	chainID, err := GetChainIDFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	txcontrib, err := database.TxContrib(db, chainID, period)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get TxContrib metrics: %v", err), http.StatusInternalServerError)
 		return
@@ -806,7 +859,12 @@ func GetMissingBlock(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 
 	}
-	txcontrib, err := database.MissingBlock(db, period)
+	chainID, err := GetChainIDFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	txcontrib, err := database.MissingBlock(db, chainID, period)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get Missing Block metrics: %v", err), http.StatusInternalServerError)
 		return
@@ -827,13 +885,29 @@ func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	type ChainInfo struct {
+		RPCEndpoint     string `json:"rpc_endpoint"`
+		GraphqlEndpoint string `json:"graphql"`
+		GnowebEndpoint  string `json:"gnoweb"`
+	}
 	type InfoResponse struct {
-		Gnoweb      string `json:"gnoweb"`
-		RPCEndpoint string `json:"rpc"`
+		EnabledChains []string             `json:"enabled_chains"`
+		Chains        map[string]ChainInfo `json:"chains"`
 	}
 	info := InfoResponse{
-		Gnoweb:      internal.Config.Gnoweb,
-		RPCEndpoint: internal.Config.RPCEndpoint,
+		EnabledChains: internal.EnabledChains,
+		Chains:        make(map[string]ChainInfo),
+	}
+	for _, chainID := range internal.EnabledChains {
+		cfg, err := internal.Config.GetChainConfig(chainID)
+		if err != nil {
+			continue
+		}
+		info.Chains[chainID] = ChainInfo{
+			RPCEndpoint:     cfg.RPCEndpoint,
+			GraphqlEndpoint: cfg.GraphqlEndpoint,
+			GnowebEndpoint:  cfg.GnowebEndpoint,
+		}
 	}
 	json.NewEncoder(w).Encode(info)
 }
@@ -850,7 +924,12 @@ func GetAddrMonikerHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) 
 		http.Error(w, "Missing addr parameter", http.StatusBadRequest)
 		return
 	}
-	moniker, err := database.GetMonikerByAddr(db, addr)
+	chainID, err := GetChainIDFromRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	moniker, err := database.GetMonikerByAddr(db, chainID, addr)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get moniker: %v", err), http.StatusInternalServerError)
 		return

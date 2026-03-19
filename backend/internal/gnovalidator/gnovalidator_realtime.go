@@ -56,7 +56,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 			}
 		}()
 
-		lastStored, err := GetLastStoredHeight(db)
+		lastStored, err := GetLastStoredHeight(db, chainID)
 
 		if lastStored == 0 {
 			log.Printf("⚠️ Database empty get last block: %v", err)
@@ -97,7 +97,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 			if lph != 0 && latest == lph {
 				if !IsAlertSent(chainID, "all") && time.Since(lpt) > 2*time.Minute {
 
-					blockTime, err := database.GetTimeOfBlock(db, latest)
+					blockTime, err := database.GetTimeOfBlock(db, chainID, latest)
 					if err != nil {
 						log.Printf("⚠️ Impossible de récupérer la date du block %d: %v", latest, err)
 						return
@@ -113,7 +113,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 
 					log.Println(msg)
 
-					send_at, err := database.GetTimeOfAlert(db, latest)
+					send_at, err := database.GetTimeOfAlert(db, chainID, latest)
 					if err != nil {
 						log.Printf("⚠️ Impossible de récupérer la date du block %d: %v", latest, err)
 						return
@@ -123,7 +123,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 						if err := internal.SendInfoValidator(msg, "CRITICAL", db); err != nil {
 							log.Printf("❌ SendInfoValidator: %v", err)
 						}
-						if err := database.InsertAlertlog(db, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg); err != nil {
+						if err := database.InsertAlertlog(db, chainID, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg); err != nil {
 							log.Printf("❌ InsertAlertlog: %v", err)
 						}
 					}
@@ -145,7 +145,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 					if err := internal.SendInfoValidator(msg, "INFO", db); err != nil {
 						log.Printf("❌ SendInfoValidator: %v", err)
 					}
-					if err := database.InsertAlertlog(db, "all", "all", "RESOLVED", latest, latest, false, time.Now(), msg); err != nil {
+					if err := database.InsertAlertlog(db, chainID, "all", "all", "RESOLVED", latest, latest, false, time.Now(), msg); err != nil {
 						log.Printf("❌ InsertAlertlog: %v", err)
 					}
 					SetRestoredNotified(chainID, "all", true)
@@ -170,7 +170,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 					stop = latest // au pire, rattrape tout
 				}
 				log.Printf("⏳ Backfill [%d..%d] (gap=%d)", currentHeight, stop, latest-currentHeight)
-				if err := BackfillParallel(db, client, currentHeight, stop, GetMonikerMap(chainID)); err != nil {
+				if err := BackfillParallel(db, client, chainID, currentHeight, stop, GetMonikerMap(chainID)); err != nil {
 					log.Printf("❌ backfill error: %v", err)
 					// si backfill échoue, on ne bloque pas indéfiniment
 				} else {
@@ -225,7 +225,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 				}
 				// log.Printf("participating = %+v \n", participating)
 
-				err = SaveParticipation(db, h, participating, GetMonikerMap(chainID), timeStp)
+				err = SaveParticipation(db, chainID, h, participating, GetMonikerMap(chainID), timeStp)
 				if err != nil {
 					log.Printf("❌ Failed to save participation at height %d: %v", h, err)
 				}
@@ -301,11 +301,11 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 				// 2. Check if alert was recently sent
 				var count int64
 				err := db.Raw(`
-						SELECT COUNT(*) FROM alert_logs 
-						WHERE addr = ? AND level = ? 
-						AND start_height= ? 
-						AND skipped = 1	
-						`, addr, level, start_height).Scan(&count).Error
+						SELECT COUNT(*) FROM alert_logs
+						WHERE chain_id = ? AND addr = ? AND level = ?
+						AND start_height= ?
+						AND skipped = 1
+						`, chainID, addr, level, start_height).Scan(&count).Error
 
 				if err != nil {
 					log.Printf("❌ DB error checking alert_logs: %v", err)
@@ -315,7 +315,7 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 
 				if count > 0 {
 					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
-					if err := database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now(), ""); err != nil {
+					if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, false, time.Now(), ""); err != nil {
 						log.Printf("❌ InsertAlertlog: %v", err)
 					}
 
@@ -325,12 +325,12 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 				// 2. Check if this start_height is already covered by another alert range
 				var countint int64
 				err = db.Raw(`
-						SELECT COUNT(*) 
+						SELECT COUNT(*)
 						FROM alert_logs
-						WHERE addr = ?
+						WHERE chain_id = ? AND addr = ?
 						AND level IN ('CRITICAL')
 						AND ? BETWEEN start_height AND end_height
-						`, addr, start_height).Scan(&countint).Error
+						`, chainID, addr, start_height).Scan(&countint).Error
 				if err != nil {
 					log.Printf("❌ DB error checking alert_logs: %v", err)
 
@@ -338,7 +338,7 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 				}
 				if countint > 0 {
 					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
-					if err := database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, false, time.Now(), ""); err != nil {
+					if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, false, time.Now(), ""); err != nil {
 						log.Printf("❌ InsertAlertlog: %v", err)
 					}
 
@@ -350,10 +350,10 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 				var mute int
 				err = db.Raw(`
 					SELECT COUNT(*) FROM alert_logs
-       				WHERE addr = ? AND level = "MUTED"
+       				WHERE chain_id = ? AND addr = ? AND level = "MUTED"
        				AND strftime('%s',sent_at) >= strftime('%s','now','-60 minutes');
 
-						`, addr).Scan(&mute).Error
+						`, chainID, addr).Scan(&mute).Error
 
 				if err != nil {
 					log.Printf("❌ DB error checking alert_logs: %v", err)
@@ -364,7 +364,7 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 					// Activer un mute 1h
 					log.Printf("🚫 Too many alerte for %s, muting for 1h", moniker)
 
-					if err := database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
+					if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
 						log.Printf("❌ InsertAlertlog: %v", err)
 					}
 
@@ -374,19 +374,19 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 				if err := internal.SendAllValidatorAlerts(missed, today, level, addr, moniker, start_height, end_height, db); err != nil {
 					log.Printf("❌ SendAllValidatorAlerts: %v", err)
 				}
-				if err := database.InsertAlertlog(db, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
+				if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
 					log.Printf("❌ InsertAlertlog: %v", err)
 				}
 
 			}
 
 			rows.Close()
-			SendResolveAlerts(db)
+			SendResolveAlerts(db, chainID)
 			time.Sleep(checkInterval)
 		}
 	}()
 }
-func SendResolveAlerts(db *gorm.DB) {
+func SendResolveAlerts(db *gorm.DB, chainID string) {
 	log.Println("==========================Start resolv Alert==========00==")
 
 	type LastAlert struct {
@@ -421,9 +421,9 @@ func SendResolveAlerts(db *gorm.DB) {
 		var count int64
 		err := db.Raw(`
 		SELECT COUNT(*) FROM alert_logs
-		WHERE addr = ? and level = "RESOLVED"
+		WHERE chain_id = ? AND addr = ? and level = "RESOLVED"
 		AND  end_height = ?
-		`, a.Addr, a.EndHeight).Scan(&count).Error
+		`, chainID, a.Addr, a.EndHeight).Scan(&count).Error
 
 		if err != nil {
 			log.Printf("❌ DB error checking alert_logs: %v", err)
@@ -438,9 +438,9 @@ func SendResolveAlerts(db *gorm.DB) {
 		var recentResolves int64
 		err = db.Raw(`
         SELECT COUNT(*) FROM alert_logs
-        WHERE addr = ? AND level = "RESOLVED"
+        WHERE chain_id = ? AND addr = ? AND level = "RESOLVED"
        AND strftime('%s',sent_at) >= strftime('%s','now','-60 minutes');
-    `, a.Addr).Scan(&recentResolves).Error
+    `, chainID, a.Addr).Scan(&recentResolves).Error
 		if err != nil {
 			log.Printf("❌ DB error checking recent resolves: %v", err)
 			continue
@@ -448,7 +448,7 @@ func SendResolveAlerts(db *gorm.DB) {
 		if recentResolves >= 4 {
 			// Activer un mute d'1h
 			log.Printf("🚫 Too many resolves for %s, muting for 1h", a.Moniker)
-			if err := database.InsertAlertlog(db, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
+			if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
 				log.Printf("❌ InsertAlertlog: %v", err)
 			}
 			continue
@@ -458,8 +458,8 @@ func SendResolveAlerts(db *gorm.DB) {
 		var countparticipated int
 		err = db.Raw(`
 			SELECT participated FROM daily_participations
-			WHERE addr = ? AND block_height= (?+1)
-			`, a.Addr, a.EndHeight).Scan(&countparticipated).Error
+			WHERE chain_id = ? AND addr = ? AND block_height= (?+1)
+			`, chainID, a.Addr, a.EndHeight).Scan(&countparticipated).Error
 		if err != nil {
 			log.Printf("❌ DB error checking count participated: %v", err)
 			continue
@@ -473,7 +473,7 @@ func SendResolveAlerts(db *gorm.DB) {
 			log.Printf("❌ SendResolveValidator: %v", err)
 		}
 
-		if err := database.InsertAlertlog(db, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
+		if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
 			log.Printf("❌ InsertAlertlog: %v", err)
 		}
 
@@ -481,7 +481,7 @@ func SendResolveAlerts(db *gorm.DB) {
 
 }
 
-func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]Participation, monikerMap map[string]string, timeStp time.Time) error {
+func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participating map[string]Participation, monikerMap map[string]string, timeStp time.Time) error {
 	// today := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	tx := db.Begin()
@@ -492,14 +492,14 @@ func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]
 
 	stmt := `
 		INSERT OR REPLACE INTO daily_participations
-		(date, block_height, moniker, addr, participated,tx_contribution)
-		VALUES (?, ?, ?, ?, ?,?)
+		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES (?, ?, ?, ?, ?, ?,?)
 	`
 
 	for valAddr, moniker := range monikerMap {
 		participated := participating[valAddr] // false if not find
 
-		if err := tx.Exec(stmt, timeStp, blockHeight, moniker, valAddr, participated.Participated, participated.TxContribution).Error; err != nil {
+		if err := tx.Exec(stmt, chainID, timeStp, blockHeight, moniker, valAddr, participated.Participated, participated.TxContribution).Error; err != nil {
 			log.Printf("❌ Error saving participation for %s: %v", valAddr, err)
 			tx.Rollback()
 			return err

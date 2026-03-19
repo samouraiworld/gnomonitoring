@@ -19,7 +19,7 @@ func startChainMonitoring(db *gorm.DB, chainID string, chainCfg *internal.ChainC
 	log.Printf("Starting monitoring for chain: %s", chainID)
 
 	go gnovalidator.StartValidatorMonitoring(db, chainID, chainCfg)
-	go govdao.StartGovDAo(db, chainID, chainCfg.GraphqlEndpoint)
+	go govdao.StartGovDAo(db, chainID, chainCfg.GraphqlEndpoint, chainCfg.RPCEndpoint, chainCfg.GnowebEndpoint)
 
 	log.Printf("Monitoring started for chain: %s", chainID)
 }
@@ -75,8 +75,12 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db)
-	callbackHandler := telegram.BuildTelegramCallbackHandler(internal.Config.TokenTelegramValidator, db)
+	telegramChainID := ""
+	if len(internal.EnabledChains) > 0 {
+		telegramChainID = internal.EnabledChains[0]
+	}
+	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db, telegramChainID)
+	callbackHandler := telegram.BuildTelegramCallbackHandler(internal.Config.TokenTelegramValidator, db, telegramChainID)
 
 	go func() {
 		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, callbackHandler, "validator", db); err != nil {

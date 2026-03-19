@@ -26,7 +26,7 @@ func TestSaveParticipation(t *testing.T) {
 		"addr2": "Validator Two",
 	}
 
-	err := gnovalidator.SaveParticipation(db, 123, mockParticipation, mockMonikers, blockTime)
+	err := gnovalidator.SaveParticipation(db, "testchain", 123, mockParticipation, mockMonikers, blockTime)
 	if err != nil {
 		t.Fatalf("SaveParticipation failed: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestSaveParticipation(t *testing.T) {
 func TestGetLastStoredHeight_Empty(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
-	height, err := gnovalidator.GetLastStoredHeight(db)
+	height, err := gnovalidator.GetLastStoredHeight(db, testoutils.TestChainID)
 	require.NoError(t, err)
 	require.Equal(t, int64(51), height)
 }

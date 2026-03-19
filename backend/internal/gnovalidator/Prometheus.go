@@ -8,6 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"gorm.io/gorm"
 )
 
@@ -34,7 +35,7 @@ var (
 			Name: "gnoland_missed_blocks",
 			Help: "Total number of blocks missed today by a validator",
 		},
-		[]string{"validator_address", "moniker"},
+		[]string{"chain", "validator_address", "moniker"},
 	)
 
 	ConsecutiveMissedBlocks = prometheus.NewGaugeVec(
@@ -42,14 +43,14 @@ var (
 			Name: "gnoland_consecutive_missed_blocks",
 			Help: "Number of consecutive blocks missed by a validator",
 		},
-		[]string{"validator_address", "moniker"},
+		[]string{"chain", "validator_address", "moniker"},
 	)
 	ValidatorParticipation = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "gnoland_validator_participation_rate",
 			Help: "Validator participation rate (%) over the sliding window",
 		},
-		[]string{"validator_address", "moniker"},
+		[]string{"chain", "validator_address", "moniker"},
 	)
 )
 
@@ -73,32 +74,32 @@ func StartPrometheusServer(port int) {
 	}()
 }
 
-func UpdatePrometheusMetricsFromDB(db *gorm.DB) error {
+func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string) error {
 	// ValidatorParticipation
-	stats, err := CalculateValidatorRates(db)
+	stats, err := CalculateValidatorRates(db, chainID)
 	if err != nil {
 		return err
 	}
 
 	for _, stat := range stats {
-		ValidatorParticipation.WithLabelValues(stat.Address, stat.Moniker).Set(stat.Rate)
+		ValidatorParticipation.WithLabelValues(chainID, stat.Address, stat.Moniker).Set(stat.Rate)
 	}
 	// MissedBlocks
-	missedStats, err := CalculateMissedBlocks(db)
+	missedStats, err := CalculateMissedBlocks(db, chainID)
 	if err != nil {
 		return err
 	}
 	for _, stat := range missedStats {
-		MissedBlocks.WithLabelValues(stat.Address, stat.Moniker).Set(float64(stat.Missed))
+		MissedBlocks.WithLabelValues(chainID, stat.Address, stat.Moniker).Set(float64(stat.Missed))
 	}
 
 	// ConsecutiveMissedBlocks
-	consecutiveStats, err := CalculateConsecutiveMissedBlocks(db)
+	consecutiveStats, err := CalculateConsecutiveMissedBlocks(db, chainID)
 	if err != nil {
 		return err
 	}
 	for _, stat := range consecutiveStats {
-		ConsecutiveMissedBlocks.WithLabelValues(stat.Address, stat.Moniker).Set(float64(stat.Count))
+		ConsecutiveMissedBlocks.WithLabelValues(chainID, stat.Address, stat.Moniker).Set(float64(stat.Count))
 	}
 	return nil
 }
@@ -106,9 +107,10 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB) error {
 func StartMetricsUpdater(db *gorm.DB) {
 	go func() {
 		for {
-			err := UpdatePrometheusMetricsFromDB(db)
-			if err != nil {
-				log.Printf("Error updating metrics: %v", err)
+			for _, chainID := range internal.EnabledChains {
+				if err := UpdatePrometheusMetricsFromDB(db, chainID); err != nil {
+					log.Printf("Error updating metrics for chain %s: %v", chainID, err)
+				}
 			}
 			time.Sleep(5 * time.Minute)
 		}

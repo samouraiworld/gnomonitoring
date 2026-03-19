@@ -44,7 +44,24 @@ func TestGetWebhooks(t *testing.T) {
 
 func TestGetAlerts(t *testing.T) {
 	db := testoutils.NewTestDB(t)
+
+	// Setup config with test chain
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"test12": {
+			RPCEndpoint:     "http://localhost:26657",
+			GraphqlEndpoint: "http://localhost:8080/graphql/query",
+			GnowebEndpoint:  "http://localhost:8080",
+			Enabled:         true,
+		},
+	}
+	internal.EnabledChains = []string{"test12"}
+	defer func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+	}()
+
 	db.Create(&database.AlertLog{
+		ChainID:     "test12",
 		Moniker:     "Validator1",
 		Level:       "CRITICAL",
 		StartHeight: 100,
@@ -52,7 +69,7 @@ func TestGetAlerts(t *testing.T) {
 		SentAt:      time.Now(),
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/alerts?period=current_month", nil)
+	req := httptest.NewRequest(http.MethodGet, "/alerts?period=current_month&chain=test12", nil)
 	w := httptest.NewRecorder()
 
 	api.Getlastincident(w, req, db)
@@ -94,6 +111,21 @@ func TestGetHourReports(t *testing.T) {
 // ---------- TEST /info/blockheight ----------
 
 func TestGetBlockHeight(t *testing.T) {
+	// Setup config with test chain
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"test12": {
+			RPCEndpoint:     "http://localhost:26657",
+			GraphqlEndpoint: "http://localhost:8080/graphql/query",
+			GnowebEndpoint:  "http://localhost:8080",
+			Enabled:         true,
+		},
+	}
+	internal.EnabledChains = []string{"test12"}
+	defer func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+	}()
+
 	req := httptest.NewRequest(http.MethodGet, "/info/blockheight", nil)
 	w := httptest.NewRecorder()
 

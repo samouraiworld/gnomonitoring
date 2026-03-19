@@ -51,7 +51,7 @@ func setCached(key string, data any, ttl time.Duration) {
 }
 
 // BuildTelegramHandlers retourne la map de handlers
-func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, string) {
+func BuildTelegramHandlers(token string, db *gorm.DB, chainID string) map[string]func(int64, string) {
 	startSearchStateCleanup()
 	return map[string]func(int64, string){
 
@@ -67,7 +67,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "status", period, filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "status", period, filter, page, limit, sortOrder)
 
 		},
 		"/subscribe": func(chatID int64, args string) {
@@ -80,7 +80,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "uptime", "", filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "uptime", "", filter, page, limit, sortOrder)
 
 		}, "/operation_time": func(chatID int64, args string) {
 			params := parseParams(args)
@@ -89,7 +89,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "operation_time", "", filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "operation_time", "", filter, page, limit, sortOrder)
 
 		},
 		"/tx_contrib": func(chatID int64, args string) {
@@ -103,7 +103,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "tx_contrib", period, filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "tx_contrib", period, filter, page, limit, sortOrder)
 
 		},
 		"/missing": func(chatID int64, args string) {
@@ -118,7 +118,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "missing", period, filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "missing", period, filter, page, limit, sortOrder)
 
 		},
 		"/report": func(chatID int64, args string) {
@@ -152,16 +152,16 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 	}
 }
 
-func formatParticipationRAte(db *gorm.DB, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
+func formatParticipationRAte(db *gorm.DB, chainID, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
 	var rates []database.ParticipationRate
-	cacheKey := "status:" + period
+	cacheKey := chainID + ":status:" + period
 	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.ParticipationRate); ok {
 			rates = v
 		}
 	} else {
 		var fetchErr error
-		rates, fetchErr = database.GetCurrentPeriodParticipationRate(db, period)
+		rates, fetchErr = database.GetCurrentPeriodParticipationRate(db, chainID, period)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get participation rate: %v", fetchErr)
 		}
@@ -206,20 +206,21 @@ func formatParticipationRAte(db *gorm.DB, period string, page, limit int, filter
 
 	return builder.String(), pageOut, totalPages, nil
 }
-func formatUptime(db *gorm.DB, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
+func formatUptime(db *gorm.DB, chainID string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
 
 	var results []database.UptimeMetrics
-	if cached, ok := getCached("uptime"); ok {
+	cacheKey := chainID + ":uptime"
+	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.UptimeMetrics); ok {
 			results = v
 		}
 	} else {
 		var fetchErr error
-		results, fetchErr = database.UptimeMetricsaddr(db)
+		results, fetchErr = database.UptimeMetricsaddr(db, chainID)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get uptime metrics: %v", fetchErr)
 		}
-		setCached("uptime", results, cacheTTL)
+		setCached(cacheKey, results, cacheTTL)
 	}
 	results = filterUptimeMetrics(results, filter)
 	if len(results) == 0 {
@@ -260,20 +261,21 @@ func formatUptime(db *gorm.DB, page, limit int, filter, sortOrder string) (msg s
 
 	return builder.String(), pageOut, totalPages, err
 }
-func formatOperationTime(db *gorm.DB, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
+func formatOperationTime(db *gorm.DB, chainID string, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
 
 	var results []database.OperationTimeMetrics
-	if cached, ok := getCached("operation_time"); ok {
+	cacheKey := chainID + ":operation_time"
+	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.OperationTimeMetrics); ok {
 			results = v
 		}
 	} else {
 		var fetchErr error
-		results, fetchErr = database.OperationTimeMetricsaddr(db)
+		results, fetchErr = database.OperationTimeMetricsaddr(db, chainID)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get operation time metrics: %v", fetchErr)
 		}
-		setCached("operation_time", results, cacheTTL)
+		setCached(cacheKey, results, cacheTTL)
 	}
 	results = filterOperationTimeMetrics(results, filter)
 	if len(results) == 0 {
@@ -301,16 +303,16 @@ func formatOperationTime(db *gorm.DB, page, limit int, filter string) (msg strin
 
 	return builder.String(), pageOut, totalPages, err
 }
-func FormatTxcontrib(db *gorm.DB, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
+func FormatTxcontrib(db *gorm.DB, chainID, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
 	var txcontrib []database.TxContribMetrics
-	cacheKey := "tx_contrib:" + period
+	cacheKey := chainID + ":tx_contrib:" + period
 	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.TxContribMetrics); ok {
 			txcontrib = v
 		}
 	} else {
 		var fetchErr error
-		txcontrib, fetchErr = database.TxContrib(db, period)
+		txcontrib, fetchErr = database.TxContrib(db, chainID, period)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get tx_contrib: %v", fetchErr)
 		}
@@ -343,16 +345,16 @@ func FormatTxcontrib(db *gorm.DB, period string, page, limit int, filter, sortOr
 	return builder.String(), pageOut, totalPages, nil
 }
 
-func formatMissing(db *gorm.DB, period string, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
+func formatMissing(db *gorm.DB, chainID, period string, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
 	var rows []database.MissingBlockMetrics
-	cacheKey := "missing:" + period
+	cacheKey := chainID + ":missing:" + period
 	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.MissingBlockMetrics); ok {
 			rows = v
 		}
 	} else {
 		var fetchErr error
-		rows, fetchErr = database.MissingBlock(db, period)
+		rows, fetchErr = database.MissingBlock(db, chainID, period)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get missing block: %w", fetchErr)
 		}
@@ -545,7 +547,7 @@ func subscribeUsage() string {
 /subscribe off all — disable all`
 }
 
-func BuildTelegramCallbackHandler(token string, db *gorm.DB) func(int64, int, string) {
+func BuildTelegramCallbackHandler(token string, db *gorm.DB, chainID string) func(int64, int, string) {
 	return func(chatID int64, messageID int, data string) {
 		cmdKey, page, limit, period, filter, sortOrder, action, ok := parseCallbackData(data)
 		if !ok {
@@ -554,6 +556,7 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB) func(int64, int, st
 		if action == "search" {
 			setSearchState(chatID, SearchState{
 				BotType:   "validator",
+				ChainID:   chainID,
 				Cmd:       cmdKey,
 				Page:      1,
 				Limit:     limit,
@@ -565,7 +568,7 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB) func(int64, int, st
 			return
 		}
 
-		msg, markup, err := buildPaginatedResponse(db, cmdKey, period, filter, page, limit, sortOrder)
+		msg, markup, err := buildPaginatedResponse(db, chainID, cmdKey, period, filter, page, limit, sortOrder)
 		if err != nil {
 			log.Printf("error build paginated response (%s): %v", cmdKey, err)
 			return
@@ -576,8 +579,8 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB) func(int64, int, st
 	}
 }
 
-func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, cmdKey, period, filter string, page, limit int, sortOrder string) {
-	msg, markup, err := buildPaginatedResponse(db, cmdKey, period, filter, page, limit, sortOrder)
+func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, chainID, cmdKey, period, filter string, page, limit int, sortOrder string) {
+	msg, markup, err := buildPaginatedResponse(db, chainID, cmdKey, period, filter, page, limit, sortOrder)
 	if err != nil {
 		log.Printf("error build paginated response (%s): %v", cmdKey, err)
 		_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch data.")
@@ -588,7 +591,7 @@ func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, cmdKey, perio
 	}
 }
 
-func buildPaginatedResponse(db *gorm.DB, cmdKey, period, filter string, page, limit int, sortOrder string) (string, *InlineKeyboardMarkup, error) {
+func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string, page, limit int, sortOrder string) (string, *InlineKeyboardMarkup, error) {
 	limit = clampLimit(limit)
 	sortOrder = normalizeSort(sortOrder)
 	switch cmdKey {
@@ -596,21 +599,21 @@ func buildPaginatedResponse(db *gorm.DB, cmdKey, period, filter string, page, li
 		if period == "" {
 			period = periodDefault
 		}
-		msg, pageOut, totalPages, err := formatParticipationRAte(db, period, page, limit, filter, sortOrder)
+		msg, pageOut, totalPages, err := formatParticipationRAte(db, chainID, period, page, limit, filter, sortOrder)
 		if err != nil {
 			return "", nil, err
 		}
 		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
 
 	case "uptime":
-		msg, pageOut, totalPages, err := formatUptime(db, page, limit, filter, sortOrder)
+		msg, pageOut, totalPages, err := formatUptime(db, chainID, page, limit, filter, sortOrder)
 		if err != nil {
 			return "", nil, err
 		}
 		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, "", filter, sortOrder), nil
 
 	case "operation_time":
-		msg, pageOut, totalPages, err := formatOperationTime(db, page, limit, filter)
+		msg, pageOut, totalPages, err := formatOperationTime(db, chainID, page, limit, filter)
 		if err != nil {
 			return "", nil, err
 		}
@@ -620,7 +623,7 @@ func buildPaginatedResponse(db *gorm.DB, cmdKey, period, filter string, page, li
 		if period == "" {
 			period = periodDefault
 		}
-		msg, pageOut, totalPages, err := FormatTxcontrib(db, period, page, limit, filter, sortOrder)
+		msg, pageOut, totalPages, err := FormatTxcontrib(db, chainID, period, page, limit, filter, sortOrder)
 		if err != nil {
 			return "", nil, err
 		}
@@ -630,7 +633,7 @@ func buildPaginatedResponse(db *gorm.DB, cmdKey, period, filter string, page, li
 		if period == "" {
 			period = periodDefault
 		}
-		msg, pageOut, totalPages, err := formatMissing(db, period, page, limit, filter)
+		msg, pageOut, totalPages, err := formatMissing(db, chainID, period, page, limit, filter)
 		if err != nil {
 			return "", nil, err
 		}
@@ -862,6 +865,7 @@ func truncateRunes(s string, maxLen int) string {
 
 type SearchState struct {
 	BotType   string
+	ChainID   string
 	Cmd       string
 	Page      int
 	Limit     int
@@ -925,7 +929,7 @@ func HandleSearchInput(token string, db *gorm.DB, botType string, chatID int64, 
 	if strings.HasPrefix(t, "/") {
 		return false
 	}
-	sendPaginatedMessage(token, chatID, db, state.Cmd, state.Period, t, 1, state.Limit, state.SortOrder)
+	sendPaginatedMessage(token, chatID, db, state.ChainID, state.Cmd, state.Period, t, 1, state.Limit, state.SortOrder)
 	return true
 }
 

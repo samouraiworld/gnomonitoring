@@ -41,13 +41,13 @@ func TestMigrationsApplyChainIDColumns(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in addr_monikers")
 
-	// Verify chain_id exists in govdao
+	// Verify chain_id exists in govdaos
 	err = db.Raw(`
-		SELECT COUNT(*) FROM pragma_table_info('govdao')
+		SELECT COUNT(*) FROM pragma_table_info('govdaos')
 		WHERE name='chain_id'
 	`).Scan(&result).Error
 	assert.NoError(t, err)
-	assert.Equal(t, 1, result, "chain_id column should exist in govdao")
+	assert.Equal(t, 1, result, "chain_id column should exist in govdaos")
 
 	// Verify chain_id exists in telegram_validator_subs
 	err = db.Raw(`

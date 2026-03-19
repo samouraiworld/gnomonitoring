@@ -173,7 +173,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEnd
 		log.Printf("⚠️ Failed to get genesis monikers: %v", err)
 	}
 	// Step 4 — Monikers from DB
-	dbMap, err := database.GetMoniker(db)
+	dbMap, err := database.GetMoniker(db, chainID)
 	if err != nil {
 		log.Printf("⚠️ Failed to get monikers from DB: %v", err)
 	}
@@ -204,7 +204,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEnd
 
 	// Sync MonikerMap to addr_monikers table
 	for addr, moniker := range tempMonikers {
-		if err := database.UpsertAddrMoniker(db, addr, moniker); err != nil {
+		if err := database.UpsertAddrMoniker(db, chainID, addr, moniker); err != nil {
 			log.Printf("⚠️ Failed to upsert addr_moniker %s: %v", addr, err)
 		}
 	}
