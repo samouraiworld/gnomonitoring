@@ -6,6 +6,11 @@ clerk_secret_key: "sk_test...."  # change me
 token_telegram_validator: ""
 token_telegram_govdao: ""
 
+# Default chain used when no ?chain= query parameter is supplied.
+# Must match one of the enabled chain keys below. Falls back to the
+# first enabled chain alphabetically if not set or invalid.
+default_chain: "test12"
+
 # Multi-chain configuration
 # Each chain has its own RPC, GraphQL indexer, and gno.web endpoint
 chains:
@@ -16,7 +21,13 @@ chains:
     enabled: true
 
   gnoland1:
-    rpc_endpoint: "https://rpc.gnoland1.testnets.gno.land"
-    graphql: "https://indexer.gnoland1.testnets.gno.land/graphql/query"
-    gnoweb: "https://gnoland1.testnets.gno.land"
+    rpc_endpoint: "https://rpc.betanet.testnets.gno.land"
+    graphql: "https://indexer.betanet.testnets.gno.land/graphql/query"
+    gnoweb: "https://betanet.testnets.gno.land"
+    enabled: true
+
+  test11:
+    rpc_endpoint: "https://rpc.test11.testnets.gno.land"
+    graphql: "https://indexer.test11.testnets.gno.land/graphql/query"
+    gnoweb: "https://test11.testnets.gno.land"
     enabled: true
