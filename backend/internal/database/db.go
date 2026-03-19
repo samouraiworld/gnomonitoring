@@ -10,60 +10,6 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// =================================== VIEW MISSING BLOCK ============================
-func CreateMissingBlocksView(db *gorm.DB) error {
-	createViewSQL := `
-CREATE VIEW IF NOT EXISTS daily_missing_series AS
-WITH ranked AS (
-    SELECT
-        addr,
-        moniker,
-        date,
-        block_height,
-        participated,
-        -- Vérifie si le bloc précédent était manqué
-        CASE 
-            WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) = 1
-            THEN 1
-            WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) IS NULL
-            THEN 1
-            ELSE 0
-        END AS new_seq
-    FROM daily_participations
-	WHERE date >= datetime('now', '-24 hours')
-),
-grouped AS (
-    SELECT
-        *,
-        SUM(new_seq) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) AS seq_id
-    FROM ranked
-)
-SELECT
-    addr,
-    moniker,
-    DATE(date) AS date,
-    TIME(date) AS time_block,
-    MIN(block_height) OVER (PARTITION BY addr, moniker, DATE(date), seq_id) AS start_height,
-    block_height AS end_height,
-    SUM(1) OVER (
-        PARTITION BY addr, moniker, DATE(date), seq_id
-        ORDER BY block_height
-        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-    ) AS missed
-FROM grouped
-WHERE participated = 0
-ORDER BY addr, moniker, date, seq_id, block_height;
-
-	`
-
-	if err := db.Exec(createViewSQL).Error; err != nil {
-		return fmt.Errorf("failed to create view: %w", err)
-	}
-
-	log.Println("✅ View `daily_missing_series` created")
-	return nil
-}
-
 // ===================================State GovDao=====================================
 func InsertGovdao(db *gorm.DB, id int, chainID, url, title, tx, status string) error {
 	govdao := Govdao{
@@ -139,12 +85,15 @@ func DeleteWebhook(id int, userID string, db *gorm.DB) error {
 
 // // ==========================webhooks_validator ===============================================
 
-func InsertMonitoringWebhook(userID, url, description, typ string, db *gorm.DB) error {
+func InsertMonitoringWebhook(userID, url, description, typ, chainID string, db *gorm.DB) error {
 	wh := WebhookValidator{
 		UserID:      userID,
 		URL:         url,
 		Description: description,
 		Type:        typ,
+	}
+	if chainID != "" {
+		wh.ChainID = &chainID
 	}
 
 	if err := createHourReport(db, userID); err != nil {
@@ -161,13 +110,14 @@ func DeleteMonitoringWebhook(id int, userID string, db *gorm.DB) error {
 		Error
 }
 
-func ListMonitoringWebhooks(db *gorm.DB, userID string) ([]WebhookValidator, error) {
+func ListMonitoringWebhooks(db *gorm.DB, userID string, chainID ...string) ([]WebhookValidator, error) {
 	var result []WebhookValidator
-	err := db.
-		Select("id, description, user_id, url, type").
-		Where("user_id = ?", userID).
-		Order("id ASC").
-		Find(&result).Error
+	q := db.Select("id, description, user_id, url, type, chain_id").
+		Where("user_id = ?", userID)
+	if len(chainID) > 0 && chainID[0] != "" {
+		q = q.Where("chain_id = ? OR chain_id IS NULL", chainID[0])
+	}
+	err := q.Order("id ASC").Find(&result).Error
 	return result, err
 }
 

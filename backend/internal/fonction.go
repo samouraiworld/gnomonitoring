@@ -163,18 +163,24 @@ func SendSlackAlert(msg string, webhookURL string) error {
 	}
 	return nil
 }
-func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, start_height, end_height int64, db *gorm.DB) error {
+func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moniker string, start_height, end_height int64, db *gorm.DB) error {
 	type Webhook struct {
-		UserID string
-		URL    string
-		Type   string
-		ID     int
+		UserID  string
+		URL     string
+		Type    string
+		ID      int
+		ChainID *string
 	}
 	var fullMsg string
 	var webhooks []Webhook
-	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
+	if err := db.Model(&database.WebhookValidator{}).
+		Where("chain_id = ? OR chain_id IS NULL", chainID).
+		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
+
+	chainLabel := fmt.Sprintf("[%s] ", chainID)
+
 	for _, wh := range webhooks {
 
 		// ================== Build msg ===============
@@ -194,8 +200,8 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 					Find(&res).Error
 
 				fullMsg = fmt.Sprintf(
-					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
 				)
 				if err != nil {
 					return fmt.Errorf("failed to fetch mentions: %w", err)
@@ -208,8 +214,8 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 				emoji = "⚠️"
 				prefix = ""
 				fullMsg = fmt.Sprintf(
-					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
 				)
 
 			}
@@ -236,22 +242,19 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 					return fmt.Errorf("failed to fetch mentions: %w", err)
 				}
 				fullMsg = fmt.Sprintf(
-					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
 				)
 				for _, r := range res {
-
 					fullMsg += "\n <@" + r.MentionTag + ">"
 				}
-				// log.Println(fullMsg)
 				if level == "WARNING" {
 					emoji = "⚠️"
 					prefix = ""
 					fullMsg = fmt.Sprintf(
-						"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-						emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+						"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+						chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
 					)
-
 				}
 			}
 			sendErr := SendSlackAlert(fullMsg, wh.URL)
@@ -269,10 +272,11 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 	if level == "CRITICAL" {
 		emoji := "🚨"
 		fullMsg = fmt.Sprintf(
-			"%s <b>%s</b> %s\n"+
+			"%s%s <b>%s</b> %s\n"+
 				"addr: <code>%s</code>\n"+
 				"moniker: <b>%s</b>\n"+
 				"missed %d blocks (%d → %d)",
+			html.EscapeString(chainLabel),
 			emoji,
 			html.EscapeString(level),
 			html.EscapeString(today),
@@ -285,10 +289,11 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 	if level == "WARNING" {
 		emoji := "⚠️"
 		fullMsg = fmt.Sprintf(
-			"%s <b>%s</b> %s\n"+
+			"%s%s <b>%s</b> %s\n"+
 				"addr: <code>%s</code>\n"+
 				"moniker: <b>%s</b>\n"+
 				"missed %d blocks (%d → %d)",
+			html.EscapeString(chainLabel),
 			emoji,
 			html.EscapeString(level),
 			html.EscapeString(today),
@@ -298,7 +303,7 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 		)
 	}
 
-	if err := telegram.MsgTelegramAlert(fullMsg, addr, Config.TokenTelegramValidator, "validator", db); err != nil {
+	if err := telegram.MsgTelegramAlert(fullMsg, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramAlert: %v", err)
 	}
 
@@ -336,16 +341,19 @@ func SendUserReportAlert(userID, msg string, db *gorm.DB) error {
 
 	return nil
 }
-func SendResolveValidator(msg string, addr string, db *gorm.DB) error {
+func SendResolveValidator(chainID, msg string, addr string, db *gorm.DB) error {
 	type Webhook struct {
-		UserID string
-		URL    string
-		Type   string
-		ID     int
+		UserID  string
+		URL     string
+		Type    string
+		ID      int
+		ChainID *string
 	}
 
 	var webhooks []Webhook
-	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
+	if err := db.Model(&database.WebhookValidator{}).
+		Where("chain_id = ? OR chain_id IS NULL", chainID).
+		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 	for _, wh := range webhooks {
@@ -365,26 +373,27 @@ func SendResolveValidator(msg string, addr string, db *gorm.DB) error {
 			}
 
 		}
-		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
-
 	}
-	if err := telegram.MsgTelegramAlert(msg, addr, Config.TokenTelegramValidator, "validator", db); err != nil {
+	if err := telegram.MsgTelegramAlert(msg, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramAlert: %v", err)
 	}
 
 	return nil
 }
 
-func SendInfoValidator(msg string, level string, db *gorm.DB) error {
+func SendInfoValidator(chainID, msg string, level string, db *gorm.DB) error {
 	type Webhook struct {
-		UserID string
-		URL    string
-		Type   string
-		ID     int
+		UserID  string
+		URL     string
+		Type    string
+		ID      int
+		ChainID *string
 	}
 
 	var webhooks []Webhook
-	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
+	if err := db.Model(&database.WebhookValidator{}).
+		Where("chain_id = ? OR chain_id IS NULL", chainID).
+		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 	for _, wh := range webhooks {
@@ -404,8 +413,6 @@ func SendInfoValidator(msg string, level string, db *gorm.DB) error {
 			}
 
 		}
-		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
-
 	}
 	if err := telegram.MsgTelegram(msg, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegram: %v", err)

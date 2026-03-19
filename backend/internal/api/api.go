@@ -198,7 +198,15 @@ func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *g
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	webhooks, err := database.ListMonitoringWebhooks(db, userID)
+	// Optional chain filter: if ?chain= is provided and valid, filter by it.
+	chainID := r.URL.Query().Get("chain")
+	if chainID != "" {
+		if err := internal.Config.ValidateChainID(chainID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	webhooks, err := database.ListMonitoringWebhooks(db, userID, chainID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -235,6 +243,17 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		return
 	}
 
+	// Optional chain scoping: read chain_id from body (already decoded into webhook.ChainID).
+	// Validate it if provided.
+	var chainID string
+	if webhook.ChainID != nil && *webhook.ChainID != "" {
+		if err := internal.Config.ValidateChainID(*webhook.ChainID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		chainID = *webhook.ChainID
+	}
+
 	// ✅ Check if webhook exist
 	var exists bool
 	err = db.Model(&database.WebhookValidator{}).
@@ -254,7 +273,7 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	}
 
 	// ✅ If not exist insert
-	err = database.InsertMonitoringWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, db)
+	err = database.InsertMonitoringWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, chainID, db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

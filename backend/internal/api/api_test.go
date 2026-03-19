@@ -146,3 +146,103 @@ func TestGetBlockHeight(t *testing.T) {
 
 	assert.True(t, exists)
 }
+
+// ---------- TEST GetChainIDFromRequest validation ----------
+
+func TestGetChainIDFromRequest_InvalidChain(t *testing.T) {
+	// Setup chains config
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"test12": {
+			RPCEndpoint:     "http://localhost:26657",
+			GraphqlEndpoint: "http://localhost:8080/graphql/query",
+			GnowebEndpoint:  "http://localhost:8080",
+			Enabled:         true,
+		},
+	}
+	internal.EnabledChains = []string{"test12"}
+	internal.Config.DefaultChain = "test12"
+	defer func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
+	}()
+
+	// Request with non-existent chain should return 400
+	req := httptest.NewRequest(http.MethodGet, "/alerts?period=all_time&chain=nonexistent", nil)
+	w := httptest.NewRecorder()
+
+	api.Getlastincident(w, req, testoutils.NewTestDB(t))
+	res := w.Result()
+	defer res.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, res.StatusCode)
+}
+
+// ---------- TEST /alerts cross-chain isolation ----------
+
+func TestGetAlerts_CrossChainIsolation(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	// Setup config with multiple chains
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"betanet": {
+			RPCEndpoint:     "http://localhost:26657",
+			GraphqlEndpoint: "http://localhost:8080/graphql/query",
+			GnowebEndpoint:  "http://localhost:8080",
+			Enabled:         true,
+		},
+		"gnoland1": {
+			RPCEndpoint:     "http://localhost:26658",
+			GraphqlEndpoint: "http://localhost:8080/graphql/query",
+			GnowebEndpoint:  "http://localhost:8080",
+			Enabled:         true,
+		},
+	}
+	internal.EnabledChains = []string{"betanet", "gnoland1"}
+	internal.Config.DefaultChain = "betanet"
+	defer func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
+	}()
+
+	// Insert alerts for different chains
+	betanetAlert := database.AlertLog{
+		ChainID:     "betanet",
+		Addr:        "g1abc",
+		Moniker:     "BetanetValidator",
+		Level:       "CRITICAL",
+		StartHeight: 100,
+		EndHeight:   150,
+		SentAt:      time.Now(),
+	}
+	gnolandAlert := database.AlertLog{
+		ChainID:     "gnoland1",
+		Addr:        "g1xyz",
+		Moniker:     "GnolandValidator",
+		Level:       "WARNING",
+		StartHeight: 200,
+		EndHeight:   250,
+		SentAt:      time.Now(),
+	}
+
+	db.Create(&betanetAlert)
+	db.Create(&gnolandAlert)
+
+	// Query alerts for betanet
+	req := httptest.NewRequest(http.MethodGet, "/alerts?period=all_time&chain=betanet", nil)
+	w := httptest.NewRecorder()
+
+	api.Getlastincident(w, req, db)
+	res := w.Result()
+	defer res.Body.Close()
+
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	body, _ := io.ReadAll(res.Body)
+	bodyStr := string(body)
+
+	// Should contain betanet validator
+	assert.Contains(t, bodyStr, "BetanetValidator")
+	// Should NOT contain gnoland1 validator
+	assert.NotContains(t, bodyStr, "GnolandValidator")
+}

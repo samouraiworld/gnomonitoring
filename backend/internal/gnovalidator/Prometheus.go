@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -52,12 +53,16 @@ var (
 		},
 		[]string{"chain", "validator_address", "moniker"},
 	)
+
+	initOnce sync.Once
 )
 
 func Init() {
-	prometheus.MustRegister(ValidatorParticipation)
-	prometheus.MustRegister(MissedBlocks)
-	prometheus.MustRegister(ConsecutiveMissedBlocks)
+	initOnce.Do(func() {
+		prometheus.MustRegister(ValidatorParticipation)
+		prometheus.MustRegister(MissedBlocks)
+		prometheus.MustRegister(ConsecutiveMissedBlocks)
+	})
 }
 
 func StartPrometheusServer(port int) {

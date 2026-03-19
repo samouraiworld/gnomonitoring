@@ -19,14 +19,21 @@ type ValidatorStatus struct {
 
 // ============================ Telegram =============================================
 
-func InsertChatID(db *gorm.DB, chatID int64, chatType string) (bool, error) {
+// InsertChatID upserts the chat record. When chatType is "validator" it also
+// ensures a TelegramHourReport row exists for the given chainID so that the
+// scheduler can pick it up.
+func InsertChatID(db *gorm.DB, chatID int64, chatType string, chainID ...string) (bool, error) {
 	chat := Telegram{
 		ChatID: chatID,
 		Type:   chatType,
 	}
 
 	if chatType == "validator" {
-		if err := createHourReportTelegram(db, chatID); err != nil {
+		cid := ""
+		if len(chainID) > 0 {
+			cid = chainID[0]
+		}
+		if err := createHourReportTelegram(db, chatID, cid); err != nil {
 			log.Printf("⚠️ createHourReportTelegram: %v", err)
 		}
 	}
@@ -65,7 +72,7 @@ func GetAllChatIDs(db *gorm.DB, typeChatid string) ([]int64, error) {
 // ============================ Telegram validato =============================================
 // ================== Telegram hours report ================================
 
-func UpdateTelegramHeureReport(db *gorm.DB, h, m int, t string, chatid int64) error {
+func UpdateTelegramHeureReport(db *gorm.DB, h, m int, t string, chatid int64, chainID string) error {
 	// Validate timezone
 	if _, err := time.LoadLocation(t); err != nil {
 		log.Printf("Invalid timezone '%s', defaulting to UTC", t)
@@ -73,7 +80,7 @@ func UpdateTelegramHeureReport(db *gorm.DB, h, m int, t string, chatid int64) er
 	}
 	return db.
 		Model(&TelegramHourReport{}).
-		Where("chat_id = ?", chatid).
+		Where("chat_id = ? AND chain_id = ?", chatid, chainID).
 		Updates(map[string]interface{}{
 			"daily_report_hour":   h,
 			"daily_report_minute": m,
@@ -81,84 +88,98 @@ func UpdateTelegramHeureReport(db *gorm.DB, h, m int, t string, chatid int64) er
 		}).Error
 }
 
-func ActivateTelegramReport(db *gorm.DB, isActivate bool, chatid int64) error {
-	// Validate timezone
-
+func ActivateTelegramReport(db *gorm.DB, isActivate bool, chatid int64, chainID string) error {
 	return db.
 		Model(&TelegramHourReport{}).
-		Where("chat_id = ?", chatid).
+		Where("chat_id = ? AND chain_id = ?", chatid, chainID).
 		Updates(map[string]interface{}{
 			"activate": isActivate,
 		}).Error
 }
 
-func GetTelegramReportStatus(db *gorm.DB, chatID int64) (bool, error) {
+func GetTelegramReportStatus(db *gorm.DB, chatID int64, chainID string) (bool, error) {
 	var activate bool
 	err := db.Model(&TelegramHourReport{}).
 		Select("activate").
-		Where("chat_id = ?", chatID).
+		Where("chat_id = ? AND chain_id = ?", chatID, chainID).
 		Scan(&activate).Error
 
 	if err != nil {
-		return false, fmt.Errorf("failed to get status for chat_id=%d: %w", chatID, err)
+		return false, fmt.Errorf("failed to get status for chat_id=%d chain_id=%s: %w", chatID, chainID, err)
 	}
 	return activate, nil
 }
 
-func GetHourTelegramReport(db *gorm.DB, chatid int64) (*TelegramHourReport, error) {
+func GetHourTelegramReport(db *gorm.DB, chatid int64, chainID string) (*TelegramHourReport, error) {
 	var hr TelegramHourReport
 	err := db.Model(&TelegramHourReport{}).
-		Where("chat_id = ?", chatid).
+		Where("chat_id = ? AND chain_id = ?", chatid, chainID).
 		First(&hr).Error
 	if err != nil {
 		return nil, err
 	}
 	return &hr, nil
 }
-func createHourReportTelegram(db *gorm.DB, chatid int64) error {
-	return db.Create(&TelegramHourReport{ChatID: chatid}).Error
+
+// GetAllHourTelegramReports returns all active TelegramHourReport rows for the
+// given chat. It returns one row per (chat_id, chain_id) pair.
+func GetAllHourTelegramReports(db *gorm.DB, chatid int64) ([]TelegramHourReport, error) {
+	var hrs []TelegramHourReport
+	err := db.Model(&TelegramHourReport{}).
+		Where("chat_id = ?", chatid).
+		Find(&hrs).Error
+	return hrs, err
+}
+
+func createHourReportTelegram(db *gorm.DB, chatid int64, chainID string) error {
+	return db.Clauses().FirstOrCreate(&TelegramHourReport{
+		ChatID:  chatid,
+		ChainID: chainID,
+	}).Error
 }
 
 // ============================ Telegram subscsubscriptions===============================
 
-func InsertTelegramValidatorSub(db *gorm.DB, chatID int64, moniker, addr string) error {
+func InsertTelegramValidatorSub(db *gorm.DB, chatID int64, chainID, moniker, addr string) error {
 	sub := TelegramValidatorSub{
 		ChatID:   chatID,
+		ChainID:  chainID,
 		Moniker:  moniker,
 		Addr:     addr,
 		Activate: true,
 	}
 
-	// Vérifie si un abonnement existe déjà
+	// Check if a subscription already exists for this (chat_id, chain_id, addr) triplet.
 	var existing TelegramValidatorSub
 	err := db.
-		Where("chat_id = ? AND addr = ?", chatID, addr).
+		Where("chat_id = ? AND chain_id = ? AND addr = ?", chatID, chainID, addr).
 		First(&existing).Error
 
 	if err == nil {
-		// Si déjà présent, on le réactive
+		// Already present: reactivate if needed.
 		if !existing.Activate {
 			return db.Model(&existing).Update("activate", true).Error
 		}
-		return nil // déjà actif → rien à faire
+		return nil // already active — nothing to do
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		// Sinon on l'insère
 		return db.Create(&sub).Error
 	}
 
 	return err
 }
-func GetTelegramValidatorSub(db *gorm.DB, chatID int64, onlyActive bool) ([]TelegramValidatorSub, error) {
+
+func GetTelegramValidatorSub(db *gorm.DB, chatID int64, chainID string, onlyActive bool) ([]TelegramValidatorSub, error) {
 	var subs []TelegramValidatorSub
-	query := db.Where("chat_id = ?", chatID)
+	query := db.Where("chat_id = ? AND chain_id = ?", chatID, chainID)
 	if onlyActive {
 		query = query.Where("activate = ?", true)
 	}
 	err := query.Order("created_at DESC").Find(&subs).Error
 	return subs, err
 }
-func GetValidatorStatusList(db *gorm.DB, chatID int64) ([]ValidatorStatus, error) {
+
+func GetValidatorStatusList(db *gorm.DB, chatID int64, chainID string) ([]ValidatorStatus, error) {
 
 	var results []ValidatorStatus
 
@@ -166,6 +187,7 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64) ([]ValidatorStatus, error
 		WITH v AS (
 			SELECT DISTINCT moniker, addr
 			FROM daily_participations
+			WHERE chain_id = ?
 		)
 		SELECT
 			v.moniker,
@@ -177,38 +199,42 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64) ([]ValidatorStatus, error
 		FROM v
 		LEFT JOIN telegram_validator_subs s
 			ON s.addr = v.addr
+			AND s.chain_id = ?
 			AND s.chat_id = ?
 		ORDER BY status DESC;
 	`
 
-	err := db.Raw(query, chatID).Scan(&results).Error
+	err := db.Raw(query, chainID, chainID, chatID).Scan(&results).Error
 	if err != nil {
 		return nil, err
 	}
 
 	return results, nil
 }
-func GetAllValidators(db *gorm.DB) ([]AddrMoniker, error) {
+
+func GetAllValidators(db *gorm.DB, chainID string) ([]AddrMoniker, error) {
 
 	var results []AddrMoniker
 
 	query := `
 			SELECT DISTINCT moniker, addr
-			FROM daily_participations;`
+			FROM daily_participations
+			WHERE chain_id = ?;`
 
-	err := db.Raw(query).Scan(&results).Error
+	err := db.Raw(query, chainID).Scan(&results).Error
 	if err != nil {
 		return nil, err
 	}
 
 	return results, nil
 }
-func ResolveAddrs(db *gorm.DB, addrs []string) ([]AddrMoniker, error) {
+
+func ResolveAddrs(db *gorm.DB, chainID string, addrs []string) ([]AddrMoniker, error) {
 	var results []AddrMoniker
 
 	err := db.Table("daily_participations").
 		Select("DISTINCT addr, moniker").
-		Where("addr IN ?", addrs).
+		Where("chain_id = ? AND addr IN ?", chainID, addrs).
 		Scan(&results).Error
 	if err != nil {
 		return nil, err
@@ -217,12 +243,13 @@ func ResolveAddrs(db *gorm.DB, addrs []string) ([]AddrMoniker, error) {
 	return results, nil
 }
 
-func DeleteTelegramValidatorSub(db *gorm.DB, chatID int64, addr string) error {
+func DeleteTelegramValidatorSub(db *gorm.DB, chatID int64, chainID, addr string) error {
 	return db.
-		Where("chat_id = ? AND addr = ?", chatID, addr).
+		Where("chat_id = ? AND chain_id = ? AND addr = ?", chatID, chainID, addr).
 		Delete(&TelegramValidatorSub{}).Error
 }
-func UpdateTelegramValidatorSubStatus(db *gorm.DB, chatID int64, addr, moniker, action string) error {
+
+func UpdateTelegramValidatorSubStatus(db *gorm.DB, chatID int64, chainID, addr, moniker, action string) error {
 	var activate bool
 
 	switch strings.ToLower(action) {
@@ -236,13 +263,13 @@ func UpdateTelegramValidatorSubStatus(db *gorm.DB, chatID int64, addr, moniker, 
 
 	// find if exist record
 	var sub TelegramValidatorSub
-	err := db.Where("chat_id = ? AND addr = ?", chatID, addr).First(&sub).Error
+	err := db.Where("chat_id = ? AND chain_id = ? AND addr = ?", chatID, chainID, addr).First(&sub).Error
 
-	// if not existe insert record
+	// if not exist insert record
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		if activate {
 			log.Printf("ℹ️ No existing record found — creating new active subscription for %s", addr)
-			return InsertTelegramValidatorSub(db, chatID, moniker, addr)
+			return InsertTelegramValidatorSub(db, chatID, chainID, moniker, addr)
 		}
 		log.Printf("ℹ️ No existing record found — nothing to unsubscribe for %s", addr)
 		return nil

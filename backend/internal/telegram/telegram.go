@@ -240,7 +240,11 @@ func MsgTelegram(msg string, token, typeChatid string, db *gorm.DB) (err error) 
 
 	return nil
 }
-func MsgTelegramAlert(msg string, addr, token, typeChatid string, db *gorm.DB) (err error) {
+// MsgTelegramAlert sends msg to every chat that has an active subscription for
+// the given (chainID, addr) pair. chainID is used to scope the subscription
+// lookup so that alerts from one chain do not bleed into chats that are
+// monitoring a different chain.
+func MsgTelegramAlert(msg string, addr, chainID, token, typeChatid string, db *gorm.DB) (err error) {
 
 	if token == "" {
 		return fmt.Errorf("token is empty")
@@ -253,8 +257,8 @@ func MsgTelegramAlert(msg string, addr, token, typeChatid string, db *gorm.DB) (
 	}
 
 	for _, chatID := range ids {
-		// check sub
-		subs, err := database.GetTelegramValidatorSub(db, chatID, true)
+		// check sub scoped to the chain that produced the alert
+		subs, err := database.GetTelegramValidatorSub(db, chatID, chainID, true)
 		if err != nil {
 			log.Printf("⚠️  get subscriptions failed for chat_id=%d: %v", chatID, err)
 			continue
@@ -305,10 +309,20 @@ func extractCommand(msg *message) (cmd, args string, ok bool) {
 // - token: ton bot token
 // - stopCtx: to shut down properly (SIGINT/SIGTERM)
 
-func StartCommandLoop(stopCtx context.Context, token string, handlers map[string]func(int64, string), callbackHandler func(int64, int, string), typeChatid string, db *gorm.DB) error {
+// StartCommandLoop continuously reads getUpdates and calls the handlers.
+// chainID is used when creating the hour-report row for a new validator chat.
+// Pass an empty string for bots that do not need chain-scoped hour reports
+// (e.g. govdao).
+func StartCommandLoop(stopCtx context.Context, token string, handlers map[string]func(int64, string), callbackHandler func(int64, int, string), typeChatid string, db *gorm.DB, chainID ...string) error {
 	base := "https://api.telegram.org/bot" + url.PathEscape(token) + "/getUpdates"
 	offset := 0
 	httpClient := &http.Client{Timeout: 50 * time.Second}
+
+	// Resolve the default chain for InsertChatID.
+	defaultChain := ""
+	if len(chainID) > 0 {
+		defaultChain = chainID[0]
+	}
 
 	for {
 		select {
@@ -363,7 +377,7 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 			// For save Chat ID into db (fire-and-forget, idempotent upsert)
 			chatIDToInsert := up.Message.Chat.ID
 			go func() {
-				insert, err := database.InsertChatID(db, chatIDToInsert, typeChatid)
+				insert, err := database.InsertChatID(db, chatIDToInsert, typeChatid, defaultChain)
 				if err != nil {
 					log.Printf("⚠️ InsertChatID failed for chat_id=%d: %v", chatIDToInsert, err)
 					return
@@ -376,8 +390,8 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 						return
 					}
 					if err := SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, chatIDToInsert); err != nil {
-					log.Printf("❌ SendReportGovdaoTelegram failed for chat_id=%d: %v", chatIDToInsert, err)
-				}
+						log.Printf("❌ SendReportGovdaoTelegram failed for chat_id=%d: %v", chatIDToInsert, err)
+					}
 				}
 			}()
 			if HandleSearchInput(token, db, typeChatid, up.Message.Chat.ID, up.Message.Text) {

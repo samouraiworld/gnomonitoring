@@ -120,7 +120,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 					}
 					if send_at.IsZero() {
 
-						if err := internal.SendInfoValidator(msg, "CRITICAL", db); err != nil {
+						if err := internal.SendInfoValidator(chainID, msg, "CRITICAL", db); err != nil {
 							log.Printf("❌ SendInfoValidator: %v", err)
 						}
 						if err := database.InsertAlertlog(db, chainID, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg); err != nil {
@@ -142,7 +142,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 
 				if IsAlertSent(chainID, "all") && !IsRestoredNotified(chainID, "all") {
 					msg := "✅ Activity Restored: Gno.land is back to normal."
-					if err := internal.SendInfoValidator(msg, "INFO", db); err != nil {
+					if err := internal.SendInfoValidator(chainID, msg, "INFO", db); err != nil {
 						log.Printf("❌ SendInfoValidator: %v", err)
 					}
 					if err := database.InsertAlertlog(db, chainID, "all", "all", "RESOLVED", latest, latest, false, time.Now(), msg); err != nil {
@@ -255,7 +255,7 @@ func WatchNewValidators(db *gorm.DB, chainID string, client gnoclient.Client, rp
 				if _, exists := oldMap[addr]; !exists {
 					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
 					log.Println(msg)
-					if err := internal.SendInfoValidator(msg, "info", db); err != nil {
+					if err := internal.SendInfoValidator(chainID, msg, "info", db); err != nil {
 						log.Printf("❌ SendInfoValidator: %v", err)
 					}
 				}
@@ -270,7 +270,43 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 			today := time.Now().Format("2006-01-02")
 
 			rows, err := db.Raw(`
-				SELECT addr,moniker,start_height,end_height,missed FROM daily_missing_series`).Rows()
+				WITH ranked AS (
+					SELECT
+						addr,
+						moniker,
+						date,
+						block_height,
+						participated,
+						CASE
+							WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) = 1
+							THEN 1
+							WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) IS NULL
+							THEN 1
+							ELSE 0
+						END AS new_seq
+					FROM daily_participations
+					WHERE chain_id = ? AND date >= datetime('now', '-24 hours')
+				),
+				grouped AS (
+					SELECT
+						*,
+						SUM(new_seq) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) AS seq_id
+					FROM ranked
+				)
+				SELECT
+					addr,
+					moniker,
+					MIN(block_height) OVER (PARTITION BY addr, moniker, DATE(date), seq_id) AS start_height,
+					block_height AS end_height,
+					SUM(1) OVER (
+						PARTITION BY addr, moniker, DATE(date), seq_id
+						ORDER BY block_height
+						ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+					) AS missed
+				FROM grouped
+				WHERE participated = 0
+				ORDER BY addr, moniker, date, seq_id, block_height
+			`, chainID).Rows()
 			if err != nil {
 				log.Printf("❌ Error executing query: %v", err)
 				time.Sleep(checkInterval)
@@ -371,7 +407,7 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 					continue
 				}
 
-				if err := internal.SendAllValidatorAlerts(missed, today, level, addr, moniker, start_height, end_height, db); err != nil {
+				if err := internal.SendAllValidatorAlerts(chainID, missed, today, level, addr, moniker, start_height, end_height, db); err != nil {
 					log.Printf("❌ SendAllValidatorAlerts: %v", err)
 				}
 				if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
@@ -398,20 +434,49 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 
 	var alerts []LastAlert
 
-	// err := db.Raw(`
-	// 	SELECT addr, moniker, max(end_height) as end_height ,start_height
-	// 	FROM daily_missing_series
-	// 	where missed >=5
-	// 	group by start_height
-
-	// `).Scan(&alerts).Error
 	err := db.Raw(`
-			SELECT addr, moniker, max(end_height) as end_height ,max(start_height)
-	FROM daily_missing_series
-		where missed >=5
-		group by addr
-
-	`).Scan(&alerts).Error
+		WITH ranked AS (
+			SELECT
+				addr,
+				moniker,
+				date,
+				block_height,
+				participated,
+				CASE
+					WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) = 1
+					THEN 1
+					WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) IS NULL
+					THEN 1
+					ELSE 0
+				END AS new_seq
+			FROM daily_participations
+			WHERE chain_id = ? AND date >= datetime('now', '-24 hours')
+		),
+		grouped AS (
+			SELECT
+				*,
+				SUM(new_seq) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) AS seq_id
+			FROM ranked
+		),
+		series AS (
+			SELECT
+				addr,
+				moniker,
+				MIN(block_height) OVER (PARTITION BY addr, moniker, DATE(date), seq_id) AS start_height,
+				block_height AS end_height,
+				SUM(1) OVER (
+					PARTITION BY addr, moniker, DATE(date), seq_id
+					ORDER BY block_height
+					ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+				) AS missed
+			FROM grouped
+			WHERE participated = 0
+		)
+		SELECT addr, moniker, max(end_height) AS end_height, max(start_height) AS start_height
+		FROM series
+		WHERE missed >= 5
+		GROUP BY addr
+	`, chainID).Scan(&alerts).Error
 	if err != nil {
 		log.Printf("❌ Error fetching last alerts: %v", err)
 		return
@@ -469,7 +534,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 			continue
 		}
 		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s) at Block %d ", a.Moniker, a.Addr, a.EndHeight+1)
-		if err := internal.SendResolveValidator(resolveMsg, a.Addr, db); err != nil {
+		if err := internal.SendResolveValidator(chainID, resolveMsg, a.Addr, db); err != nil {
 			log.Printf("❌ SendResolveValidator: %v", err)
 		}
 

@@ -75,15 +75,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	telegramChainID := ""
-	if len(internal.EnabledChains) > 0 {
-		telegramChainID = internal.EnabledChains[0]
-	}
-	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db, telegramChainID)
-	callbackHandler := telegram.BuildTelegramCallbackHandler(internal.Config.TokenTelegramValidator, db, telegramChainID)
+	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db, internal.Config.DefaultChain, internal.EnabledChains)
+	callbackHandler := telegram.BuildTelegramCallbackHandler(internal.Config.TokenTelegramValidator, db, internal.Config.DefaultChain)
 
 	go func() {
-		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, callbackHandler, "validator", db); err != nil {
+		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, callbackHandler, "validator", db, internal.Config.DefaultChain); err != nil {
 			log.Fatalf("command loop error bot validator : %v", err)
 		}
 	}()

@@ -52,7 +52,7 @@ func (s *Scheduler) StartAll(db *gorm.DB) {
 
 func (s *Scheduler) StartAllTelegram(db *gorm.DB) {
 	rows, err := db.Raw(`
-		SELECT chat_id, daily_report_hour, daily_report_minute, timezone 
+		SELECT chat_id, chain_id, daily_report_hour, daily_report_minute, timezone
 		FROM telegram_hour_reports
 		WHERE activate = true
 	`).Rows()
@@ -63,14 +63,14 @@ func (s *Scheduler) StartAllTelegram(db *gorm.DB) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var chat_id int64
-		var tz string
+		var chatID int64
+		var chainID, tz string
 		var hour, minute int
-		if err := rows.Scan(&chat_id, &hour, &minute, &tz); err != nil {
+		if err := rows.Scan(&chatID, &chainID, &hour, &minute, &tz); err != nil {
 			log.Printf("⚠️ Error scanning user report config: %v", err)
 			continue
 		}
-		s.StartForTelegram(chat_id, hour, minute, tz, db)
+		s.StartForTelegram(chatID, chainID, hour, minute, tz, db)
 	}
 }
 func (s *Scheduler) StartForUser(userID string, hour, minute int, timezone string, db *gorm.DB) {
@@ -89,12 +89,12 @@ func (s *Scheduler) StartForUser(userID string, hour, minute int, timezone strin
 		gnovalidator.SheduleUserReport(userID, hour, minute, timezone, db, reload)
 	}()
 }
-func (s *Scheduler) StartForTelegram(chat_id int64, hour, minute int, timezone string, db *gorm.DB) {
+func (s *Scheduler) StartForTelegram(chatID int64, chainID string, hour, minute int, timezone string, db *gorm.DB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// If a scheduler already exists: we "kill" it
-	key := fmt.Sprintf("tg:%d", chat_id)
+	// Key is scoped by chat_id + chain_id so each (chat, chain) pair has its own schedule.
+	key := fmt.Sprintf("tg:%d:%s", chatID, chainID)
 	if ch, exists := s.reloadChans[key]; exists {
 		close(ch) // sends a stop signal
 	}
@@ -103,7 +103,7 @@ func (s *Scheduler) StartForTelegram(chat_id int64, hour, minute int, timezone s
 	reload := make(chan struct{})
 	s.reloadChans[key] = reload
 	go func() {
-		gnovalidator.SheduleTelegramReport(chat_id, hour, minute, timezone, db, reload)
+		gnovalidator.SheduleTelegramReport(chatID, chainID, hour, minute, timezone, db, reload)
 	}()
 }
 func (s *Scheduler) ReloadForUser(userID string, db *gorm.DB) error {
