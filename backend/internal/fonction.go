@@ -34,6 +34,7 @@ type config struct {
 	TokenTelegramValidator string                  `yaml:"token_telegram_validator"`
 	TokenTelegramGovdao    string                  `yaml:"token_telegram_govdao"`
 	Chains                 map[string]*ChainConfig `yaml:"chains"`
+	DefaultChain           string                  `yaml:"default_chain"`
 
 	// Parsed at load time from AllowOrigin (comma-separated).
 	AllowedOrigins []string `yaml:"-"`
@@ -71,6 +72,24 @@ func LoadConfig() {
 	}
 	sort.Strings(EnabledChains)
 	log.Printf("Enabled chains: %v", EnabledChains)
+
+	// Validate default_chain: it must exist in Chains and be enabled.
+	// Fall back to EnabledChains[0] if not set or invalid.
+	if Config.DefaultChain != "" {
+		chain, ok := Config.Chains[Config.DefaultChain]
+		if !ok {
+			log.Printf("Config warning: default_chain %q not found in chains, falling back to %q", Config.DefaultChain, EnabledChains[0])
+			Config.DefaultChain = EnabledChains[0]
+		} else if !chain.Enabled {
+			log.Printf("Config warning: default_chain %q is not enabled, falling back to %q", Config.DefaultChain, EnabledChains[0])
+			Config.DefaultChain = EnabledChains[0]
+		}
+	} else {
+		if len(EnabledChains) > 0 {
+			Config.DefaultChain = EnabledChains[0]
+		}
+	}
+	log.Printf("Default chain: %v", Config.DefaultChain)
 
 	// Parse comma-separated origins into a slice for dynamic CORS matching.
 	for _, raw := range strings.Split(Config.AllowOrigin, ",") {

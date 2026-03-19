@@ -23,9 +23,8 @@ import (
 func GetChainIDFromRequest(r *http.Request) (string, error) {
 	chainID := r.URL.Query().Get("chain")
 	if chainID == "" {
-		// Default to first enabled chain
-		if len(internal.EnabledChains) > 0 {
-			chainID = internal.EnabledChains[0]
+		if internal.Config.DefaultChain != "" {
+			chainID = internal.Config.DefaultChain
 		} else {
 			return "", fmt.Errorf("no chains enabled")
 		}

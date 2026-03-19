@@ -55,9 +55,11 @@ func TestGetAlerts(t *testing.T) {
 		},
 	}
 	internal.EnabledChains = []string{"test12"}
+	internal.Config.DefaultChain = "test12"
 	defer func() {
 		internal.Config.Chains = nil
 		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
 	}()
 
 	db.Create(&database.AlertLog{
@@ -121,9 +123,11 @@ func TestGetBlockHeight(t *testing.T) {
 		},
 	}
 	internal.EnabledChains = []string{"test12"}
+	internal.Config.DefaultChain = "test12"
 	defer func() {
 		internal.Config.Chains = nil
 		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
 	}()
 
 	req := httptest.NewRequest(http.MethodGet, "/info/blockheight", nil)
