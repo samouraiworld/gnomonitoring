@@ -10,11 +10,12 @@ import (
 )
 
 type Govdao struct {
-	Id     int    `gorm:"primaryKey;autoIncrement:false;column:id"`
-	Url    string `gorm:"column:url;" `
-	Title  string `gorm:"column:title;" `
-	Tx     string `gorm:"column:tx;" `
-	Status string `gorm:"column:status;" `
+	Id      int    `gorm:"primaryKey;autoIncrement:false;column:id"`
+	ChainID string `gorm:"column:chain_id;not null;default:betanet"`
+	Url     string `gorm:"column:url;" `
+	Title   string `gorm:"column:title;" `
+	Tx      string `gorm:"column:tx;" `
+	Status  string `gorm:"column:status;" `
 }
 type Telegram struct {
 	ChatID int64  `gorm:"primaryKey;column:chat_id;" `
@@ -22,6 +23,7 @@ type Telegram struct {
 }
 type TelegramHourReport struct {
 	ChatID            int64  `gorm:"primaryKey;column:chat_id;" `
+	ChainID           string `gorm:"primaryKey;column:chain_id;not null;default:betanet"`
 	DailyReportHour   int    `gorm:"column:daily_report_hour;default:9"`
 	DailyReportMinute int    `gorm:"column:daily_report_minute;default:0"`
 	Activate          bool   `gorm:"column:activate;default:true"`
@@ -30,9 +32,10 @@ type TelegramHourReport struct {
 
 type TelegramValidatorSub struct {
 	ID        uint      `gorm:"primaryKey;autoIncrement"`
-	ChatID    int64     `gorm:"index:idx_chat_validator,unique;not null"`
+	ChatID    int64     `gorm:"index:idx_tvs_chain_addr_chatid,unique,priority:3;not null"`
+	ChainID   string    `gorm:"column:chain_id;not null;default:betanet;index:idx_tvs_chain_addr_chatid,unique,priority:1"`
 	Moniker   string    `gorm:"size:64;index"`
-	Addr      string    `gorm:"index:idx_chat_validator,unique;not null"`
+	Addr      string    `gorm:"index:idx_tvs_chain_addr_chatid,unique,priority:2;not null"`
 	Activate  bool      `gorm:"default:true;index"`
 	CreatedAt time.Time `gorm:"autoCreateTime"`
 }
@@ -73,6 +76,7 @@ type WebhookGovDAO struct {
 	URL           string    `gorm:"column:url;not null" `
 	Type          string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
 	LastCheckedID int       `gorm:"column:last_checked_id;not null;default:-1" `
+	ChainID       *string   `gorm:"column:chain_id;default:null"`
 }
 type WebhookValidator struct {
 	ID          int       `gorm:"primaryKey;autoIncrement;column:id"`
@@ -81,29 +85,35 @@ type WebhookValidator struct {
 	UserID      string    `gorm:"column:user_id;not null;index:idx_webhooks_validator_user" `
 	URL         string    `gorm:"column:url;not null" `
 	Type        string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
+	ChainID     *string   `gorm:"column:chain_id;default:null"`
 }
 type DailyParticipation struct {
 	Date           time.Time `gorm:"column:date"`
-	BlockHeight    int64     `gorm:"column:block_height;uniqueIndex:uniq_addr_height,priority:2"`
+	BlockHeight    int64     `gorm:"column:block_height;uniqueIndex:uniq_chain_addr_height,priority:3"`
+	ChainID        string    `gorm:"column:chain_id;not null;default:betanet;uniqueIndex:uniq_chain_addr_height,priority:1"`
 	Moniker        string    `gorm:"column:moniker"`
-	Addr           string    `gorm:"column:addr;not null;uniqueIndex:uniq_addr_height,priority:1"`
+	Addr           string    `gorm:"column:addr;not null;uniqueIndex:uniq_chain_addr_height,priority:2"`
 	Participated   bool      `gorm:"column:participated;not null"`
 	TxContribution bool      `gorm:"column:tx_contribution;not null"`
 }
 
 type AlertLog struct {
-	Addr        string    `gorm:"column:addr;primaryKey" `
+	ID          uint      `gorm:"primaryKey;autoIncrement;column:id"`
+	ChainID     string    `gorm:"column:chain_id;not null;default:betanet;index:idx_al_chain_addr,priority:1"`
+	Addr        string    `gorm:"column:addr;not null;index:idx_al_chain_addr,priority:2"`
 	Moniker     string    `gorm:"column:moniker;not null" `
-	Level       string    `gorm:"column:level;primaryKey" `
-	StartHeight int64     `gorm:"column:start_height;primaryKey;not null" `
-	EndHeight   int64     `gorm:"column:end_height;primaryKey;not null" `
+	Level       string    `gorm:"column:level;not null" `
+	StartHeight int64     `gorm:"column:start_height;not null" `
+	EndHeight   int64     `gorm:"column:end_height;not null" `
 	Skipped     bool      `gorm:"column:skipped;not null" `
 	Msg         string    `gorm:"column:msg" `
 	SentAt      time.Time `gorm:"column:sent_at;autoCreateTime" `
 }
 
 type AddrMoniker struct {
-	Addr    string `gorm:"column:addr;primaryKey" `
+	ID      uint   `gorm:"primaryKey;autoIncrement;column:id"`
+	ChainID string `gorm:"column:chain_id;not null;default:betanet;uniqueIndex:uniq_chain_addr,priority:1"`
+	Addr    string `gorm:"column:addr;not null;uniqueIndex:uniq_chain_addr,priority:2"`
 	Moniker string `gorm:"column:moniker;not null" `
 }
 type AlertSummary struct {
@@ -143,7 +153,116 @@ type FirstSeenMetrics struct {
 	FirstSeen string `json:"firstSeen"`
 }
 
-// CReate index
+// ApplyMultiChainMigrations adds chain_id columns to existing tables when upgrading
+// from a single-chain schema. It is idempotent: it checks for column existence first.
+func ApplyMultiChainMigrations(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("ApplyMultiChainMigrations: get sql.DB: %w", err)
+	}
+
+	// Check whether chain_id already exists in daily_participations.
+	var count int
+	row := sqlDB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('daily_participations') WHERE name='chain_id'`)
+	if err := row.Scan(&count); err != nil {
+		return fmt.Errorf("ApplyMultiChainMigrations: pragma check: %w", err)
+	}
+
+	// If chain_id already present, migrations have already been applied.
+	if count > 0 {
+		return nil
+	}
+
+	type alteration struct {
+		table string
+		stmt  string
+	}
+	alterations := []alteration{
+		{"daily_participations", "ALTER TABLE daily_participations ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'betanet'"},
+		{"alert_logs", "ALTER TABLE alert_logs ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'betanet'"},
+		{"addr_monikers", "ALTER TABLE addr_monikers ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'betanet'"},
+		{"govdao", "ALTER TABLE govdao ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'betanet'"},
+		{"webhooks_validators", "ALTER TABLE webhooks_validators ADD COLUMN chain_id TEXT DEFAULT NULL"},
+		{"webhooks_gov_d_a_os", "ALTER TABLE webhooks_gov_d_a_os ADD COLUMN chain_id TEXT DEFAULT NULL"},
+		{"telegram_validator_subs", "ALTER TABLE telegram_validator_subs ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'betanet'"},
+	}
+
+	for _, a := range alterations {
+		if _, err := sqlDB.Exec(a.stmt); err != nil {
+			return fmt.Errorf("ApplyMultiChainMigrations: alter %s: %w", a.table, err)
+		}
+	}
+
+	// telegram_hour_reports cannot gain a new PRIMARY KEY column via ALTER TABLE in
+	// SQLite, so we recreate the table and preserve existing rows.
+	recreateStmts := []string{
+		`CREATE TABLE IF NOT EXISTS telegram_hour_reports_new (
+			chat_id              INTEGER NOT NULL,
+			chain_id             TEXT    NOT NULL DEFAULT 'betanet',
+			daily_report_hour    INTEGER NOT NULL DEFAULT 9,
+			daily_report_minute  INTEGER NOT NULL DEFAULT 0,
+			activate             INTEGER NOT NULL DEFAULT 1,
+			timezone             TEXT    NOT NULL DEFAULT 'Europe/Paris',
+			PRIMARY KEY (chat_id, chain_id)
+		)`,
+		`INSERT INTO telegram_hour_reports_new (chat_id, chain_id, daily_report_hour, daily_report_minute, activate, timezone)
+			SELECT chat_id, 'betanet', daily_report_hour, daily_report_minute, activate, timezone
+			FROM telegram_hour_reports`,
+		`DROP TABLE telegram_hour_reports`,
+		`ALTER TABLE telegram_hour_reports_new RENAME TO telegram_hour_reports`,
+	}
+
+	for _, stmt := range recreateStmts {
+		if _, err := sqlDB.Exec(stmt); err != nil {
+			return fmt.Errorf("ApplyMultiChainMigrations: recreate telegram_hour_reports: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// CreateOrReplaceIndexes drops legacy single-chain indexes and creates new
+// compound (chain_id, …) indexes suited for multi-chain queries.
+func CreateOrReplaceIndexes(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("CreateOrReplaceIndexes: get sql.DB: %w", err)
+	}
+
+	drops := []string{
+		"DROP INDEX IF EXISTS idx_dp_addr",
+		"DROP INDEX IF EXISTS idx_dp_block_height",
+		"DROP INDEX IF EXISTS idx_dp_date",
+		"DROP INDEX IF EXISTS idx_dp_addr_participated",
+		"DROP INDEX IF EXISTS idx_dp_addr_date",
+		"DROP INDEX IF EXISTS idx_tvs_addr_chatid",
+	}
+	for _, stmt := range drops {
+		if _, err := sqlDB.Exec(stmt); err != nil {
+			return fmt.Errorf("CreateOrReplaceIndexes: drop: %w", err)
+		}
+	}
+
+	creates := []string{
+		"CREATE INDEX IF NOT EXISTS idx_dp_chain_block_height ON daily_participations(chain_id, block_height)",
+		"CREATE INDEX IF NOT EXISTS idx_dp_chain_addr ON daily_participations(chain_id, addr)",
+		"CREATE INDEX IF NOT EXISTS idx_dp_chain_date ON daily_participations(chain_id, date)",
+		"CREATE INDEX IF NOT EXISTS idx_dp_chain_addr_participated ON daily_participations(chain_id, addr, participated)",
+		"CREATE INDEX IF NOT EXISTS idx_al_chain_addr ON alert_logs(chain_id, addr)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_tvs_chain_addr_chatid ON telegram_validator_subs(chain_id, addr, chat_id)",
+	}
+	for _, stmt := range creates {
+		if _, err := sqlDB.Exec(stmt); err != nil {
+			return fmt.Errorf("CreateOrReplaceIndexes: create: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// InitDB opens the SQLite database, enables performance pragmas, runs
+// AutoMigrate, applies multi-chain schema migrations, rebuilds indexes and
+// creates the missing-blocks view.
 func InitDB(dbPath string) (*gorm.DB, error) {
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
@@ -175,16 +294,17 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if err := CreateMissingBlocksView(db); err != nil {
-		log.Printf("⚠️ CreateMissingBlocksView: %v", err)
+	if err := ApplyMultiChainMigrations(db); err != nil {
+		return nil, fmt.Errorf("ApplyMultiChainMigrations: %w", err)
 	}
 
-	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_block_height ON daily_participations(block_height);")
-	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_date ON daily_participations(date);")
-	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr ON daily_participations(addr);")
-	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr_participated ON daily_participations(addr, participated);")
-	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_dp_addr_date ON daily_participations(addr, date);")
-	_, _ = sqlDB.Exec("CREATE INDEX IF NOT EXISTS idx_tvs_addr_chatid ON telegram_validator_subs(addr, chat_id);")
+	if err := CreateOrReplaceIndexes(db); err != nil {
+		return nil, fmt.Errorf("CreateOrReplaceIndexes: %w", err)
+	}
+
+	if err := CreateMissingBlocksView(db); err != nil {
+		log.Printf("Warning: CreateMissingBlocksView: %v", err)
+	}
 
 	return db, nil
 }

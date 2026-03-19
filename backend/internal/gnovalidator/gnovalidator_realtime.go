@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
@@ -14,6 +13,8 @@ import (
 	"gorm.io/gorm"
 )
 
+// MonikerMap[chainID][addr] = moniker
+var MonikerMap = make(map[string]map[string]string)
 var MonikerMutex sync.RWMutex
 
 // timeMu protects lastRPCErrorAlert and lastProgressTime since time.Time is not
@@ -22,22 +23,22 @@ var timeMu sync.Mutex
 var lastRPCErrorAlert time.Time // anti spam for error RPC
 var lastProgressTime = time.Now()
 
-var (
-	lastProgressHeight atomic.Int64 // -1 means "not yet set"
-	alertSent          atomic.Bool
-	restoredNotified   atomic.Bool
-)
+// lastProgressHeight[chainID] = block height
+var lastProgressHeight = make(map[string]int64)
+var heightMutex sync.RWMutex
 
-func init() {
-	lastProgressHeight.Store(-1)
-}
+// alertSent[chainID][addr] = bool
+var alertSent = make(map[string]map[string]bool)
+var alertMutex sync.RWMutex
+
+// restoredNotified[chainID][addr] = bool
+var restoredNotified = make(map[string]map[string]bool)
+var restoreMutex sync.RWMutex
 
 type BlockParticipation struct {
 	Height     int64
 	Validators map[string]bool
 }
-
-var MonikerMap = make(map[string]string)
 
 type Participation struct {
 	Participated   bool
@@ -45,7 +46,7 @@ type Participation struct {
 	TxContribution bool
 }
 
-func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
+func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) {
 	// simulateCount := 0
 	// simulateMax := 4   // for test
 	go func() {
@@ -89,12 +90,12 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				continue
 			}
 			// Stagnation detection
-			lph := lastProgressHeight.Load()
+			lph := GetLastHeight(chainID)
 			timeMu.Lock()
 			lpt := lastProgressTime
 			timeMu.Unlock()
-			if lph != -1 && latest == lph {
-				if !alertSent.Load() && time.Since(lpt) > 2*time.Minute {
+			if lph != 0 && latest == lph {
+				if !IsAlertSent(chainID, "all") && time.Since(lpt) > 2*time.Minute {
 
 					blockTime, err := database.GetTimeOfBlock(db, latest)
 					if err != nil {
@@ -127,19 +128,19 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 						}
 					}
 
-					alertSent.Store(true)
-					restoredNotified.Store(false)
+					SetAlertSent(chainID, "all", true)
+					SetRestoredNotified(chainID, "all", false)
 					timeMu.Lock()
 					lastProgressTime = time.Now()
 					timeMu.Unlock()
 				}
 			} else {
-				lastProgressHeight.Store(latest)
+				SetLastHeight(chainID, latest)
 				timeMu.Lock()
 				lastProgressTime = time.Now()
 				timeMu.Unlock()
 
-				if alertSent.Load() && !restoredNotified.Load() {
+				if IsAlertSent(chainID, "all") && !IsRestoredNotified(chainID, "all") {
 					msg := "✅ Activity Restored: Gno.land is back to normal."
 					if err := internal.SendInfoValidator(msg, "INFO", db); err != nil {
 						log.Printf("❌ SendInfoValidator: %v", err)
@@ -147,8 +148,8 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 					if err := database.InsertAlertlog(db, "all", "all", "RESOLVED", latest, latest, false, time.Now(), msg); err != nil {
 						log.Printf("❌ InsertAlertlog: %v", err)
 					}
-					restoredNotified.Store(true)
-					alertSent.Store(false)
+					SetRestoredNotified(chainID, "all", true)
+					SetAlertSent(chainID, "all", false)
 				}
 			}
 
@@ -169,7 +170,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 					stop = latest // au pire, rattrape tout
 				}
 				log.Printf("⏳ Backfill [%d..%d] (gap=%d)", currentHeight, stop, latest-currentHeight)
-				if err := BackfillParallel(db, client, currentHeight, stop, MonikerMap); err != nil {
+				if err := BackfillParallel(db, client, currentHeight, stop, GetMonikerMap(chainID)); err != nil {
 					log.Printf("❌ backfill error: %v", err)
 					// si backfill échoue, on ne bloque pas indéfiniment
 				} else {
@@ -224,7 +225,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 				}
 				// log.Printf("participating = %+v \n", participating)
 
-				err = SaveParticipation(db, h, participating, MonikerMap, timeStp)
+				err = SaveParticipation(db, h, participating, GetMonikerMap(chainID), timeStp)
 				if err != nil {
 					log.Printf("❌ Failed to save participation at height %d: %v", h, err)
 				}
@@ -235,7 +236,7 @@ func CollectParticipation(db *gorm.DB, client gnoclient.Client) {
 	}()
 }
 
-func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
+func WatchNewValidators(db *gorm.DB, chainID string, client gnoclient.Client, rpcEndpoint string, refreshInterval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(refreshInterval)
 		defer ticker.Stop()
@@ -244,19 +245,13 @@ func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
 			log.Println("🔁 Refresh MonikerMap...")
 
 			// Copy old map
-			oldMap := make(map[string]string)
-			MonikerMutex.RLock()
-			for k, v := range MonikerMap {
-				oldMap[k] = v
-			}
-			MonikerMutex.RUnlock()
+			oldMap := GetMonikerMap(chainID)
 
 			// Refresh MonikerMap
-			InitMonikerMap(db)
+			InitMonikerMap(db, chainID, client, rpcEndpoint)
 
 			// Compare with the old Monikermap
-			MonikerMutex.RLock()
-			for addr, moniker := range MonikerMap {
+			for addr, moniker := range GetMonikerMap(chainID) {
 				if _, exists := oldMap[addr]; !exists {
 					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
 					log.Println(msg)
@@ -265,12 +260,11 @@ func WatchNewValidators(db *gorm.DB, refreshInterval time.Duration) {
 					}
 				}
 			}
-			MonikerMutex.RUnlock()
 		}
 	}()
 }
 
-func WatchValidatorAlerts(db *gorm.DB, checkInterval time.Duration) {
+func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Duration) {
 	go func() {
 		for {
 			today := time.Now().Format("2006-01-02")
@@ -522,16 +516,90 @@ func SaveParticipation(db *gorm.DB, blockHeight int64, participating map[string]
 	return nil
 }
 
-func StartValidatorMonitoring(db *gorm.DB) {
-	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
+func StartValidatorMonitoring(db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
+	rpcClient, err := rpcclient.NewHTTPClient(chainCfg.RPCEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to connect to RPC: %v", err)
 	}
 	client := gnoclient.Client{RPCClient: rpcClient}
 
-	InitMonikerMap(db) // init validator Map
-	WatchNewValidators(db, 5*time.Minute)
-	CollectParticipation(db, client)         // collect participant
-	WatchValidatorAlerts(db, 20*time.Second) // DB-based of alerts
+	InitMonikerMap(db, chainID, client, chainCfg.RPCEndpoint) // init validator Map
+	WatchNewValidators(db, chainID, client, chainCfg.RPCEndpoint, 5*time.Minute)
+	CollectParticipation(db, chainID, client)         // collect participant
+	WatchValidatorAlerts(db, chainID, 20*time.Second) // DB-based of alerts
 
+}
+
+// Moniker helpers
+
+func GetMonikerMap(chainID string) map[string]string {
+	MonikerMutex.RLock()
+	defer MonikerMutex.RUnlock()
+	if m, ok := MonikerMap[chainID]; ok {
+		return m
+	}
+	return make(map[string]string)
+}
+
+func SetMoniker(chainID, addr, moniker string) {
+	MonikerMutex.Lock()
+	defer MonikerMutex.Unlock()
+	if _, ok := MonikerMap[chainID]; !ok {
+		MonikerMap[chainID] = make(map[string]string)
+	}
+	MonikerMap[chainID][addr] = moniker
+}
+
+// Height helpers
+
+func GetLastHeight(chainID string) int64 {
+	heightMutex.RLock()
+	defer heightMutex.RUnlock()
+	return lastProgressHeight[chainID]
+}
+
+func SetLastHeight(chainID string, height int64) {
+	heightMutex.Lock()
+	defer heightMutex.Unlock()
+	lastProgressHeight[chainID] = height
+}
+
+// Alert helpers
+
+func IsAlertSent(chainID, addr string) bool {
+	alertMutex.RLock()
+	defer alertMutex.RUnlock()
+	if m, ok := alertSent[chainID]; ok {
+		return m[addr]
+	}
+	return false
+}
+
+func SetAlertSent(chainID, addr string, sent bool) {
+	alertMutex.Lock()
+	defer alertMutex.Unlock()
+	if _, ok := alertSent[chainID]; !ok {
+		alertSent[chainID] = make(map[string]bool)
+	}
+	alertSent[chainID][addr] = sent
+}
+
+// Restored helpers
+
+func IsRestoredNotified(chainID, addr string) bool {
+	restoreMutex.RLock()
+	defer restoreMutex.RUnlock()
+	if m, ok := restoredNotified[chainID]; ok {
+		return m[addr]
+	}
+	return false
+}
+
+func SetRestoredNotified(chainID, addr string, notified bool) {
+	restoreMutex.Lock()
+	defer restoreMutex.Unlock()
+	if _, ok := restoredNotified[chainID]; !ok {
+		restoredNotified[chainID] = make(map[string]bool)
+	}
+	restoredNotified[chainID][addr] = notified
 }

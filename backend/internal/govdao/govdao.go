@@ -77,9 +77,8 @@ type Proposal struct {
 	TxUrl  string
 }
 
-func GetMessageTitle(height int) error {
-	URLgraphql := internal.Config.Graphql
-	client := graphql.NewClient(URLgraphql)
+func GetMessageTitle(height int, graphqlEndpoint string) error {
+	client := graphql.NewClient(graphqlEndpoint)
 
 	req := graphql.NewRequest(`
         query getSpecificBlocksByHeight($height: Int!) {
@@ -116,8 +115,8 @@ func GetMessageTitle(height int) error {
 	return nil
 }
 
-func FetchGovDAOEvents() ([]Transaction, error) {
-	client := graphql.NewClient(internal.Config.Graphql)
+func FetchGovDAOEvents(graphqlEndpoint string) ([]Transaction, error) {
+	client := graphql.NewClient(graphqlEndpoint)
 	req := graphql.NewRequest(`
 			query getEvents {
 			getTransactions(
@@ -182,8 +181,8 @@ func ExtractGovDAOIDs(txs []Transaction) []string {
 	return ids
 }
 
-func WebsocketGovdao(db *gorm.DB) {
-	wsURL := strings.Replace(internal.Config.Graphql, "http", "ws", 1)
+func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string) {
+	wsURL := strings.Replace(graphqlEndpoint, "http", "ws", 1)
 
 	const (
 		backoffMin = 2 * time.Second
@@ -276,7 +275,7 @@ func WebsocketGovdao(db *gorm.DB) {
 			}
 
 			tx := msg.Payload.Data.GetTransactions
-			ProcessProposal(tx, "socket", db)
+			ProcessProposal(tx, "socket", db, chainID, graphqlEndpoint)
 		}
 
 		c.Close()
@@ -332,9 +331,8 @@ func parseGnoStringResponse(bz []byte) (string, error) {
 	return strconv.Unquote(s)
 }
 
-func GetTxsByBlockHeight(height int) (*TxBlock, error) {
-	URLgraphql := internal.Config.Graphql
-	client := graphql.NewClient(URLgraphql)
+func GetTxsByBlockHeight(height int, graphqlEndpoint string) (*TxBlock, error) {
+	client := graphql.NewClient(graphqlEndpoint)
 
 	req := graphql.NewRequest(`
 		query getSpecificBlocksByHeight($height: Int!) {
@@ -365,19 +363,19 @@ func GetTxsByBlockHeight(height int) (*TxBlock, error) {
 	return &respData.GetBlocks[0].Txs[0], nil
 }
 
-func InitGovdao(db *gorm.DB) {
-	Trans, err := FetchGovDAOEvents()
+func InitGovdao(db *gorm.DB, chainID string, graphqlEndpoint string) {
+	Trans, err := FetchGovDAOEvents(graphqlEndpoint)
 	if err != nil {
 		log.Printf("Error fetch govdao %s", err)
 		return
 	}
 	for _, tx := range Trans {
-		ProcessProposal(tx, "Fetch", db)
+		ProcessProposal(tx, "Fetch", db, chainID, graphqlEndpoint)
 	}
 
 }
 
-func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
+func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, graphqlEndpoint string) {
 	for _, ev := range tx.Response.Events {
 		if ev.Type == "ProposalCreated" {
 			for _, attr := range ev.Attrs {
@@ -410,7 +408,7 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 					log.Printf("Block Height: %d", tx.BlockHeight)
 
 					// Get hash of transaction
-					txData, err := GetTxsByBlockHeight(tx.BlockHeight)
+					txData, err := GetTxsByBlockHeight(tx.BlockHeight, graphqlEndpoint)
 					if err != nil {
 						log.Printf("Error fetching tx hash: %v", err)
 						continue
@@ -424,7 +422,7 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 
 					// Insert to db
 					log.Printf("ID: %d", idInt)
-					if err := database.InsertGovdao(db, idInt, url, title, txurl, status); err != nil {
+					if err := database.InsertGovdao(db, idInt, chainID, url, title, txurl, status); err != nil {
 						log.Printf("❌ InsertGovdao: %v", err)
 					}
 					if who == "socket" {
@@ -542,7 +540,7 @@ func StartProposalWatcher(db *gorm.DB) {
 	}
 }
 
-func StartGovDAo(db *gorm.DB) {
-	InitGovdao(db)
-	WebsocketGovdao(db)
+func StartGovDAo(db *gorm.DB, chainID string, graphqlEndpoint string) {
+	InitGovdao(db, chainID, graphqlEndpoint)
+	WebsocketGovdao(db, chainID, graphqlEndpoint)
 }

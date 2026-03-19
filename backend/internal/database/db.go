@@ -65,13 +65,14 @@ ORDER BY addr, moniker, date, seq_id, block_height;
 }
 
 // ===================================State GovDao=====================================
-func InsertGovdao(db *gorm.DB, id int, url, title, tx, status string) error {
+func InsertGovdao(db *gorm.DB, id int, chainID, url, title, tx, status string) error {
 	govdao := Govdao{
-		Id:     id,
-		Url:    url,
-		Title:  title,
-		Tx:     tx,
-		Status: status,
+		Id:      id,
+		ChainID: chainID,
+		Url:     url,
+		Title:   title,
+		Tx:      tx,
+		Status:  status,
 	}
 	return db.Create(&govdao).Error
 

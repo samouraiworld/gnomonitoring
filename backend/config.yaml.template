@@ -1,10 +1,22 @@
 backend_port: "8989"
-allow_origin: "http://localhost:3000"  # Comma-separated for multiple origins, e.g. "https://gnolove.world, https://memba.samourai.app"
-rpc_endpoint: "https://rpc.test9.testnets.gno.land"
 metrics_port: 8888
-gnoweb: "https://test9.testnets.gno.land"
-graphql: "https://indexer.test9.testnets.gno.land/graphql/query"
-clerk_secret_key: "sk_test...." #change me
-dev_mode: false # Set to true for local development without Clerk auth
+dev_mode: true
+allow_origin: "http://localhost:3000"  # Comma-separated for multiple origins, e.g. "https://gnolove.world, https://memba.samourai.app"
+clerk_secret_key: "sk_test...."  # change me
 token_telegram_validator: ""
 token_telegram_govdao: ""
+
+# Multi-chain configuration
+# Each chain has its own RPC, GraphQL indexer, and gno.web endpoint
+chains:
+  test12:
+    rpc_endpoint: "https://rpc.test12.testnets.gno.land"
+    graphql: "https://indexer.test12.testnets.gno.land/graphql/query"
+    gnoweb: "https://test12.testnets.gno.land"
+    enabled: true
+
+  gnoland1:
+    rpc_endpoint: "https://rpc.gnoland1.testnets.gno.land"
+    graphql: "https://indexer.gnoland1.testnets.gno.land/graphql/query"
+    gnoweb: "https://gnoland1.testnets.gno.land"
+    enabled: true

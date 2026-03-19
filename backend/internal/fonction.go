@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,17 +18,22 @@ import (
 	"gorm.io/gorm"
 )
 
+type ChainConfig struct {
+	RPCEndpoint     string `yaml:"rpc_endpoint"`
+	GraphqlEndpoint string `yaml:"graphql"`
+	GnowebEndpoint  string `yaml:"gnoweb"`
+	Enabled         bool   `yaml:"enabled"`
+}
+
 type config struct {
-	BackendPort            string `yaml:"backend_port"`
-	AllowOrigin            string `yaml:"allow_origin"`
-	RPCEndpoint            string `yaml:"rpc_endpoint"`
-	MetricsPort            int    `yaml:"metrics_port"`
-	Gnoweb                 string `yaml:"gnoweb"`
-	Graphql                string `yaml:"graphql"`
-	ClerkSecretKey         string `yaml:"clerk_secret_key"`
-	DevMode                bool   `yaml:"dev_mode"`
-	TokenTelegramValidator string `yaml:"token_telegram_validator"`
-	TokenTelegramGovdao    string `yaml:"token_telegram_govdao"`
+	BackendPort            string                  `yaml:"backend_port"`
+	AllowOrigin            string                  `yaml:"allow_origin"`
+	MetricsPort            int                     `yaml:"metrics_port"`
+	ClerkSecretKey         string                  `yaml:"clerk_secret_key"`
+	DevMode                bool                    `yaml:"dev_mode"`
+	TokenTelegramValidator string                  `yaml:"token_telegram_validator"`
+	TokenTelegramGovdao    string                  `yaml:"token_telegram_govdao"`
+	Chains                 map[string]*ChainConfig `yaml:"chains"`
 
 	// Parsed at load time from AllowOrigin (comma-separated).
 	AllowedOrigins []string `yaml:"-"`
@@ -35,10 +41,13 @@ type config struct {
 
 var Config config
 
+// EnabledChains holds the IDs of all chains with Enabled: true, sorted alphabetically.
+var EnabledChains []string
+
 // alertHTTPClient is reused across all webhook dispatches to enable TCP connection pooling.
 var alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
-// Load config.yaml
+// LoadConfig reads config.yaml, validates chains, and initialises EnabledChains.
 func LoadConfig() {
 	data, err := os.ReadFile("config.yaml")
 	if err != nil {
@@ -50,6 +59,19 @@ func LoadConfig() {
 		log.Fatalf("Error parsing config file: %v", err)
 	}
 
+	if len(Config.Chains) == 0 {
+		log.Fatalf("Config error: no chains defined under 'chains:'")
+	}
+
+	// Build EnabledChains sorted alphabetically.
+	for id, chain := range Config.Chains {
+		if chain.Enabled {
+			EnabledChains = append(EnabledChains, id)
+		}
+	}
+	sort.Strings(EnabledChains)
+	log.Printf("Enabled chains: %v", EnabledChains)
+
 	// Parse comma-separated origins into a slice for dynamic CORS matching.
 	for _, raw := range strings.Split(Config.AllowOrigin, ",") {
 		origin := strings.TrimSpace(raw)
@@ -60,6 +82,35 @@ func LoadConfig() {
 
 	log.Printf("DevMode value: %v", Config.DevMode)
 	log.Printf("Allowed CORS origins: %v", Config.AllowedOrigins)
+}
+
+// GetChainConfig returns the ChainConfig for chainID, or an error if not found.
+func (c *config) GetChainConfig(chainID string) (*ChainConfig, error) {
+	chain, ok := c.Chains[chainID]
+	if !ok {
+		return nil, fmt.Errorf("unknown chain ID: %q", chainID)
+	}
+	return chain, nil
+}
+
+// ValidateChainID returns an error if chainID is not present in Chains.
+func (c *config) ValidateChainID(chainID string) error {
+	if _, ok := c.Chains[chainID]; !ok {
+		return fmt.Errorf("invalid chain ID: %q", chainID)
+	}
+	return nil
+}
+
+// GetEnabledChainIDs returns a sorted slice of all enabled chain IDs.
+func (c *config) GetEnabledChainIDs() []string {
+	var ids []string
+	for id, chain := range c.Chains {
+		if chain.Enabled {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 func SendDiscordAlert(msg string, webhookURL string) error {
 	payload := map[string]string{"content": msg}
