@@ -302,5 +302,9 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("CreateOrReplaceIndexes: %w", err)
 	}
 
+	if err := CreateMissingBlocksView(db); err != nil {
+		return nil, fmt.Errorf("CreateMissingBlocksView: %w", err)
+	}
+
 	return db, nil
 }

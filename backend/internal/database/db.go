@@ -310,3 +310,73 @@ func PruneOldParticipationData(db *gorm.DB, keepDays int) error {
 	log.Printf("🧹 Pruned %d old rows (before %s)", res.RowsAffected, cutoff)
 	return nil
 }
+
+// ==================================== Missing Blocks View (for alert system) ==========================================
+// CreateMissingBlocksView creates or recreates the daily_missing_series view, which identifies consecutive
+// missed blocks per validator per chain. This view is used by the alert system (WatchValidatorAlerts)
+// to detect and report block miss streaks.
+func CreateMissingBlocksView(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("CreateMissingBlocksView: get sql.DB: %w", err)
+	}
+
+	// Drop existing view if it exists
+	if _, err := sqlDB.Exec(`DROP VIEW IF EXISTS daily_missing_series`); err != nil {
+		return fmt.Errorf("CreateMissingBlocksView: drop view: %w", err)
+	}
+
+	// Create the view with multi-chain support
+	createViewSQL := `
+		CREATE VIEW IF NOT EXISTS daily_missing_series AS
+		WITH ranked AS (
+			SELECT
+				dp.chain_id,
+				dp.addr,
+				COALESCE(am.moniker, dp.addr) AS moniker,
+				dp.date,
+				dp.block_height,
+				dp.participated,
+				CASE
+					WHEN dp.participated = 0 AND LAG(dp.participated) OVER
+						(PARTITION BY dp.chain_id, dp.addr, DATE(dp.date) ORDER BY dp.block_height) = 1
+					THEN 1
+					WHEN dp.participated = 0 AND LAG(dp.participated) OVER
+						(PARTITION BY dp.chain_id, dp.addr, DATE(dp.date) ORDER BY dp.block_height) IS NULL
+					THEN 1
+					ELSE 0
+				END AS new_seq
+			FROM daily_participations dp
+			LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+			WHERE dp.date >= datetime('now', '-24 hours')
+		),
+		grouped AS (
+			SELECT *,
+				SUM(new_seq) OVER (PARTITION BY chain_id, addr, DATE(date) ORDER BY block_height) AS seq_id
+			FROM ranked
+		)
+		SELECT
+			chain_id,
+			addr,
+			moniker,
+			DATE(date) AS date,
+			TIME(date) AS time_block,
+			MIN(block_height) OVER (PARTITION BY chain_id, addr, DATE(date), seq_id) AS start_height,
+			block_height AS end_height,
+			SUM(1) OVER (
+				PARTITION BY chain_id, addr, DATE(date), seq_id
+				ORDER BY block_height
+				ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+			) AS missed
+		FROM grouped
+		WHERE participated = 0
+		ORDER BY chain_id, addr, date, seq_id, block_height;
+	`
+
+	if _, err := sqlDB.Exec(createViewSQL); err != nil {
+		return fmt.Errorf("CreateMissingBlocksView: create view: %w", err)
+	}
+
+	log.Printf("✅ daily_missing_series view created/updated")
+	return nil
+}
