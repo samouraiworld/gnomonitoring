@@ -38,7 +38,7 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 		select {
 		case <-timer.C:
 			log.Printf("⏰ Sending report for user %s", userID)
-			SendDailyStatsForUser(db, &userID, nil, loc)
+			SendDailyStatsForUser(db, internal.Config.DefaultChain, &userID, nil, loc)
 		case <-reload:
 			timer.Stop()
 			log.Printf("♻️ Reloading schedule for user %s", userID)
@@ -46,10 +46,10 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 		}
 	}
 }
-func SheduleTelegramReport(chat_id int64, hour, minute int, timezone string, db *gorm.DB, reload <-chan struct{}) {
+func SheduleTelegramReport(chatID int64, chainID string, hour, minute int, timezone string, db *gorm.DB, reload <-chan struct{}) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
-		log.Printf("⚠️ Invalid timezone for user %d: %s, defaulting to UTC", chat_id, timezone)
+		log.Printf("⚠️ Invalid timezone for chat %d chain %s: %s, defaulting to UTC", chatID, chainID, timezone)
 		loc = time.UTC
 	}
 
@@ -61,33 +61,37 @@ func SheduleTelegramReport(chat_id int64, hour, minute int, timezone string, db 
 		}
 		wait := time.Until(next)
 
-		log.Printf("🕓 Scheduled next report for %d at %s (%s)", chat_id, next.Format(time.RFC1123), wait)
+		log.Printf("🕓 Scheduled next report for chat %d chain %s at %s (%s)", chatID, chainID, next.Format(time.RFC1123), wait)
 
 		timer := time.NewTimer(wait)
 		select {
 		case <-timer.C:
-			log.Printf("⏰ Sending report for user %d", chat_id)
-			SendDailyStatsForUser(db, nil, &chat_id, loc)
+			log.Printf("⏰ Sending report for chat %d chain %s", chatID, chainID)
+			SendDailyStatsForUser(db, chainID, nil, &chatID, loc)
 		case <-reload:
 			timer.Stop()
-			log.Printf("♻️ Reloading schedule for user %d", chat_id)
+			log.Printf("♻️ Reloading schedule for chat %d chain %s", chatID, chainID)
 			return
 		}
 	}
 }
 
-func SendDailyStatsForUser(db *gorm.DB, userID *string, chatID *int64, loc *time.Location) {
+func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *int64, loc *time.Location) {
 	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
 
-	rates, minBlock, maxBlock := CalculateRate(db, yesterday)
-	// rates, minBlock, maxBlock := CalculateRate(db, "2025-10-18")
+	rates, minBlock, maxBlock := CalculateRate(db, chainID, yesterday)
 	if len(rates) == 0 {
-		log.Printf("⚠️ No participation data found on date %s", yesterday)
+		log.Printf("⚠️ No participation data found on date %s chain %s", yesterday, chainID)
 		return
 	}
 
+	chainLabel := ""
+	if chainID != "" {
+		chainLabel = fmt.Sprintf("[%s] ", chainID)
+	}
+
 	var buffer bytes.Buffer
-	buffer.WriteString(fmt.Sprintf("📊 *Daily Summary* for %s (Blocks %d → %d):\n\n", yesterday, minBlock, maxBlock))
+	buffer.WriteString(fmt.Sprintf("📊 *Daily Summary* %sfor %s (Blocks %d → %d):\n\n", chainLabel, yesterday, minBlock, maxBlock))
 
 	for addr, data := range rates {
 		moniker := data.Moniker
@@ -112,11 +116,12 @@ func SendDailyStatsForUser(db *gorm.DB, userID *string, chatID *int64, loc *time
 	log.Println(msg)
 	switch {
 	case userID != nil:
-		// 🔹 Rapport utilisateur interne
+		// User internal report (chain-agnostic for now; the user report path is
+		// not yet multi-chain scoped at the webhook level).
 		SendUserReportInChunks(*userID, msg, db, 1500)
 
 	case chatID != nil:
-		// 🔹 Rapport Telegram
+		// Telegram report
 		if err := telegram.SendMessageTelegram(internal.Config.TokenTelegramValidator, *chatID, msg); err != nil {
 			log.Printf("❌ Telegram send failed (chat %d): %v", *chatID, err)
 		}
@@ -127,41 +132,41 @@ func SendDailyStatsForUser(db *gorm.DB, userID *string, chatID *int64, loc *time
 
 }
 
-func CalculateRate(db *gorm.DB, date string) (map[string]ValidatorRate, int64, int64) {
+func CalculateRate(db *gorm.DB, chainID, date string) (map[string]ValidatorRate, int64, int64) {
 	rates := make(map[string]ValidatorRate)
-	log.Println(date)
-	// Step 1: Retrieve the min/max heights
+	log.Printf("[CalculateRate] date=%s chain=%s", date, chainID)
+
+	// Step 1: Retrieve the min/max heights for the given chain and date.
 	var minHeight, maxHeight int64
 	err := db.Raw(`
 		SELECT MIN(block_height), MAX(block_height)
 		FROM daily_participations
-		WHERE date(date) = ?
-		ORDER by ASC
-	`, date).Row().Scan(&minHeight, &maxHeight)
+		WHERE chain_id = ? AND date(date) = ?
+	`, chainID, date).Row().Scan(&minHeight, &maxHeight)
 
 	if err != nil {
 		log.Printf("[CalculateRate] Error retrieving block range: %v", err)
 		return rates, 0, 0
 	}
 
-	// Step 2: Request for participation
+	// Step 2: Request for participation.
 	rows, err := db.Raw(`
-		SELECT 
+		SELECT
 			addr,
 			moniker,
 			COUNT(*) AS total_blocks,
 			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_blocks
 		FROM daily_participations
-		WHERE date(date) = ?
+		WHERE chain_id = ? AND date(date) = ?
 		GROUP BY addr, moniker
-	`, date).Rows()
+	`, chainID, date).Rows()
 	if err != nil {
 		log.Printf("[CalculateRate] Error querying participation: %v", err)
 		return rates, minHeight, maxHeight
 	}
 	defer rows.Close()
 
-	// Step 3: Process the results
+	// Step 3: Process the results.
 	for rows.Next() {
 		var addr, moniker string
 		var total, participated int
@@ -183,12 +188,12 @@ func CalculateRate(db *gorm.DB, date string) (map[string]ValidatorRate, int64, i
 	return rates, minHeight, maxHeight
 }
 
-func GetLastStoredHeight(db *gorm.DB) (int64, error) {
+func GetLastStoredHeight(db *gorm.DB, chainID string) (int64, error) {
 	var result struct {
 		MaxHeight int64
 	}
 
-	err := db.Raw(`SELECT MAX(block_height) AS max_height FROM daily_participations`).Scan(&result).Error
+	err := db.Raw(`SELECT MAX(block_height) AS max_height FROM daily_participations WHERE chain_id = ?`, chainID).Scan(&result).Error
 	if err != nil {
 		return 0, fmt.Errorf("error reading last stored block: %w", err)
 	}

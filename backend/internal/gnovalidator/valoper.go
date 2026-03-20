@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
-	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
-	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
@@ -115,7 +113,7 @@ func GetGenesisMonikers(rpcURL string) (map[string]string, error) {
 	return monikers, nil
 }
 
-func InitMonikerMap(db *gorm.DB) {
+func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEndpoint string) {
 	type Validator struct {
 		Address string `json:"address"`
 	}
@@ -125,7 +123,7 @@ func InitMonikerMap(db *gorm.DB) {
 		} `json:"result"`
 	}
 	// Step 1 — Retrieve active validators from the RPC endpoint `/validators`
-	url := fmt.Sprintf("%s/validators", strings.TrimRight(internal.Config.RPCEndpoint, "/"))
+	url := fmt.Sprintf("%s/validators", strings.TrimRight(rpcEndpoint, "/"))
 	var resp *http.Response
 	err := doWithRetry(3, 2*time.Second, func() error {
 		var e error
@@ -158,14 +156,7 @@ func InitMonikerMap(db *gorm.DB) {
 		return
 	}
 
-	// Step 2 — Create Gno client for valopers.Render
-	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
-	if err != nil {
-		log.Printf("❌ Failed to create RPC client: %v", err)
-		return
-	}
-	client := gnoclient.Client{RPCClient: rpcClient}
-
+	// Step 2 — Use passed client for valopers.Render
 	valopers, err := GetValopers(client)
 	if err != nil {
 		log.Printf("⚠️ Failed to get valopers: %v", err)
@@ -176,21 +167,19 @@ func InitMonikerMap(db *gorm.DB) {
 		valoperMap[v.Address] = v.Name
 	}
 
-	// Step #— Génésis monikers
-	genesisMap, err := GetGenesisMonikers(internal.Config.RPCEndpoint)
+	// Step 3 — Genesis monikers
+	genesisMap, err := GetGenesisMonikers(rpcEndpoint)
 	if err != nil {
 		log.Printf("⚠️ Failed to get genesis monikers: %v", err)
 	}
-	// Step 3 — Monikers from DB
-	dbMap, err := database.GetMoniker(db)
+	// Step 4 — Monikers from DB
+	dbMap, err := database.GetMoniker(db, chainID)
 	if err != nil {
 		log.Printf("⚠️ Failed to get monikers from DB: %v", err)
 	}
 
-	// Step 4 — Building a Complete and Prioritized MonikerMap
-	MonikerMutex.Lock()
-	defer MonikerMutex.Unlock()
-	MonikerMap = make(map[string]string)
+	// Step 5 — Building a Complete and Prioritized MonikerMap
+	tempMonikers := make(map[string]string)
 
 	for _, val := range validatorsResp.Result.Validators {
 		addr := val.Address
@@ -203,17 +192,19 @@ func InitMonikerMap(db *gorm.DB) {
 			moniker = m
 		}
 
-		MonikerMap[addr] = moniker
-	}
-	for addr, moniker := range MonikerMap {
-		log.Printf("🔹 Validator: %s — Moniker: %s", addr, moniker)
+		tempMonikers[addr] = moniker
 	}
 
-	log.Printf("✅ MonikerMap initialized with %d active validators\n", len(MonikerMap))
+	for addr, moniker := range tempMonikers {
+		log.Printf("🔹 Validator: %s — Moniker: %s", addr, moniker)
+		SetMoniker(chainID, addr, moniker)
+	}
+
+	log.Printf("✅ MonikerMap initialized with %d active validators\n", len(tempMonikers))
 
 	// Sync MonikerMap to addr_monikers table
-	for addr, moniker := range MonikerMap {
-		if err := database.UpsertAddrMoniker(db, addr, moniker); err != nil {
+	for addr, moniker := range tempMonikers {
+		if err := database.UpsertAddrMoniker(db, chainID, addr, moniker); err != nil {
 			log.Printf("⚠️ Failed to upsert addr_moniker %s: %v", addr, err)
 		}
 	}

@@ -12,7 +12,17 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/govdao"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/telegram"
+	"gorm.io/gorm"
 )
+
+func startChainMonitoring(db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
+	log.Printf("Starting monitoring for chain: %s", chainID)
+
+	go gnovalidator.StartValidatorMonitoring(db, chainID, chainCfg)
+	go govdao.StartGovDAo(db, chainID, chainCfg.GraphqlEndpoint, chainCfg.RPCEndpoint, chainCfg.GnowebEndpoint)
+
+	log.Printf("Monitoring started for chain: %s", chainID)
+}
 
 func main() {
 	internal.LoadConfig()
@@ -37,9 +47,17 @@ func main() {
 
 	log.Println("✅ Database connection established successfully")
 
-	// ==================== Parse and save pareticipation and tx contribution =============== //
+	// ==================== Per-Chain Monitoring Loops =============== //
+	log.Printf("Spawning monitoring loops for %d enabled chains: %v", len(internal.EnabledChains), internal.EnabledChains)
 
-	go gnovalidator.StartValidatorMonitoring(db) // gnovalidator realtime
+	for _, chainID := range internal.EnabledChains {
+		chainCfg, err := internal.Config.GetChainConfig(chainID)
+		if err != nil {
+			log.Printf("Skipping chain %s: %v", chainID, err)
+			continue
+		}
+		go startChainMonitoring(db, chainID, chainCfg)
+	}
 
 	// ==================== Scheduler for hour report =============================== //
 
@@ -51,18 +69,17 @@ func main() {
 
 	// ====================== Gov Dao Proposal ====================================== //
 
-	go govdao.StartGovDAo(db)
 	go govdao.StartProposalWatcher(db)
 
 	// ======================= Telegram bot validator ========================= //
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db)
-	callbackHandler := telegram.BuildTelegramCallbackHandler(internal.Config.TokenTelegramValidator, db)
+	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db, internal.Config.DefaultChain, internal.EnabledChains)
+	callbackHandler := telegram.BuildTelegramCallbackHandler(internal.Config.TokenTelegramValidator, db, internal.Config.DefaultChain)
 
 	go func() {
-		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, callbackHandler, "validator", db); err != nil {
+		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, callbackHandler, "validator", db, internal.Config.DefaultChain); err != nil {
 			log.Fatalf("command loop error bot validator : %v", err)
 		}
 	}()
@@ -71,10 +88,15 @@ func main() {
 	ctxgovdao, cancelgovdao := context.WithCancel(context.Background())
 	defer cancelgovdao()
 
-	handlersgovdao := telegram.BuildTelegramGovdaoHandlers(internal.Config.TokenTelegramGovdao, db)
+	handlersgovdao := telegram.BuildTelegramGovdaoHandlers(
+		internal.Config.TokenTelegramGovdao,
+		db,
+		internal.Config.DefaultChain,
+		internal.EnabledChains,
+	)
 
 	go func() {
-		if err := telegram.StartCommandLoop(ctxgovdao, internal.Config.TokenTelegramGovdao, handlersgovdao, nil, "govdao", db); err != nil {
+		if err := telegram.StartCommandLoop(ctxgovdao, internal.Config.TokenTelegramGovdao, handlersgovdao, nil, "govdao", db, internal.Config.DefaultChain); err != nil {
 			log.Fatalf("command loop error bot govdao: %v", err)
 		}
 	}()

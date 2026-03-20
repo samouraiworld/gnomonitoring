@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,17 +18,23 @@ import (
 	"gorm.io/gorm"
 )
 
+type ChainConfig struct {
+	RPCEndpoint     string `yaml:"rpc_endpoint"`
+	GraphqlEndpoint string `yaml:"graphql"`
+	GnowebEndpoint  string `yaml:"gnoweb"`
+	Enabled         bool   `yaml:"enabled"`
+}
+
 type config struct {
-	BackendPort            string `yaml:"backend_port"`
-	AllowOrigin            string `yaml:"allow_origin"`
-	RPCEndpoint            string `yaml:"rpc_endpoint"`
-	MetricsPort            int    `yaml:"metrics_port"`
-	Gnoweb                 string `yaml:"gnoweb"`
-	Graphql                string `yaml:"graphql"`
-	ClerkSecretKey         string `yaml:"clerk_secret_key"`
-	DevMode                bool   `yaml:"dev_mode"`
-	TokenTelegramValidator string `yaml:"token_telegram_validator"`
-	TokenTelegramGovdao    string `yaml:"token_telegram_govdao"`
+	BackendPort            string                  `yaml:"backend_port"`
+	AllowOrigin            string                  `yaml:"allow_origin"`
+	MetricsPort            int                     `yaml:"metrics_port"`
+	ClerkSecretKey         string                  `yaml:"clerk_secret_key"`
+	DevMode                bool                    `yaml:"dev_mode"`
+	TokenTelegramValidator string                  `yaml:"token_telegram_validator"`
+	TokenTelegramGovdao    string                  `yaml:"token_telegram_govdao"`
+	Chains                 map[string]*ChainConfig `yaml:"chains"`
+	DefaultChain           string                  `yaml:"default_chain"`
 
 	// Parsed at load time from AllowOrigin (comma-separated).
 	AllowedOrigins []string `yaml:"-"`
@@ -35,10 +42,13 @@ type config struct {
 
 var Config config
 
+// EnabledChains holds the IDs of all chains with Enabled: true, sorted alphabetically.
+var EnabledChains []string
+
 // alertHTTPClient is reused across all webhook dispatches to enable TCP connection pooling.
 var alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
-// Load config.yaml
+// LoadConfig reads config.yaml, validates chains, and initialises EnabledChains.
 func LoadConfig() {
 	data, err := os.ReadFile("config.yaml")
 	if err != nil {
@@ -50,6 +60,35 @@ func LoadConfig() {
 		log.Fatalf("Error parsing config file: %v", err)
 	}
 
+	if len(Config.Chains) == 0 {
+		log.Fatalf("Config error: no chains defined under 'chains:'")
+	}
+
+	// Build EnabledChains sorted alphabetically.
+	for id, chain := range Config.Chains {
+		if chain.Enabled {
+			EnabledChains = append(EnabledChains, id)
+		}
+	}
+	sort.Strings(EnabledChains)
+	log.Printf("Enabled chains: %v", EnabledChains)
+
+	// Validate default_chain: it must exist in Chains and be enabled.
+	// Fall back to EnabledChains[0] if not set or invalid.
+	if Config.DefaultChain != "" {
+		chain, ok := Config.Chains[Config.DefaultChain]
+		if !ok {
+			log.Printf("Config warning: default_chain %q not found in chains, falling back to %q", Config.DefaultChain, EnabledChains[0])
+			Config.DefaultChain = EnabledChains[0]
+		} else if !chain.Enabled {
+			log.Printf("Config warning: default_chain %q is not enabled, falling back to %q", Config.DefaultChain, EnabledChains[0])
+			Config.DefaultChain = EnabledChains[0]
+		}
+	} else if len(EnabledChains) > 0 {
+		Config.DefaultChain = EnabledChains[0]
+	}
+	log.Printf("Default chain: %v", Config.DefaultChain)
+
 	// Parse comma-separated origins into a slice for dynamic CORS matching.
 	for _, raw := range strings.Split(Config.AllowOrigin, ",") {
 		origin := strings.TrimSpace(raw)
@@ -60,6 +99,35 @@ func LoadConfig() {
 
 	log.Printf("DevMode value: %v", Config.DevMode)
 	log.Printf("Allowed CORS origins: %v", Config.AllowedOrigins)
+}
+
+// GetChainConfig returns the ChainConfig for chainID, or an error if not found.
+func (c *config) GetChainConfig(chainID string) (*ChainConfig, error) {
+	chain, ok := c.Chains[chainID]
+	if !ok {
+		return nil, fmt.Errorf("unknown chain ID: %q", chainID)
+	}
+	return chain, nil
+}
+
+// ValidateChainID returns an error if chainID is not present in Chains.
+func (c *config) ValidateChainID(chainID string) error {
+	if _, ok := c.Chains[chainID]; !ok {
+		return fmt.Errorf("invalid chain ID: %q", chainID)
+	}
+	return nil
+}
+
+// GetEnabledChainIDs returns a sorted slice of all enabled chain IDs.
+func (c *config) GetEnabledChainIDs() []string {
+	var ids []string
+	for id, chain := range c.Chains {
+		if chain.Enabled {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }
 func SendDiscordAlert(msg string, webhookURL string) error {
 	payload := map[string]string{"content": msg}
@@ -93,18 +161,24 @@ func SendSlackAlert(msg string, webhookURL string) error {
 	}
 	return nil
 }
-func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, start_height, end_height int64, db *gorm.DB) error {
+func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moniker string, start_height, end_height int64, db *gorm.DB) error {
 	type Webhook struct {
-		UserID string
-		URL    string
-		Type   string
-		ID     int
+		UserID  string
+		URL     string
+		Type    string
+		ID      int
+		ChainID *string
 	}
 	var fullMsg string
 	var webhooks []Webhook
-	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
+	if err := db.Model(&database.WebhookValidator{}).
+		Where("chain_id = ? OR chain_id IS NULL", chainID).
+		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
+
+	chainLabel := fmt.Sprintf("[%s] ", chainID)
+
 	for _, wh := range webhooks {
 
 		// ================== Build msg ===============
@@ -124,8 +198,8 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 					Find(&res).Error
 
 				fullMsg = fmt.Sprintf(
-					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
 				)
 				if err != nil {
 					return fmt.Errorf("failed to fetch mentions: %w", err)
@@ -138,8 +212,8 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 				emoji = "⚠️"
 				prefix = ""
 				fullMsg = fmt.Sprintf(
-					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
 				)
 
 			}
@@ -166,22 +240,19 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 					return fmt.Errorf("failed to fetch mentions: %w", err)
 				}
 				fullMsg = fmt.Sprintf(
-					"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
 				)
 				for _, r := range res {
-
 					fullMsg += "\n <@" + r.MentionTag + ">"
 				}
-				// log.Println(fullMsg)
 				if level == "WARNING" {
 					emoji = "⚠️"
 					prefix = ""
 					fullMsg = fmt.Sprintf(
-						"%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-						emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+						"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+						chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
 					)
-
 				}
 			}
 			sendErr := SendSlackAlert(fullMsg, wh.URL)
@@ -199,10 +270,11 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 	if level == "CRITICAL" {
 		emoji := "🚨"
 		fullMsg = fmt.Sprintf(
-			"%s <b>%s</b> %s\n"+
+			"%s%s <b>%s</b> %s\n"+
 				"addr: <code>%s</code>\n"+
 				"moniker: <b>%s</b>\n"+
 				"missed %d blocks (%d → %d)",
+			html.EscapeString(chainLabel),
 			emoji,
 			html.EscapeString(level),
 			html.EscapeString(today),
@@ -215,10 +287,11 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 	if level == "WARNING" {
 		emoji := "⚠️"
 		fullMsg = fmt.Sprintf(
-			"%s <b>%s</b> %s\n"+
+			"%s%s <b>%s</b> %s\n"+
 				"addr: <code>%s</code>\n"+
 				"moniker: <b>%s</b>\n"+
 				"missed %d blocks (%d → %d)",
+			html.EscapeString(chainLabel),
 			emoji,
 			html.EscapeString(level),
 			html.EscapeString(today),
@@ -228,7 +301,7 @@ func SendAllValidatorAlerts(missed int, today, level, addr, moniker string, star
 		)
 	}
 
-	if err := telegram.MsgTelegramAlert(fullMsg, addr, Config.TokenTelegramValidator, "validator", db); err != nil {
+	if err := telegram.MsgTelegramAlert(fullMsg, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramAlert: %v", err)
 	}
 
@@ -266,16 +339,19 @@ func SendUserReportAlert(userID, msg string, db *gorm.DB) error {
 
 	return nil
 }
-func SendResolveValidator(msg string, addr string, db *gorm.DB) error {
+func SendResolveValidator(chainID, msg string, addr string, db *gorm.DB) error {
 	type Webhook struct {
-		UserID string
-		URL    string
-		Type   string
-		ID     int
+		UserID  string
+		URL     string
+		Type    string
+		ID      int
+		ChainID *string
 	}
 
 	var webhooks []Webhook
-	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
+	if err := db.Model(&database.WebhookValidator{}).
+		Where("chain_id = ? OR chain_id IS NULL", chainID).
+		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 	for _, wh := range webhooks {
@@ -295,26 +371,27 @@ func SendResolveValidator(msg string, addr string, db *gorm.DB) error {
 			}
 
 		}
-		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
-
 	}
-	if err := telegram.MsgTelegramAlert(msg, addr, Config.TokenTelegramValidator, "validator", db); err != nil {
+	if err := telegram.MsgTelegramAlert(msg, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramAlert: %v", err)
 	}
 
 	return nil
 }
 
-func SendInfoValidator(msg string, level string, db *gorm.DB) error {
+func SendInfoValidator(chainID, msg string, level string, db *gorm.DB) error {
 	type Webhook struct {
-		UserID string
-		URL    string
-		Type   string
-		ID     int
+		UserID  string
+		URL     string
+		Type    string
+		ID      int
+		ChainID *string
 	}
 
 	var webhooks []Webhook
-	if err := db.Model(&database.WebhookValidator{}).Find(&webhooks).Error; err != nil {
+	if err := db.Model(&database.WebhookValidator{}).
+		Where("chain_id = ? OR chain_id IS NULL", chainID).
+		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 	for _, wh := range webhooks {
@@ -334,8 +411,6 @@ func SendInfoValidator(msg string, level string, db *gorm.DB) error {
 			}
 
 		}
-		// database.InsertAlertlog(db, wh.addr, "moniker", level, wh.URL, 0, 0, true, msg, time.Now())
-
 	}
 	if err := telegram.MsgTelegram(msg, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegram: %v", err)

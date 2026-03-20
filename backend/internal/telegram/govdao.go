@@ -11,12 +11,13 @@ import (
 	"gorm.io/gorm"
 )
 
-func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int64, string) {
+func BuildTelegramGovdaoHandlers(token string, db *gorm.DB, defaultChainID string, enabledChains []string) map[string]func(int64, string) {
 
 	limit_default := int64(10)
 	return map[string]func(int64, string){
 		// status on Govdao proposals
 		"/status": func(chatID int64, args string) {
+			chainID := getGovdaoActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 
 			limit, err := strconv.ParseInt(params["limit"], 10, 64)
@@ -26,7 +27,7 @@ func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int6
 			}
 			limitint := int(limit)
 
-			msg, err := formatStatusProposal(db, limitint)
+			msg, err := formatStatusProposal(db, chainID, limitint)
 			if err != nil {
 				log.Printf("error get status proposal%s", err)
 			}
@@ -38,6 +39,7 @@ func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int6
 		},
 		// last executed proposals
 		"/executedproposals": func(chatID int64, args string) {
+			chainID := getGovdaoActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 
 			limit, err := strconv.ParseInt(params["limit"], 10, 64)
@@ -47,7 +49,7 @@ func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int6
 			}
 			limitint := int(limit)
 
-			msg, err := FormatGetLastExecute(db, limitint)
+			msg, err := FormatGetLastExecute(db, chainID, limitint)
 			if err != nil {
 				log.Printf("error get last executed proposal: %s", err)
 			}
@@ -57,8 +59,9 @@ func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int6
 			// last proposal posted
 		},
 		"/lastproposal": func(chatID int64, args string) {
+			chainID := getGovdaoActiveChain(chatID, defaultChainID)
 
-			msg, err := FormatGetLastProposal(db)
+			msg, err := FormatGetLastProposal(db, chainID)
 			if err != nil {
 				log.Printf("error get last proposal: %s", err)
 			}
@@ -66,6 +69,40 @@ func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int6
 				log.Printf("send %s failed: %v", "/lastproposal", err)
 			}
 
+		},
+
+		"/chain": func(chatID int64, _ string) {
+			current := getGovdaoActiveChain(chatID, defaultChainID)
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("Current chain: <code>%s</code>\n\nAvailable chains:\n", html.EscapeString(current)))
+			for _, id := range enabledChains {
+				b.WriteString(fmt.Sprintf("• <code>%s</code>\n", html.EscapeString(id)))
+			}
+			b.WriteString("\nUse <code>/setchain chain=&lt;id&gt;</code> to switch.")
+			_ = SendMessageTelegram(token, chatID, b.String())
+		},
+
+		"/setchain": func(chatID int64, args string) {
+			params := parseParams(args)
+			requested := strings.TrimSpace(params["chain"])
+			if requested == "" {
+				_ = SendMessageTelegram(token, chatID, "Usage: <code>/setchain chain=&lt;chain_id&gt;</code>")
+				return
+			}
+			if !validateChainID(requested, enabledChains) {
+				var b strings.Builder
+				b.WriteString(fmt.Sprintf("Unknown chain <code>%s</code>. Available:\n", html.EscapeString(requested)))
+				for _, id := range enabledChains {
+					b.WriteString(fmt.Sprintf("• <code>%s</code>\n", html.EscapeString(id)))
+				}
+				_ = SendMessageTelegram(token, chatID, b.String())
+				return
+			}
+			setGovdaoActiveChain(chatID, requested)
+			if err := database.UpdateGovdaoChatChain(db, chatID, requested); err != nil {
+				log.Printf("⚠️ UpdateGovdaoChatChain chat_id=%d: %v", chatID, err)
+			}
+			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("Chain set to <code>%s</code>.", html.EscapeString(requested)))
 		},
 
 		"/help": func(chatID int64, _ string) {
@@ -83,9 +120,9 @@ func BuildTelegramGovdaoHandlers(token string, db *gorm.DB) map[string]func(int6
 	}
 }
 
-func formatStatusProposal(db *gorm.DB, limit int) (msg string, err error) {
+func formatStatusProposal(db *gorm.DB, chainID string, limit int) (msg string, err error) {
 
-	status, err := database.GetStatusofGovdao(db)
+	status, err := database.GetStatusofGovdao(db, chainID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get status govdao : %v", err)
 
@@ -134,9 +171,9 @@ func formatStatusProposal(db *gorm.DB, limit int) (msg string, err error) {
 
 	return builder.String(), nil
 }
-func FormatGetLastExecute(db *gorm.DB, limit int) (msg string, err error) {
+func FormatGetLastExecute(db *gorm.DB, chainID string, limit int) (msg string, err error) {
 
-	status, err := database.GetLastExecute(db)
+	status, err := database.GetLastExecute(db, chainID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get last execute proposal : %v", err)
 
@@ -164,9 +201,9 @@ func FormatGetLastExecute(db *gorm.DB, limit int) (msg string, err error) {
 
 	return builder.String(), err
 }
-func FormatGetLastProposal(db *gorm.DB) (msg string, err error) {
+func FormatGetLastProposal(db *gorm.DB, chainID string) (msg string, err error) {
 
-	status, err := database.GetLastPorposal(db)
+	status, err := database.GetLastPorposal(db, chainID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get last proposal : %v", err)
 
@@ -230,6 +267,11 @@ func formatHelpgovdao() string {
 	b.WriteString("   ⮑ Example: <code>/executedproposals limit=5</code>\n\n")
 
 	b.WriteString("• <code>/lastproposal</code> — show the most recent proposal\n\n")
+
+	b.WriteString("• <code>/chain</code> — list available chains and show current active chain\n\n")
+
+	b.WriteString("• <code>/setchain chain=&lt;chain_id&gt;</code> — switch to a different chain for monitoring proposals\n")
+	b.WriteString("   ⮑ Example: <code>/setchain chain=gnoland1</code>\n\n")
 
 	b.WriteString("Formatting notes:\n")
 	b.WriteString("• Links open to Gno.land and Gnoscan when available\n")

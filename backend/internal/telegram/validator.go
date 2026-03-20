@@ -34,6 +34,76 @@ var (
 	metricsCacheMu sync.Mutex
 )
 
+// chatChainState stores the per-chat active chain override (validator bot).
+// Protected by chatChainMu.
+var chatChainState = map[int64]string{}
+var chatChainMu sync.RWMutex
+
+// govdaoChatChainState stores the per-chat active chain override (govdao bot).
+// Separate from validator bot to prevent cross-bot conflicts.
+// Protected by govdaoChatChainMu.
+var govdaoChatChainState = map[int64]string{}
+var govdaoChatChainMu sync.RWMutex
+
+// getActiveChain returns the chain ID for the given chat. If no per-chat
+// override has been set it falls back to defaultChainID.
+func getActiveChain(chatID int64, defaultChainID string) string {
+	chatChainMu.RLock()
+	id, ok := chatChainState[chatID]
+	chatChainMu.RUnlock()
+	if ok && id != "" {
+		return id
+	}
+	return defaultChainID
+}
+
+// setActiveChain stores a per-chat chain override. Passing an empty string
+// clears the override so subsequent calls to getActiveChain fall back to the
+// default.
+func setActiveChain(chatID int64, chainID string) {
+	chatChainMu.Lock()
+	defer chatChainMu.Unlock()
+	if chainID == "" {
+		delete(chatChainState, chatID)
+	} else {
+		chatChainState[chatID] = chainID
+	}
+}
+
+// getGovdaoActiveChain returns the chain ID for the given govdao chat. If no per-chat
+// override has been set it falls back to defaultChainID.
+func getGovdaoActiveChain(chatID int64, defaultChainID string) string {
+	govdaoChatChainMu.RLock()
+	id, ok := govdaoChatChainState[chatID]
+	govdaoChatChainMu.RUnlock()
+	if ok && id != "" {
+		return id
+	}
+	return defaultChainID
+}
+
+// setGovdaoActiveChain stores a per-chat chain override for govdao. Passing an empty string
+// clears the override so subsequent calls to getGovdaoActiveChain fall back to the default.
+func setGovdaoActiveChain(chatID int64, chainID string) {
+	govdaoChatChainMu.Lock()
+	defer govdaoChatChainMu.Unlock()
+	if chainID == "" {
+		delete(govdaoChatChainState, chatID)
+	} else {
+		govdaoChatChainState[chatID] = chainID
+	}
+}
+
+// validateChainID returns true if chainID is in the enabledChains slice.
+func validateChainID(chainID string, enabledChains []string) bool {
+	for _, id := range enabledChains {
+		if id == chainID {
+			return true
+		}
+	}
+	return false
+}
+
 func getCached(key string) (any, bool) {
 	metricsCacheMu.Lock()
 	defer metricsCacheMu.Unlock()
@@ -50,12 +120,16 @@ func setCached(key string, data any, ttl time.Duration) {
 	metricsCache[key] = cacheEntry{data: data, expiresAt: time.Now().Add(ttl)}
 }
 
-// BuildTelegramHandlers retourne la map de handlers
-func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, string) {
+// BuildTelegramHandlers retourne la map de handlers.
+// defaultChainID is used as fallback when a chat has no per-chat chain
+// override. enabledChains is the list of valid chain IDs (used by /chain and
+// /setchain).
+func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, enabledChains []string) map[string]func(int64, string) {
 	startSearchStateCleanup()
 	return map[string]func(int64, string){
 
 		"/status": func(chatID int64, args string) {
+			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 			period := params["period"]
 			if period == "" {
@@ -67,32 +141,36 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "status", period, filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "status", period, filter, page, limit, sortOrder)
 
 		},
 		"/subscribe": func(chatID int64, args string) {
-			handleSubscribe(token, db, chatID, args)
+			chainID := getActiveChain(chatID, defaultChainID)
+			handleSubscribe(token, db, chatID, chainID, args)
 		},
 		"/uptime": func(chatID int64, args string) {
+			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
 			page := parseIntWithDefault(params["page"], 1, "page")
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "uptime", "", filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "uptime", "", filter, page, limit, sortOrder)
 
 		}, "/operation_time": func(chatID int64, args string) {
+			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
 			page := parseIntWithDefault(params["page"], 1, "page")
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "operation_time", "", filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "operation_time", "", filter, page, limit, sortOrder)
 
 		},
 		"/tx_contrib": func(chatID int64, args string) {
+			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 			period := params["period"]
 			if period == "" {
@@ -103,10 +181,11 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "tx_contrib", period, filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "tx_contrib", period, filter, page, limit, sortOrder)
 
 		},
 		"/missing": func(chatID int64, args string) {
+			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 
 			period := params["period"]
@@ -118,15 +197,16 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
 
-			sendPaginatedMessage(token, chatID, db, "missing", period, filter, page, limit, sortOrder)
+			sendPaginatedMessage(token, chatID, db, chainID, "missing", period, filter, page, limit, sortOrder)
 
 		},
 		"/report": func(chatID int64, args string) {
+			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 
 			activate := params["activate"]
 
-			msg, err := reportActivate(db, chatID, activate)
+			msg, err := reportActivate(db, chatID, chainID, activate)
 			if err != nil {
 				log.Printf("error report activate%s", err)
 			}
@@ -135,6 +215,40 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 				log.Printf("send %s failed: %v", "/missing", err)
 			}
 
+		},
+
+		"/chain": func(chatID int64, _ string) {
+			current := getActiveChain(chatID, defaultChainID)
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("Current chain: <code>%s</code>\n\nAvailable chains:\n", html.EscapeString(current)))
+			for _, id := range enabledChains {
+				b.WriteString(fmt.Sprintf("• <code>%s</code>\n", html.EscapeString(id)))
+			}
+			b.WriteString("\nUse <code>/setchain chain=&lt;id&gt;</code> to switch.")
+			_ = SendMessageTelegram(token, chatID, b.String())
+		},
+
+		"/setchain": func(chatID int64, args string) {
+			params := parseParams(args)
+			requested := strings.TrimSpace(params["chain"])
+			if requested == "" {
+				_ = SendMessageTelegram(token, chatID, "Usage: <code>/setchain chain=&lt;chain_id&gt;</code>")
+				return
+			}
+			if !validateChainID(requested, enabledChains) {
+				var b strings.Builder
+				b.WriteString(fmt.Sprintf("Unknown chain <code>%s</code>. Available:\n", html.EscapeString(requested)))
+				for _, id := range enabledChains {
+					b.WriteString(fmt.Sprintf("• <code>%s</code>\n", html.EscapeString(id)))
+				}
+				_ = SendMessageTelegram(token, chatID, b.String())
+				return
+			}
+			setActiveChain(chatID, requested)
+			if err := database.UpdateChatChain(db, chatID, requested); err != nil {
+				log.Printf("⚠️ UpdateChatChain chat_id=%d: %v", chatID, err)
+			}
+			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("Chain set to <code>%s</code>.", html.EscapeString(requested)))
 		},
 
 		"/help": func(chatID int64, _ string) {
@@ -152,16 +266,16 @@ func BuildTelegramHandlers(token string, db *gorm.DB) map[string]func(int64, str
 	}
 }
 
-func formatParticipationRAte(db *gorm.DB, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
+func formatParticipationRAte(db *gorm.DB, chainID, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
 	var rates []database.ParticipationRate
-	cacheKey := "status:" + period
+	cacheKey := chainID + ":status:" + period
 	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.ParticipationRate); ok {
 			rates = v
 		}
 	} else {
 		var fetchErr error
-		rates, fetchErr = database.GetCurrentPeriodParticipationRate(db, period)
+		rates, fetchErr = database.GetCurrentPeriodParticipationRate(db, chainID, period)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get participation rate: %v", fetchErr)
 		}
@@ -206,20 +320,21 @@ func formatParticipationRAte(db *gorm.DB, period string, page, limit int, filter
 
 	return builder.String(), pageOut, totalPages, nil
 }
-func formatUptime(db *gorm.DB, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
+func formatUptime(db *gorm.DB, chainID string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
 
 	var results []database.UptimeMetrics
-	if cached, ok := getCached("uptime"); ok {
+	cacheKey := chainID + ":uptime"
+	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.UptimeMetrics); ok {
 			results = v
 		}
 	} else {
 		var fetchErr error
-		results, fetchErr = database.UptimeMetricsaddr(db)
+		results, fetchErr = database.UptimeMetricsaddr(db, chainID)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get uptime metrics: %v", fetchErr)
 		}
-		setCached("uptime", results, cacheTTL)
+		setCached(cacheKey, results, cacheTTL)
 	}
 	results = filterUptimeMetrics(results, filter)
 	if len(results) == 0 {
@@ -260,20 +375,21 @@ func formatUptime(db *gorm.DB, page, limit int, filter, sortOrder string) (msg s
 
 	return builder.String(), pageOut, totalPages, err
 }
-func formatOperationTime(db *gorm.DB, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
+func formatOperationTime(db *gorm.DB, chainID string, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
 
 	var results []database.OperationTimeMetrics
-	if cached, ok := getCached("operation_time"); ok {
+	cacheKey := chainID + ":operation_time"
+	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.OperationTimeMetrics); ok {
 			results = v
 		}
 	} else {
 		var fetchErr error
-		results, fetchErr = database.OperationTimeMetricsaddr(db)
+		results, fetchErr = database.OperationTimeMetricsaddr(db, chainID)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get operation time metrics: %v", fetchErr)
 		}
-		setCached("operation_time", results, cacheTTL)
+		setCached(cacheKey, results, cacheTTL)
 	}
 	results = filterOperationTimeMetrics(results, filter)
 	if len(results) == 0 {
@@ -301,16 +417,16 @@ func formatOperationTime(db *gorm.DB, page, limit int, filter string) (msg strin
 
 	return builder.String(), pageOut, totalPages, err
 }
-func FormatTxcontrib(db *gorm.DB, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
+func FormatTxcontrib(db *gorm.DB, chainID, period string, page, limit int, filter, sortOrder string) (msg string, pageOut, totalPages int, err error) {
 	var txcontrib []database.TxContribMetrics
-	cacheKey := "tx_contrib:" + period
+	cacheKey := chainID + ":tx_contrib:" + period
 	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.TxContribMetrics); ok {
 			txcontrib = v
 		}
 	} else {
 		var fetchErr error
-		txcontrib, fetchErr = database.TxContrib(db, period)
+		txcontrib, fetchErr = database.TxContrib(db, chainID, period)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get tx_contrib: %v", fetchErr)
 		}
@@ -343,16 +459,16 @@ func FormatTxcontrib(db *gorm.DB, period string, page, limit int, filter, sortOr
 	return builder.String(), pageOut, totalPages, nil
 }
 
-func formatMissing(db *gorm.DB, period string, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
+func formatMissing(db *gorm.DB, chainID, period string, page, limit int, filter string) (msg string, pageOut, totalPages int, err error) {
 	var rows []database.MissingBlockMetrics
-	cacheKey := "missing:" + period
+	cacheKey := chainID + ":missing:" + period
 	if cached, ok := getCached(cacheKey); ok {
 		if v, ok := cached.([]database.MissingBlockMetrics); ok {
 			rows = v
 		}
 	} else {
 		var fetchErr error
-		rows, fetchErr = database.MissingBlock(db, period)
+		rows, fetchErr = database.MissingBlock(db, chainID, period)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get missing block: %w", fetchErr)
 		}
@@ -392,37 +508,37 @@ func formatMissing(db *gorm.DB, period string, page, limit int, filter string) (
 	}
 	return b.String(), pageOut, totalPages, nil
 }
-func reportActivate(db *gorm.DB, chatID int64, isActivate string) (string, error) {
+func reportActivate(db *gorm.DB, chatID int64, chainID, isActivate string) (string, error) {
 	if isActivate == "" {
-		status, err := database.GetTelegramReportStatus(db, chatID)
+		status, err := database.GetTelegramReportStatus(db, chatID, chainID)
 		if err != nil {
 			return "", fmt.Errorf("failed to get status report: %w", err)
 		}
 
 		if status {
-			return "📝 The daily report is activated ✅", nil
+			return fmt.Sprintf("📝 The daily report is activated ✅ (chain: <code>%s</code>)", html.EscapeString(chainID)), nil
 		}
-		return "📝 The daily report is disabled ❌", nil
+		return fmt.Sprintf("📝 The daily report is disabled ❌ (chain: <code>%s</code>)", html.EscapeString(chainID)), nil
 	}
 
 	switch strings.ToLower(isActivate) {
 	case "true", "on", "enable", "activate":
-		if err := database.ActivateTelegramReport(db, true, chatID); err != nil {
+		if err := database.ActivateTelegramReport(db, true, chatID, chainID); err != nil {
 			return "", fmt.Errorf("failed to activate report: %w", err)
 		}
-		return "✅ The daily report has been activated.", nil
+		return fmt.Sprintf("✅ The daily report has been activated (chain: <code>%s</code>).", html.EscapeString(chainID)), nil
 
 	case "false", "off", "disable", "deactivate":
-		if err := database.ActivateTelegramReport(db, false, chatID); err != nil {
+		if err := database.ActivateTelegramReport(db, false, chatID, chainID); err != nil {
 			return "", fmt.Errorf("failed to deactivate report: %w", err)
 		}
-		return "🚫 The daily report has been disabled.", nil
+		return fmt.Sprintf("🚫 The daily report has been disabled (chain: <code>%s</code>).", html.EscapeString(chainID)), nil
 
 	default:
 		return "⚠️ Invalid argument. Use `/report activate=true` or `/report activate=false`.", nil
 	}
 }
-func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
+func handleSubscribe(token string, db *gorm.DB, chatID int64, chainID, args string) {
 	fields := strings.Fields(args)
 	if len(fields) == 0 || fields[0] == "help" {
 		_ = SendMessageTelegram(token, chatID, subscribeUsage())
@@ -434,7 +550,7 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 
 	switch cmd {
 	case "list":
-		subs, err := database.GetValidatorStatusList(db, chatID)
+		subs, err := database.GetValidatorStatusList(db, chatID, chainID)
 		if err != nil {
 			log.Printf("subscribe:list fail: %v", err)
 			_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch list of validators.")
@@ -442,7 +558,7 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 		}
 
 		var b strings.Builder
-		b.WriteString("🧾 <b>Your subscriptions</b>\n")
+		b.WriteString(fmt.Sprintf("🧾 <b>Your subscriptions</b> (chain: <code>%s</code>)\n", html.EscapeString(chainID)))
 		for _, s := range subs {
 
 			b.WriteString(fmt.Sprintf("• %s \n (%s)\n<b>%s</b>\n", s.Moniker, s.Addr, s.Status))
@@ -456,14 +572,14 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 			return
 		}
 		if strings.ToLower(rest[0]) == "all" {
-			vals, err := database.GetAllValidators(db)
+			vals, err := database.GetAllValidators(db, chainID)
 			if err != nil {
 				_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch validator list.")
 				return
 			}
 			changed := 0
 			for _, v := range vals {
-				if err := database.UpdateTelegramValidatorSubStatus(db, chatID, v.Addr, v.Moniker, "subscribe"); err == nil {
+				if err := database.UpdateTelegramValidatorSubStatus(db, chatID, chainID, v.Addr, v.Moniker, "subscribe"); err == nil {
 					changed++
 				}
 			}
@@ -471,7 +587,7 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 			return
 		}
 
-		moniker, err := database.ResolveAddrs(db, rest)
+		moniker, err := database.ResolveAddrs(db, chainID, rest)
 		if err != nil {
 			_ = SendMessageTelegram(token, chatID, "⚠️ Some validators could not be resolved.")
 		}
@@ -481,7 +597,7 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 		}
 		var ok, fail int
 		for _, m := range moniker {
-			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, m.Addr, m.Moniker, "subscribe"); err != nil {
+			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, chainID, m.Addr, m.Moniker, "subscribe"); err != nil {
 				fail++
 			} else {
 				_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Enabled alerts for <b>%s</b> validators.", m.Moniker))
@@ -498,21 +614,21 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 			return
 		}
 		if strings.ToLower(rest[0]) == "all" {
-			subs, err := database.GetTelegramValidatorSub(db, chatID, true)
+			subs, err := database.GetTelegramValidatorSub(db, chatID, chainID, true)
 			if err != nil {
 				_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch your active subscriptions.")
 				return
 			}
 			var ok int
 			for _, s := range subs {
-				if err := database.UpdateTelegramValidatorSubStatus(db, chatID, s.Addr, s.Moniker, "unsubscribe"); err == nil {
+				if err := database.UpdateTelegramValidatorSubStatus(db, chatID, chainID, s.Addr, s.Moniker, "unsubscribe"); err == nil {
 					ok++
 				}
 			}
 			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("🛑 Disabled alerts for <b>%d</b> validators.", ok))
 			return
 		}
-		moniker, err := database.ResolveAddrs(db, rest)
+		moniker, err := database.ResolveAddrs(db, chainID, rest)
 		if err != nil {
 			_ = SendMessageTelegram(token, chatID, "⚠️ Some validators could not be resolved.")
 		}
@@ -522,7 +638,7 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, args string) {
 		}
 		var ok, fail int
 		for _, m := range moniker {
-			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, m.Addr, m.Moniker, "unsubscribe"); err != nil {
+			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, chainID, m.Addr, m.Moniker, "unsubscribe"); err != nil {
 				fail++
 			} else {
 				_ = SendMessageTelegram(token, chatID, fmt.Sprintf("🛑 Disabled alerts for <b>%s</b> validators.", m.Moniker))
@@ -545,8 +661,9 @@ func subscribeUsage() string {
 /subscribe off all — disable all`
 }
 
-func BuildTelegramCallbackHandler(token string, db *gorm.DB) func(int64, int, string) {
+func BuildTelegramCallbackHandler(token string, db *gorm.DB, defaultChainID string) func(int64, int, string) {
 	return func(chatID int64, messageID int, data string) {
+		chainID := getActiveChain(chatID, defaultChainID)
 		cmdKey, page, limit, period, filter, sortOrder, action, ok := parseCallbackData(data)
 		if !ok {
 			return
@@ -554,6 +671,7 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB) func(int64, int, st
 		if action == "search" {
 			setSearchState(chatID, SearchState{
 				BotType:   "validator",
+				ChainID:   chainID,
 				Cmd:       cmdKey,
 				Page:      1,
 				Limit:     limit,
@@ -565,7 +683,7 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB) func(int64, int, st
 			return
 		}
 
-		msg, markup, err := buildPaginatedResponse(db, cmdKey, period, filter, page, limit, sortOrder)
+		msg, markup, err := buildPaginatedResponse(db, chainID, cmdKey, period, filter, page, limit, sortOrder)
 		if err != nil {
 			log.Printf("error build paginated response (%s): %v", cmdKey, err)
 			return
@@ -576,8 +694,8 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB) func(int64, int, st
 	}
 }
 
-func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, cmdKey, period, filter string, page, limit int, sortOrder string) {
-	msg, markup, err := buildPaginatedResponse(db, cmdKey, period, filter, page, limit, sortOrder)
+func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, chainID, cmdKey, period, filter string, page, limit int, sortOrder string) {
+	msg, markup, err := buildPaginatedResponse(db, chainID, cmdKey, period, filter, page, limit, sortOrder)
 	if err != nil {
 		log.Printf("error build paginated response (%s): %v", cmdKey, err)
 		_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch data.")
@@ -588,7 +706,7 @@ func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, cmdKey, perio
 	}
 }
 
-func buildPaginatedResponse(db *gorm.DB, cmdKey, period, filter string, page, limit int, sortOrder string) (string, *InlineKeyboardMarkup, error) {
+func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string, page, limit int, sortOrder string) (string, *InlineKeyboardMarkup, error) {
 	limit = clampLimit(limit)
 	sortOrder = normalizeSort(sortOrder)
 	switch cmdKey {
@@ -596,21 +714,21 @@ func buildPaginatedResponse(db *gorm.DB, cmdKey, period, filter string, page, li
 		if period == "" {
 			period = periodDefault
 		}
-		msg, pageOut, totalPages, err := formatParticipationRAte(db, period, page, limit, filter, sortOrder)
+		msg, pageOut, totalPages, err := formatParticipationRAte(db, chainID, period, page, limit, filter, sortOrder)
 		if err != nil {
 			return "", nil, err
 		}
 		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
 
 	case "uptime":
-		msg, pageOut, totalPages, err := formatUptime(db, page, limit, filter, sortOrder)
+		msg, pageOut, totalPages, err := formatUptime(db, chainID, page, limit, filter, sortOrder)
 		if err != nil {
 			return "", nil, err
 		}
 		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, "", filter, sortOrder), nil
 
 	case "operation_time":
-		msg, pageOut, totalPages, err := formatOperationTime(db, page, limit, filter)
+		msg, pageOut, totalPages, err := formatOperationTime(db, chainID, page, limit, filter)
 		if err != nil {
 			return "", nil, err
 		}
@@ -620,7 +738,7 @@ func buildPaginatedResponse(db *gorm.DB, cmdKey, period, filter string, page, li
 		if period == "" {
 			period = periodDefault
 		}
-		msg, pageOut, totalPages, err := FormatTxcontrib(db, period, page, limit, filter, sortOrder)
+		msg, pageOut, totalPages, err := FormatTxcontrib(db, chainID, period, page, limit, filter, sortOrder)
 		if err != nil {
 			return "", nil, err
 		}
@@ -630,7 +748,7 @@ func buildPaginatedResponse(db *gorm.DB, cmdKey, period, filter string, page, li
 		if period == "" {
 			period = periodDefault
 		}
-		msg, pageOut, totalPages, err := formatMissing(db, period, page, limit, filter)
+		msg, pageOut, totalPages, err := formatMissing(db, chainID, period, page, limit, filter)
 		if err != nil {
 			return "", nil, err
 		}
@@ -862,6 +980,7 @@ func truncateRunes(s string, maxLen int) string {
 
 type SearchState struct {
 	BotType   string
+	ChainID   string
 	Cmd       string
 	Page      int
 	Limit     int
@@ -925,7 +1044,7 @@ func HandleSearchInput(token string, db *gorm.DB, botType string, chatID int64, 
 	if strings.HasPrefix(t, "/") {
 		return false
 	}
-	sendPaginatedMessage(token, chatID, db, state.Cmd, state.Period, t, 1, state.Limit, state.SortOrder)
+	sendPaginatedMessage(token, chatID, db, state.ChainID, state.Cmd, state.Period, t, 1, state.Limit, state.SortOrder)
 	return true
 }
 
@@ -1187,6 +1306,10 @@ func formatHelp() string {
 
 	b.WriteString("Disable alerts for all validators\n")
 	b.WriteString("• <code>/subscribe off all </code>\n")
+
+	b.WriteString("\n⛓️ <b>Multi-chain</b>\n")
+	b.WriteString("• <code>/chain</code> — show current chain and available chains\n")
+	b.WriteString("• <code>/setchain chain=&lt;id&gt;</code> — switch active chain for this chat\n\n")
 
 	b.WriteString("ℹ️ Parameters must be written as <code>key=value</code> (e.g. <code>period=current_week</code>).\n")
 

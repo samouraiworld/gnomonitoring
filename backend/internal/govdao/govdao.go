@@ -77,9 +77,8 @@ type Proposal struct {
 	TxUrl  string
 }
 
-func GetMessageTitle(height int) error {
-	URLgraphql := internal.Config.Graphql
-	client := graphql.NewClient(URLgraphql)
+func GetMessageTitle(height int, graphqlEndpoint string) error {
+	client := graphql.NewClient(graphqlEndpoint)
 
 	req := graphql.NewRequest(`
         query getSpecificBlocksByHeight($height: Int!) {
@@ -116,8 +115,8 @@ func GetMessageTitle(height int) error {
 	return nil
 }
 
-func FetchGovDAOEvents() ([]Transaction, error) {
-	client := graphql.NewClient(internal.Config.Graphql)
+func FetchGovDAOEvents(graphqlEndpoint string) ([]Transaction, error) {
+	client := graphql.NewClient(graphqlEndpoint)
 	req := graphql.NewRequest(`
 			query getEvents {
 			getTransactions(
@@ -182,8 +181,8 @@ func ExtractGovDAOIDs(txs []Transaction) []string {
 	return ids
 }
 
-func WebsocketGovdao(db *gorm.DB) {
-	wsURL := strings.Replace(internal.Config.Graphql, "http", "ws", 1)
+func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
+	wsURL := strings.Replace(graphqlEndpoint, "http", "ws", 1)
 
 	const (
 		backoffMin = 2 * time.Second
@@ -276,7 +275,7 @@ func WebsocketGovdao(db *gorm.DB) {
 			}
 
 			tx := msg.Payload.Data.GetTransactions
-			ProcessProposal(tx, "socket", db)
+			ProcessProposal(tx, "socket", db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
 		}
 
 		c.Close()
@@ -293,8 +292,8 @@ func WebsocketGovdao(db *gorm.DB) {
 	}
 
 }
-func ExtractTitle(proposalID int) (string, error) {
-	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
+func ExtractTitle(proposalID int, rpcEndpoint string) (string, error) {
+	rpcClient, err := rpcclient.NewHTTPClient(rpcEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to connect to RPC: %v", err)
 	}
@@ -332,9 +331,8 @@ func parseGnoStringResponse(bz []byte) (string, error) {
 	return strconv.Unquote(s)
 }
 
-func GetTxsByBlockHeight(height int) (*TxBlock, error) {
-	URLgraphql := internal.Config.Graphql
-	client := graphql.NewClient(URLgraphql)
+func GetTxsByBlockHeight(height int, graphqlEndpoint string) (*TxBlock, error) {
+	client := graphql.NewClient(graphqlEndpoint)
 
 	req := graphql.NewRequest(`
 		query getSpecificBlocksByHeight($height: Int!) {
@@ -365,25 +363,25 @@ func GetTxsByBlockHeight(height int) (*TxBlock, error) {
 	return &respData.GetBlocks[0].Txs[0], nil
 }
 
-func InitGovdao(db *gorm.DB) {
-	Trans, err := FetchGovDAOEvents()
+func InitGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
+	Trans, err := FetchGovDAOEvents(graphqlEndpoint)
 	if err != nil {
 		log.Printf("Error fetch govdao %s", err)
 		return
 	}
 	for _, tx := range Trans {
-		ProcessProposal(tx, "Fetch", db)
+		ProcessProposal(tx, "Fetch", db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
 	}
 
 }
 
-func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
+func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
 	for _, ev := range tx.Response.Events {
 		if ev.Type == "ProposalCreated" {
 			for _, attr := range ev.Attrs {
 				if attr.Key == "id" {
 					// Build Url
-					url := fmt.Sprintf("%s/r/gov/dao:%s", internal.Config.Gnoweb, attr.Value)
+					url := fmt.Sprintf("%s/r/gov/dao:%s", gnowebEndpoint, attr.Value)
 
 					// Convert ID to Int
 					idInt, err := strconv.Atoi(attr.Value)
@@ -393,13 +391,13 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 					}
 
 					// Get Title
-					title, err := ExtractTitle(idInt)
+					title, err := ExtractTitle(idInt, rpcEndpoint)
 					if err != nil {
 						log.Printf("Error fetching title: %v", err)
 						continue
 					}
 
-					status, err := ExtractProposalRender(idInt)
+					status, err := ExtractProposalRender(idInt, rpcEndpoint)
 					if err != nil {
 						log.Printf("Error fetching status: %v", err)
 						continue
@@ -410,7 +408,7 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 					log.Printf("Block Height: %d", tx.BlockHeight)
 
 					// Get hash of transaction
-					txData, err := GetTxsByBlockHeight(tx.BlockHeight)
+					txData, err := GetTxsByBlockHeight(tx.BlockHeight, graphqlEndpoint)
 					if err != nil {
 						log.Printf("Error fetching tx hash: %v", err)
 						continue
@@ -424,7 +422,7 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB) {
 
 					// Insert to db
 					log.Printf("ID: %d", idInt)
-					if err := database.InsertGovdao(db, idInt, url, title, txurl, status); err != nil {
+					if err := database.InsertGovdao(db, idInt, chainID, url, title, txurl, status); err != nil {
 						log.Printf("❌ InsertGovdao: %v", err)
 					}
 					if who == "socket" {
@@ -449,9 +447,9 @@ func GnoQueryRender(client *gnoclient.Client, cfg gnoclient.QueryCfg) (string, e
 	return string(res.Response.Data), nil
 }
 
-func ExtractProposalRender(proposalID int) (string, error) {
+func ExtractProposalRender(proposalID int, rpcEndpoint string) (string, error) {
 
-	rpcClient, err := rpcclient.NewHTTPClient(internal.Config.RPCEndpoint)
+	rpcClient, err := rpcclient.NewHTTPClient(rpcEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to connect to RPC: %v", err)
 	}
@@ -487,7 +485,12 @@ func CheckProposalStatus(db *gorm.DB) {
 	}
 
 	for _, p := range govdao {
-		currentStatus, err := ExtractProposalRender(p.Id)
+		chainCfg, err := internal.Config.GetChainConfig(p.ChainID)
+		if err != nil {
+			log.Printf("CheckProposalStatus: unknown chain %q for proposal %d: %v", p.ChainID, p.Id, err)
+			continue
+		}
+		currentStatus, err := ExtractProposalRender(p.Id, chainCfg.RPCEndpoint)
 		if err != nil {
 			log.Printf("Error fetching status for %d: %v", p.Id, err)
 			continue
@@ -515,11 +518,10 @@ func CheckProposalStatus(db *gorm.DB) {
 				p.Title,
 				p.Url,
 			)
-			if err := telegram.MsgTelegram(msgT, internal.Config.TokenTelegramValidator, "govdao", db); err != nil {
+			if err := telegram.MsgTelegram(msgT, internal.Config.TokenTelegramGovdao, "govdao", db); err != nil {
 				log.Printf("❌ MsgTelegram: %v", err)
 			}
 
-			log.Printf("❌ Failed to update govdao status id=%d: %v", p.Id, err)
 			// update GovDao (explicit WHERE to handle id=0)
 			if err := db.Model(&database.Govdao{}).
 				Where("id = ?", p.Id).
@@ -542,7 +544,7 @@ func StartProposalWatcher(db *gorm.DB) {
 	}
 }
 
-func StartGovDAo(db *gorm.DB) {
-	InitGovdao(db)
-	WebsocketGovdao(db)
+func StartGovDAo(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
+	InitGovdao(db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
+	WebsocketGovdao(db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
 }

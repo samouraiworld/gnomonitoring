@@ -9,6 +9,7 @@ import (
 )
 
 type dpRow struct {
+	ChainID        string
 	Date           time.Time
 	BlockHeight    int64
 	Moniker        string
@@ -29,7 +30,7 @@ func flushBatch(db *gorm.DB, rows []dpRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	const cols = 6
+	const cols = 7
 	const maxVars = 990 // marge
 	// sqlite limit insert 999 var
 	maxRows := maxVars / cols
@@ -53,18 +54,18 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 
 	q := `
       INSERT INTO daily_participations
-        (date, block_height, moniker, addr, participated, tx_contribution)
+        (chain_id, date, block_height, moniker, addr, participated, tx_contribution)
       VALUES `
-	args := make([]any, 0, len(rows)*6)
+	args := make([]any, 0, len(rows)*7)
 	for i, r := range rows {
 		if i > 0 {
 			q += ","
 		}
-		q += "(?, ?, ?, ?, ?, ?)"
-		args = append(args, r.Date, r.BlockHeight, r.Moniker, r.Addr, r.Participated, r.TxContribution)
+		q += "(?, ?, ?, ?, ?, ?, ?)"
+		args = append(args, r.ChainID, r.Date, r.BlockHeight, r.Moniker, r.Addr, r.Participated, r.TxContribution)
 	}
 	q += `
-	  ON CONFLICT(block_height, addr) DO UPDATE SET
+	  ON CONFLICT(chain_id, block_height, addr) DO UPDATE SET
 	    date = excluded.date,
 	    moniker = excluded.moniker,
 	    participated = excluded.participated,
@@ -80,7 +81,7 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 }
 
 // sequentielle 42hours approx for 1 month
-func BackfillRange(db *gorm.DB, client gnoclient.Client, from, to int64, monikerMap map[string]string) error {
+func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, to int64, monikerMap map[string]string) error {
 	const chunk = int64(1000)   // number of blocks per tranche
 	const flushThreshold = 3000 // number row before row flush
 
@@ -131,6 +132,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, from, to int64, moniker
 				participated := participating[valAddr] // false if not find
 
 				buf = append(buf, dpRow{
+					ChainID:        chainID,
 					Date:           timeStp,
 					BlockHeight:    h,
 					Moniker:        moniker,
@@ -161,7 +163,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, from, to int64, moniker
 // Parallel
 // - 5 approx hours with 6 workers for one month
 // - 2 approx  hours with 20 workers for one month
-func BackfillParallel(db *gorm.DB, client gnoclient.Client, from, to int64, monikerMap map[string]string) error {
+func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from, to int64, monikerMap map[string]string) error {
 	const workers = 20
 	const flushThreshold = 2000
 
@@ -199,6 +201,7 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, from, to int64, moni
 					addr := pc.ValidatorAddress.String()
 					seen[addr] = struct{}{}
 					rows = append(rows, dpRow{
+						ChainID:        chainID,
 						Date:           tStr,
 						BlockHeight:    j.H,
 						Moniker:        monikerMap[addr],
@@ -213,6 +216,7 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, from, to int64, moni
 						continue
 					}
 					rows = append(rows, dpRow{
+						ChainID:        chainID,
 						Date:           tStr,
 						BlockHeight:    j.H,
 						Moniker:        mon,
