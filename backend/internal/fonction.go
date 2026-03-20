@@ -84,10 +84,8 @@ func LoadConfig() {
 			log.Printf("Config warning: default_chain %q is not enabled, falling back to %q", Config.DefaultChain, EnabledChains[0])
 			Config.DefaultChain = EnabledChains[0]
 		}
-	} else {
-		if len(EnabledChains) > 0 {
-			Config.DefaultChain = EnabledChains[0]
-		}
+	} else if len(EnabledChains) > 0 {
+		Config.DefaultChain = EnabledChains[0]
 	}
 	log.Printf("Default chain: %v", Config.DefaultChain)
 
