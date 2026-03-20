@@ -17,6 +17,6 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            cd Gnolove
+            cd gnomonitoring
             docker compose pull
             docker compose up -d
