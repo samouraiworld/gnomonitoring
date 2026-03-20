@@ -1,6 +1,6 @@
 backend_port: "8989"
 metrics_port: 8888
-dev_mode: true
+dev_mode: false
 allow_origin: "http://localhost:3000"  # Comma-separated for multiple origins, e.g. "https://gnolove.world, https://memba.samourai.app"
 clerk_secret_key: "sk_test...."  # change me
 token_telegram_validator: ""
