@@ -257,3 +257,70 @@ func TestParseParams_KeyValueParsing(t *testing.T) {
 		})
 	}
 }
+
+// -------------------------------------------------------------------------
+// /setchain command — database persistence
+// -------------------------------------------------------------------------
+
+// TestHandleSetChainCommand_PersistsToDB verifies that the /setchain handler
+// persists the new chain selection to the database via UpdateChatChain.
+func TestHandleSetChainCommand_PersistsToDB(t *testing.T) {
+	resetChatChainState()
+
+	db := testoutils.NewTestDB(t)
+
+	enabledChains := []string{"chainA", "chainB"}
+	const defaultChain = "chainA"
+	const chatID int64 = 9008
+
+	// First, insert the chat with the default chain.
+	_, err := database.InsertChatID(db, chatID, "validator", defaultChain)
+	require.NoError(t, err)
+
+	handlers := BuildTelegramHandlers("", db, defaultChain, enabledChains)
+	setChainHandler := handlers["/setchain"]
+
+	// Call /setchain to switch to chainB.
+	assert.NotPanics(t, func() { setChainHandler(chatID, "chain=chainB") })
+
+	// Verify the update was persisted to the database.
+	chains, err := database.GetAllChatChains(db)
+	require.NoError(t, err)
+	assert.Equal(t, "chainB", chains[chatID], "chain should be persisted to database after /setchain")
+}
+
+// TestHydrationFromDB verifies that StartCommandLoop hydrates chatChainState
+// from the database at startup.
+func TestHydrationFromDB(t *testing.T) {
+	resetChatChainState()
+
+	db := testoutils.NewTestDB(t)
+
+	const chatID1 int64 = 9009
+	const chatID2 int64 = 9010
+	const defaultChain = "chainA"
+
+	// Manually insert chats and update their chains in the database.
+	_, err := database.InsertChatID(db, chatID1, "validator", defaultChain)
+	require.NoError(t, err)
+	_, err = database.InsertChatID(db, chatID2, "validator", defaultChain)
+	require.NoError(t, err)
+
+	err = database.UpdateChatChain(db, chatID1, "chainB")
+	require.NoError(t, err)
+	err = database.UpdateChatChain(db, chatID2, "chainC")
+	require.NoError(t, err)
+
+	// Now, simulate the hydration that happens at startup by directly
+	// calling GetAllChatChains and populating chatChainState.
+	chains, err := database.GetAllChatChains(db)
+	require.NoError(t, err)
+
+	for chatID, cid := range chains {
+		setActiveChain(chatID, cid)
+	}
+
+	// Verify that chatChainState now reflects the persisted preferences.
+	assert.Equal(t, "chainB", getActiveChain(chatID1, defaultChain), "chatID1 should be hydrated to chainB")
+	assert.Equal(t, "chainC", getActiveChain(chatID2, defaultChain), "chatID2 should be hydrated to chainC")
+}

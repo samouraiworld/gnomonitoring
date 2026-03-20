@@ -324,6 +324,32 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 		defaultChain = chainID[0]
 	}
 
+	// Hydrate chatChainState from DB for validator bots on startup.
+	if typeChatid == "validator" {
+		prefs, err := database.GetAllChatChains(db)
+		if err != nil {
+			log.Printf("⚠️ StartCommandLoop: failed to hydrate chatChainState: %v", err)
+		} else {
+			for chatID, cid := range prefs {
+				setActiveChain(chatID, cid)
+			}
+			log.Printf("ℹ️ Hydrated chain preferences for %d validator chats", len(prefs))
+		}
+	}
+
+	// Hydrate govdaoChatChainState from DB for govdao bots on startup.
+	if typeChatid == "govdao" {
+		prefs, err := database.GetAllGovdaoChatChains(db)
+		if err != nil {
+			log.Printf("⚠️ StartCommandLoop: failed to hydrate govdao chatChainState: %v", err)
+		} else {
+			for chatID, cid := range prefs {
+				setGovdaoActiveChain(chatID, cid)
+			}
+			log.Printf("ℹ️ Hydrated chain preferences for %d govdao chats", len(prefs))
+		}
+	}
+
 	for {
 		select {
 		case <-stopCtx.Done():

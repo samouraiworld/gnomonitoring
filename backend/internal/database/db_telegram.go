@@ -23,16 +23,21 @@ type ValidatorStatus struct {
 // ensures a TelegramHourReport row exists for the given chainID so that the
 // scheduler can pick it up.
 func InsertChatID(db *gorm.DB, chatID int64, chatType string, chainID ...string) (bool, error) {
+	cid := ""
+	if len(chainID) > 0 {
+		cid = chainID[0]
+	}
+	if cid == "" {
+		cid = "betanet"
+	}
+
 	chat := Telegram{
-		ChatID: chatID,
-		Type:   chatType,
+		ChatID:  chatID,
+		Type:    chatType,
+		ChainID: cid,
 	}
 
 	if chatType == "validator" {
-		cid := ""
-		if len(chainID) > 0 {
-			cid = chainID[0]
-		}
 		if err := createHourReportTelegram(db, chatID, cid); err != nil {
 			log.Printf("⚠️ createHourReportTelegram: %v", err)
 		}
@@ -67,6 +72,56 @@ func GetAllChatIDs(db *gorm.DB, typeChatid string) ([]int64, error) {
 		ids = append(ids, c.ChatID)
 	}
 	return ids, nil
+}
+
+// GetAllChatChains returns a map of chat_id -> chain_id for all validator chats.
+// Used at startup to hydrate chatChainState from persisted preferences.
+func GetAllChatChains(db *gorm.DB) (map[int64]string, error) {
+	var rows []Telegram
+	if err := db.Where("type = ?", "validator").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("GetAllChatChains: %w", err)
+	}
+	result := make(map[int64]string, len(rows))
+	for _, r := range rows {
+		if r.ChainID != "" {
+			result[r.ChatID] = r.ChainID
+		}
+	}
+	return result, nil
+}
+
+// UpdateChatChain persists the per-chat chain preference to the database.
+// Called after /setchain to save the user's selection.
+func UpdateChatChain(db *gorm.DB, chatID int64, chainID string) error {
+	res := db.Model(&Telegram{}).
+		Where("chat_id = ? AND type = ?", chatID, "validator").
+		Update("chain_id", chainID)
+	return res.Error
+}
+
+// GetAllGovdaoChatChains returns a map of chat_id -> chain_id for all govdao chats.
+// Used at startup to hydrate govdaoChatChainState from persisted preferences.
+func GetAllGovdaoChatChains(db *gorm.DB) (map[int64]string, error) {
+	var rows []Telegram
+	if err := db.Where("type = ?", "govdao").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("GetAllGovdaoChatChains: %w", err)
+	}
+	result := make(map[int64]string, len(rows))
+	for _, r := range rows {
+		if r.ChainID != "" {
+			result[r.ChatID] = r.ChainID
+		}
+	}
+	return result, nil
+}
+
+// UpdateGovdaoChatChain persists the per-chat chain preference to the database for govdao.
+// Called after /setchain to save the user's selection.
+func UpdateGovdaoChatChain(db *gorm.DB, chatID int64, chainID string) error {
+	res := db.Model(&Telegram{}).
+		Where("chat_id = ? AND type = ?", chatID, "govdao").
+		Update("chain_id", chainID)
+	return res.Error
 }
 
 // ============================ Telegram validato =============================================
@@ -299,7 +354,7 @@ func UpdateTelegramValidatorSubStatus(db *gorm.DB, chatID int64, chainID, addr, 
 
 // ============================ Telegram govdao =============================================
 // status of govdao handlers
-func GetStatusofGovdao(db *gorm.DB) ([]Govdao, error) {
+func GetStatusofGovdao(db *gorm.DB, chainID string) ([]Govdao, error) {
 	var results []Govdao
 	query := `
 		SELECT
@@ -307,19 +362,21 @@ func GetStatusofGovdao(db *gorm.DB) ([]Govdao, error) {
 			url,
 			title,
 			tx,
-			status
+			status,
+			chain_id
 		FROM
 			govdaos
+		WHERE chain_id = ?
 		ORDER BY
 			id DESC;`
 
-	err := db.Raw(query).Scan(&results).Error
+	err := db.Raw(query, chainID).Scan(&results).Error
 	log.Println(results)
 
 	return results, err
 }
 
-func GetLastExecute(db *gorm.DB) ([]Govdao, error) {
+func GetLastExecute(db *gorm.DB, chainID string) ([]Govdao, error) {
 	var results []Govdao
 	query := `
 		SELECT
@@ -327,19 +384,20 @@ func GetLastExecute(db *gorm.DB) ([]Govdao, error) {
 			url,
 			title,
 			tx,
-			status
+			status,
+			chain_id
 		FROM
 			govdaos
-			where status = "ACCEPTED"
+		WHERE chain_id = ? AND status = "ACCEPTED"
 		ORDER BY
 			id DESC;`
 
-	err := db.Raw(query).Scan(&results).Error
+	err := db.Raw(query, chainID).Scan(&results).Error
 	log.Println(results)
 
 	return results, err
 }
-func GetLastPorposal(db *gorm.DB) ([]Govdao, error) {
+func GetLastPorposal(db *gorm.DB, chainID string) ([]Govdao, error) {
 	var results []Govdao
 	query := `
 		SELECT
@@ -347,15 +405,16 @@ func GetLastPorposal(db *gorm.DB) ([]Govdao, error) {
 			url,
 			title,
 			tx,
-			status
+			status,
+			chain_id
 		FROM
 			govdaos
-		
+		WHERE chain_id = ?
 		ORDER BY
 			id DESC
 		LIMIT 1;`
 
-	err := db.Raw(query).Scan(&results).Error
+	err := db.Raw(query, chainID).Scan(&results).Error
 	log.Println(results)
 
 	return results, err

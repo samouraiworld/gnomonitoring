@@ -216,3 +216,134 @@ func TestActivateTelegramReport_ChainScope(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, statusA2, "chainA report should be active after re-activation")
 }
+
+// TestGetAllChatChains_ReturnsValidatorRows verifies that GetAllChatChains returns
+// only validator chat rows, not govdao rows.
+func TestGetAllChatChains_ReturnsValidatorRows(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	// Insert a validator chat
+	_, err := database.InsertChatID(db, 1001, "validator", "chainA")
+	require.NoError(t, err)
+
+	// Insert another validator chat with different chain
+	_, err = database.InsertChatID(db, 1002, "validator", "chainB")
+	require.NoError(t, err)
+
+	// Insert a govdao chat (should not be returned)
+	_, err = database.InsertChatID(db, 1003, "govdao", "betanet")
+	require.NoError(t, err)
+
+	// Get all chat chains
+	chains, err := database.GetAllChatChains(db)
+	require.NoError(t, err)
+
+	// Should have only the two validator chats
+	assert.Equal(t, 2, len(chains), "should return exactly 2 validator chats")
+	assert.Equal(t, "chainA", chains[1001])
+	assert.Equal(t, "chainB", chains[1002])
+	_, exists := chains[1003]
+	assert.False(t, exists, "govdao chat should not be included")
+}
+
+// TestUpdateChatChain_PersistsChain verifies that UpdateChatChain persists the
+// chain selection and it can be retrieved via GetAllChatChains.
+func TestUpdateChatChain_PersistsChain(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	const chatID int64 = 1004
+
+	// Insert a chat with default chain
+	_, err := database.InsertChatID(db, chatID, "validator", "chainA")
+	require.NoError(t, err)
+
+	// Update the chain to chainB
+	err = database.UpdateChatChain(db, chatID, "chainB")
+	require.NoError(t, err)
+
+	// Verify the update persisted via GetAllChatChains
+	chains, err := database.GetAllChatChains(db)
+	require.NoError(t, err)
+	assert.Equal(t, "chainB", chains[chatID])
+}
+
+// TestUpdateChatChain_NonExistentChatIsNoOp verifies that UpdateChatChain does not
+// error on a non-existent chat_id (no-op behavior).
+func TestUpdateChatChain_NonExistentChatIsNoOp(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	// Try to update a chat that was never inserted
+	err := database.UpdateChatChain(db, 9999, "chainA")
+	// Should not error — just a no-op
+	require.NoError(t, err)
+
+	// Verify no row was created
+	chains, err := database.GetAllChatChains(db)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(chains))
+}
+
+// TestGetAllGovdaoChatChains_ReturnsGovdaoRowsOnly verifies that GetAllGovdaoChatChains
+// returns only govdao chat rows, not validator rows.
+func TestGetAllGovdaoChatChains_ReturnsGovdaoRowsOnly(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	// Insert govdao chats
+	_, err := database.InsertChatID(db, 2001, "govdao", "betanet")
+	require.NoError(t, err)
+
+	_, err = database.InsertChatID(db, 2002, "govdao", "gnoland1")
+	require.NoError(t, err)
+
+	// Insert a validator chat (should not be returned)
+	_, err = database.InsertChatID(db, 2003, "validator", "chainA")
+	require.NoError(t, err)
+
+	// Get all govdao chat chains
+	chains, err := database.GetAllGovdaoChatChains(db)
+	require.NoError(t, err)
+
+	// Should have only the two govdao chats
+	assert.Equal(t, 2, len(chains), "should return exactly 2 govdao chats")
+	assert.Equal(t, "betanet", chains[2001])
+	assert.Equal(t, "gnoland1", chains[2002])
+	_, exists := chains[2003]
+	assert.False(t, exists, "validator chat should not be included")
+}
+
+// TestUpdateGovdaoChatChain_PersistsChain verifies that UpdateGovdaoChatChain
+// persists the chain selection and can be retrieved via GetAllGovdaoChatChains.
+func TestUpdateGovdaoChatChain_PersistsChain(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	const chatID int64 = 2004
+
+	// Insert a govdao chat with default chain
+	_, err := database.InsertChatID(db, chatID, "govdao", "betanet")
+	require.NoError(t, err)
+
+	// Update the chain to gnoland1
+	err = database.UpdateGovdaoChatChain(db, chatID, "gnoland1")
+	require.NoError(t, err)
+
+	// Verify the update persisted via GetAllGovdaoChatChains
+	chains, err := database.GetAllGovdaoChatChains(db)
+	require.NoError(t, err)
+	assert.Equal(t, "gnoland1", chains[chatID])
+}
+
+// TestUpdateGovdaoChatChain_NonExistentChatIsNoOp verifies that UpdateGovdaoChatChain
+// does not error on a non-existent chat_id (no-op behavior).
+func TestUpdateGovdaoChatChain_NonExistentChatIsNoOp(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	// Try to update a govdao chat that was never inserted
+	err := database.UpdateGovdaoChatChain(db, 9999, "betanet")
+	// Should not error — just a no-op
+	require.NoError(t, err)
+
+	// Verify no row was created
+	chains, err := database.GetAllGovdaoChatChains(db)
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(chains))
+}

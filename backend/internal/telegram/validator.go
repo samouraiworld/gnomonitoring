@@ -34,10 +34,16 @@ var (
 	metricsCacheMu sync.Mutex
 )
 
-// chatChainState stores the per-chat active chain override.
+// chatChainState stores the per-chat active chain override (validator bot).
 // Protected by chatChainMu.
 var chatChainState = map[int64]string{}
 var chatChainMu sync.RWMutex
+
+// govdaoChatChainState stores the per-chat active chain override (govdao bot).
+// Separate from validator bot to prevent cross-bot conflicts.
+// Protected by govdaoChatChainMu.
+var govdaoChatChainState = map[int64]string{}
+var govdaoChatChainMu sync.RWMutex
 
 // getActiveChain returns the chain ID for the given chat. If no per-chat
 // override has been set it falls back to defaultChainID.
@@ -61,6 +67,30 @@ func setActiveChain(chatID int64, chainID string) {
 		delete(chatChainState, chatID)
 	} else {
 		chatChainState[chatID] = chainID
+	}
+}
+
+// getGovdaoActiveChain returns the chain ID for the given govdao chat. If no per-chat
+// override has been set it falls back to defaultChainID.
+func getGovdaoActiveChain(chatID int64, defaultChainID string) string {
+	govdaoChatChainMu.RLock()
+	id, ok := govdaoChatChainState[chatID]
+	govdaoChatChainMu.RUnlock()
+	if ok && id != "" {
+		return id
+	}
+	return defaultChainID
+}
+
+// setGovdaoActiveChain stores a per-chat chain override for govdao. Passing an empty string
+// clears the override so subsequent calls to getGovdaoActiveChain fall back to the default.
+func setGovdaoActiveChain(chatID int64, chainID string) {
+	govdaoChatChainMu.Lock()
+	defer govdaoChatChainMu.Unlock()
+	if chainID == "" {
+		delete(govdaoChatChainState, chatID)
+	} else {
+		govdaoChatChainState[chatID] = chainID
 	}
 }
 
@@ -215,6 +245,9 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 				return
 			}
 			setActiveChain(chatID, requested)
+			if err := database.UpdateChatChain(db, chatID, requested); err != nil {
+				log.Printf("⚠️ UpdateChatChain chat_id=%d: %v", chatID, err)
+			}
 			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("Chain set to <code>%s</code>.", html.EscapeString(requested)))
 		},
 

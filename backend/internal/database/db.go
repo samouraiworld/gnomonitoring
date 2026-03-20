@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ===================================State GovDao=====================================
@@ -35,17 +34,50 @@ func GetLastGovDaoInfo(db *gorm.DB) (Govdao, error) {
 	return govdao, err
 }
 
+// GetLastGovDaoInfoByChain returns the most recent govdao proposal for a specific chain.
+func GetLastGovDaoInfoByChain(db *gorm.DB, chainID string) (*Govdao, error) {
+	var result Govdao
+	query := `
+		SELECT id, url, title, tx, status, chain_id
+		FROM govdaos
+		WHERE chain_id = ?
+		ORDER BY id DESC
+		LIMIT 1
+	`
+	err := db.Raw(query, chainID).Scan(&result).Error
+	if err != nil {
+		return nil, fmt.Errorf("GetLastGovDaoInfoByChain: %w", err)
+	}
+	return &result, nil
+}
+
 // // ==================================== GovDao ======================================
-func InsertWebhook(user_id string, url string, description, wtype string, db *gorm.DB) error {
-	govdao := WebhookGovDAO{
-		UserID:      user_id,
+
+// InsertWebhook inserts a new GovDAO webhook. The optional chainID parameter
+// scopes the webhook to a specific chain; pass nil (or omit) for chain-agnostic webhooks.
+func InsertWebhook(userID, url, description, type_ string, args ...interface{}) error {
+	webhook := WebhookGovDAO{
+		UserID:      userID,
 		URL:         url,
 		Description: description,
-		Type:        wtype,
+		Type:        type_,
 	}
 
-	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&govdao).Error
+	// args may be: (chainID *string, db *gorm.DB)  or  (db *gorm.DB)
+	var db *gorm.DB
+	for _, a := range args {
+		switch v := a.(type) {
+		case *string:
+			webhook.ChainID = v
+		case *gorm.DB:
+			db = v
+		}
+	}
+	if db == nil {
+		return fmt.Errorf("InsertWebhook: db argument is required")
+	}
 
+	return db.Create(&webhook).Error
 }
 
 func LoadWebhooks(db *gorm.DB) ([]WebhookGovDAO, error) {
@@ -60,14 +92,19 @@ func UpdateLastCheckedID(url string, newID int, db *gorm.DB) error {
 		Error
 }
 
-func ListWebhooks(db *gorm.DB, userID string) ([]WebhookGovDAO, error) {
+// ListWebhooks returns GovDAO webhooks for a user. An optional chainID argument
+// filters results to webhooks scoped to that chain or with no chain set (NULL).
+func ListWebhooks(db *gorm.DB, userID string, chainID ...string) ([]WebhookGovDAO, error) {
 	var list []WebhookGovDAO
-	err := db.
-		Select("id, description, user_id, url, type, last_checked_id").
-		Where("user_id = ?", userID).
-		Order("id ASC").
-		Find(&list).Error
+	q := db.
+		Select("id, description, user_id, url, type, last_checked_id, chain_id").
+		Where("user_id = ?", userID)
 
+	if len(chainID) > 0 && chainID[0] != "" {
+		q = q.Where("chain_id = ? OR chain_id IS NULL", chainID[0])
+	}
+
+	err := q.Order("id ASC").Find(&list).Error
 	if err != nil {
 		return nil, err
 	}
@@ -122,17 +159,32 @@ func ListMonitoringWebhooks(db *gorm.DB, userID string, chainID ...string) ([]We
 }
 
 // =============================== gnovalidator y Govdao ======================================
-func UpdateMonitoringWebhook(db *gorm.DB, id int, userID, description, newURL, newType, tablename string) error {
-	var stmt string
+
+// UpdateMonitoringWebhook updates the fields of a GovDAO or validator webhook row.
+// chainID is optional (nil means do not update the chain_id column). tablename must
+// be either "webhook_gov_daos" or "webhook_validators".
+func UpdateMonitoringWebhook(db *gorm.DB, id int, userID, description, newURL, newType string, chainID *string, tablename string) error {
+	updates := map[string]interface{}{
+		"url":         newURL,
+		"description": description,
+		"type":        newType,
+	}
+	if chainID != nil {
+		updates["chain_id"] = chainID
+	}
+
 	switch tablename {
 	case "webhook_gov_daos":
-		stmt = "UPDATE webhook_gov_daos SET url = ?, description = ?, type = ? WHERE user_id = ? AND id = ?"
+		return db.Model(&WebhookGovDAO{}).
+			Where("id = ? AND user_id = ?", id, userID).
+			Updates(updates).Error
 	case "webhook_validators":
-		stmt = "UPDATE webhook_validators SET url = ?, description = ?, type = ? WHERE user_id = ? AND id = ?"
+		return db.Model(&WebhookValidator{}).
+			Where("id = ? AND user_id = ?", id, userID).
+			Updates(updates).Error
 	default:
 		return fmt.Errorf("unknown table: %q", tablename)
 	}
-	return db.Exec(stmt, newURL, description, newType, userID, id).Error
 }
 
 func GetWebhookByID(db *gorm.DB, userID, table string) (*WebhookValidator, error) {

@@ -377,3 +377,13 @@ func TestTelegramHourReportWithChainID(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(reports))
 }
+
+// TestApplyTelegramChainIDMigration verifies that chain_id is added to telegrams table
+func TestApplyTelegramChainIDMigration(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	var count int
+	err := db.Raw(`SELECT COUNT(*) FROM pragma_table_info('telegrams') WHERE name='chain_id'`).
+		Scan(&count).Error
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "chain_id column should exist in telegrams")
+}

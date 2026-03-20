@@ -518,7 +518,7 @@ func CheckProposalStatus(db *gorm.DB) {
 				p.Title,
 				p.Url,
 			)
-			if err := telegram.MsgTelegram(msgT, internal.Config.TokenTelegramValidator, "govdao", db); err != nil {
+			if err := telegram.MsgTelegram(msgT, internal.Config.TokenTelegramGovdao, "govdao", db); err != nil {
 				log.Printf("❌ MsgTelegram: %v", err)
 			}
 

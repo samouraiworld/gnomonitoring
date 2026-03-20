@@ -18,8 +18,9 @@ type Govdao struct {
 	Status  string `gorm:"column:status;" `
 }
 type Telegram struct {
-	ChatID int64  `gorm:"primaryKey;column:chat_id;" `
-	Type   string `gorm:"primaryKey;olumn:type;not null;check:type IN ('govdao','validator')" `
+	ChatID  int64  `gorm:"primaryKey;column:chat_id;" `
+	Type    string `gorm:"primaryKey;olumn:type;not null;check:type IN ('govdao','validator')" `
+	ChainID string `gorm:"column:chain_id;not null;default:betanet"`
 }
 type TelegramHourReport struct {
 	ChatID            int64  `gorm:"primaryKey;column:chat_id;" `
@@ -221,6 +222,30 @@ func ApplyMultiChainMigrations(db *gorm.DB) error {
 	return nil
 }
 
+// ApplyTelegramChainIDMigration adds chain_id column to the telegrams table.
+// It is idempotent: it checks for column existence first.
+func ApplyTelegramChainIDMigration(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("ApplyTelegramChainIDMigration: get sql.DB: %w", err)
+	}
+	var count int
+	if err := sqlDB.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('telegrams') WHERE name='chain_id'`,
+	).Scan(&count); err != nil {
+		return fmt.Errorf("ApplyTelegramChainIDMigration: pragma check: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	if _, err := sqlDB.Exec(
+		`ALTER TABLE telegrams ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'betanet'`,
+	); err != nil {
+		return fmt.Errorf("ApplyTelegramChainIDMigration: alter: %w", err)
+	}
+	return nil
+}
+
 // CreateOrReplaceIndexes drops legacy single-chain indexes and creates new
 // compound (chain_id, …) indexes suited for multi-chain queries.
 func CreateOrReplaceIndexes(db *gorm.DB) error {
@@ -296,6 +321,10 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	if err := ApplyMultiChainMigrations(db); err != nil {
 		return nil, fmt.Errorf("ApplyMultiChainMigrations: %w", err)
+	}
+
+	if err := ApplyTelegramChainIDMigration(db); err != nil {
+		return nil, fmt.Errorf("ApplyTelegramChainIDMigration: %w", err)
 	}
 
 	if err := CreateOrReplaceIndexes(db); err != nil {

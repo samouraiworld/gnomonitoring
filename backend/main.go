@@ -88,10 +88,15 @@ func main() {
 	ctxgovdao, cancelgovdao := context.WithCancel(context.Background())
 	defer cancelgovdao()
 
-	handlersgovdao := telegram.BuildTelegramGovdaoHandlers(internal.Config.TokenTelegramGovdao, db)
+	handlersgovdao := telegram.BuildTelegramGovdaoHandlers(
+		internal.Config.TokenTelegramGovdao,
+		db,
+		internal.Config.DefaultChain,
+		internal.EnabledChains,
+	)
 
 	go func() {
-		if err := telegram.StartCommandLoop(ctxgovdao, internal.Config.TokenTelegramGovdao, handlersgovdao, nil, "govdao", db); err != nil {
+		if err := telegram.StartCommandLoop(ctxgovdao, internal.Config.TokenTelegramGovdao, handlersgovdao, nil, "govdao", db, internal.Config.DefaultChain); err != nil {
 			log.Fatalf("command loop error bot govdao: %v", err)
 		}
 	}()

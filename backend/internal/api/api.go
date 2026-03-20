@@ -64,7 +64,16 @@ func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	webhooks, err := database.ListWebhooks(db, userID)
+	// Optional chain filter: if ?chain= is provided and valid, filter by it.
+	chainID := r.URL.Query().Get("chain")
+	if chainID != "" {
+		if err := internal.Config.ValidateChainID(chainID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	webhooks, err := database.ListWebhooks(db, userID, chainID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -95,9 +104,16 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	webhook.UserID = userID
 
 	if webhook.UserID == "" || webhook.URL == "" || webhook.Type == "" || webhook.Description == "" {
-
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
+	}
+
+	// Optional chain scoping: validate chain_id if provided.
+	if webhook.ChainID != nil && *webhook.ChainID != "" {
+		if err := internal.Config.ValidateChainID(*webhook.ChainID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Check if webhook exist
@@ -118,8 +134,16 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		w.Write([]byte("Webhook already exists"))
 		return
 	}
-	// for send ultimate Govdao
-	govdaolist, err := database.GetLastGovDaoInfo(db)
+
+	// Send sample proposal for the chosen chain (or default chain if none specified).
+	var chainIDForSample string
+	if webhook.ChainID != nil && *webhook.ChainID != "" {
+		chainIDForSample = *webhook.ChainID
+	} else {
+		chainIDForSample = internal.Config.DefaultChain
+	}
+
+	govdaolist, err := database.GetLastGovDaoInfoByChain(db, chainIDForSample)
 	if err != nil {
 		http.Error(w, "error get lastID GovDao: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -127,10 +151,9 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	if err := internal.SendReportGovdao(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, webhook.Type, webhook.URL); err != nil {
 		log.Printf("❌ SendReportGovdao: %v", err)
 	}
-	// lastid = lastid - 1
 
-	// If not exist insert
-	err = database.InsertWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, db)
+	// If not exist insert (with chain_id support).
+	err = database.InsertWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, webhook.ChainID, db)
 	if err != nil {
 		log.Println("Insert error:", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -180,7 +203,15 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	}
 	webhook.UserID = userID
 
-	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, "webhook_gov_daos")
+	// Validate chain_id if provided.
+	if webhook.ChainID != nil && *webhook.ChainID != "" {
+		if err := internal.Config.ValidateChainID(*webhook.ChainID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, webhook.ChainID, "webhook_gov_daos")
 	if err != nil {
 		log.Println(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -323,7 +354,7 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	}
 	webhook.UserID = userID
 
-	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, "webhook_validators")
+	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, nil, "webhook_validators")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
