@@ -268,6 +268,11 @@ func formatHelpgovdao() string {
 
 	b.WriteString("• <code>/lastproposal</code> — show the most recent proposal\n\n")
 
+	b.WriteString("• <code>/chain</code> — list available chains and show current active chain\n\n")
+
+	b.WriteString("• <code>/setchain chain=&lt;chain_id&gt;</code> — switch to a different chain for monitoring proposals\n")
+	b.WriteString("   ⮑ Example: <code>/setchain chain=gnoland1</code>\n\n")
+
 	b.WriteString("Formatting notes:\n")
 	b.WriteString("• Links open to Gno.land and Gnoscan when available\n")
 	b.WriteString("• You can interact & vote via the Memba link when provided\n\n")
