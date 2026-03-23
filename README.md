@@ -14,9 +14,9 @@ Two services are available:
 
 ---
 
-### 🛠️ Setup
+## 🛠️ Setup
 
-**Requirements**
+### Requirements
 
 - [Docker](https://www.docker.com/)
 - [Docker Compose](https://docs.docker.com/compose/)
@@ -586,7 +586,7 @@ curl -X PUT ‘localhost:8989/usersH’ \
 
 ---
 
-#### 📈 Prometheus Metrics
+### 📈 Prometheus Metrics
 
 Metrics are exposed at <http://localhost:8888/metrics>. All metrics include chain labels to support multi-chain deployments.
 
@@ -611,7 +611,7 @@ Metrics are exposed at <http://localhost:8888/metrics>. All metrics include chai
 
 **Label examples:**
 
-```
+```prometheus
 gnoland_validator_uptime{chain="test12",validator_address="g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t",moniker="gnocore-val-01"} 99.5
 gnoland_chain_active_validators{chain="test12"} 125
 gnoland_active_alerts{chain="test12",level="CRITICAL"} 2
@@ -639,13 +639,15 @@ Metrics are computed every 5 minutes with a 2-minute timeout per chain to preven
 
 ---
 
-#### ✉️ Telegram Bot
+### ✉️ Telegram Bot
 
-##### 🌐 Govdao bot
+#### 🌐 Govdao bot
 
 **/status — list recent GovDAO proposals**
-  ⮑ Params: ```limit``` (optional, default: 10)
- ```/status limit=5```
+  ⮑ Params: `limit` (optional, default: 10)
+ ```bash
+/status limit=5
+```
 
 #### /executedproposals — show the last executed proposals
 
