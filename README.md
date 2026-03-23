@@ -588,15 +588,54 @@ curl -X PUT ‘localhost:8989/usersH’ \
 
 #### 📈 Prometheus Metrics
 
-Metrics are exposed at <http://localhost:8888/metrics>.
+Metrics are exposed at <http://localhost:8888/metrics>. All metrics include chain labels to support multi-chain deployments.
 
-![Status of Validator](assets/status_of_validator.png)
+**Validator Metrics** (per-validator, updated every 5 minutes):
 
-List of  metrics:
+- `gnoland_validator_uptime` — Participation rate (%) over last 500 blocks
+- `gnoland_validator_operation_time` — Days since validator's last downtime event
+- `gnoland_validator_tx_contribution` — Transaction contribution (%) in current month
+- `gnoland_validator_missing_blocks_month` — Blocks missed in current month
+- `gnoland_validator_first_seen_unix` — Unix timestamp of first participation
 
-- `gnoland_validator_participation_rate{moniker="gnocore-val-01",validator_address="g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t"} 99.99873156005428`
-- `gnoland_missed_blocks{moniker="gnocore-val-01",validator_address="g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t"} 1`
-- `gnoland_consecutive_missed_blocks{moniker="onbloc-val-02",validator_address="g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2"} 30`
+**Chain Metrics** (chain-level aggregates):
+
+- `gnoland_chain_active_validators` — Number of active validators (last 100 blocks)
+- `gnoland_chain_avg_participation_rate` — Average participation rate (%) across chain
+- `gnoland_chain_current_height` — Current blockchain height
+
+**Alert Metrics** (active and cumulative alerts):
+
+- `gnoland_active_alerts` — Currently unresolved alerts by severity (CRITICAL/WARNING)
+- `gnoland_alerts_total` — Cumulative alert count by severity
+
+**Label examples:**
+
+```
+gnoland_validator_uptime{chain="test12",validator_address="g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t",moniker="gnocore-val-01"} 99.5
+gnoland_chain_active_validators{chain="test12"} 125
+gnoland_active_alerts{chain="test12",level="CRITICAL"} 2
+```
+
+**PromQL query examples:**
+
+```promql
+# Uptime for all validators on test12 chain
+gnoland_validator_uptime{chain="test12"}
+
+# Validators with uptime below 95%
+gnoland_validator_uptime{chain="test12"} < 95
+
+# Total active alerts across all chains
+sum(gnoland_active_alerts)
+
+# Average participation rate by chain
+avg by (chain) (gnoland_chain_avg_participation_rate)
+```
+
+**Performance notes:**
+
+Metrics are computed every 5 minutes with a 2-minute timeout per chain to prevent slowdowns on heavily-loaded networks. Validator metrics use a 30-day rolling window (not full history) to maintain query performance.
 
 ---
 
