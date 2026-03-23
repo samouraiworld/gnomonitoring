@@ -368,3 +368,108 @@ func GetTimeOfAlert(db *gorm.DB, chainID string, numBlock int64) (time.Time, err
 
 	return blockTime, nil
 }
+
+// ====================================== CHAIN HEALTH METRICS ==============================
+
+// GetActiveValidatorCount returns the count of validators with at least 1 participation
+// in the last 100 blocks scanned for the given chain.
+func GetActiveValidatorCount(db *gorm.DB, chainID string) (int, error) {
+	var count int
+
+	query := `
+		SELECT COUNT(DISTINCT addr)
+		FROM daily_participations
+		WHERE chain_id = ? AND participated = 1
+		AND block_height > (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - 100`
+
+	err := db.Raw(query, chainID, chainID).Scan(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("error counting active validators: %w", err)
+	}
+
+	return count, nil
+}
+
+// GetAvgParticipationRate returns the average participation rate (0-100) across all validators
+// in the last 100 blocks of the given chain.
+func GetAvgParticipationRate(db *gorm.DB, chainID string) (float64, error) {
+	var avgRate sql.NullFloat64
+
+	query := `
+		SELECT AVG(CAST(participated AS FLOAT)) * 100
+		FROM daily_participations
+		WHERE chain_id = ?
+		AND block_height > (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - 100`
+
+	err := db.Raw(query, chainID, chainID).Scan(&avgRate).Error
+	if err != nil {
+		return 0.0, fmt.Errorf("error calculating avg participation rate: %w", err)
+	}
+
+	if !avgRate.Valid {
+		return 0.0, nil
+	}
+
+	return avgRate.Float64, nil
+}
+
+// GetCurrentChainHeight returns the latest block height for the given chain.
+func GetCurrentChainHeight(db *gorm.DB, chainID string) (int64, error) {
+	var height sql.NullInt64
+
+	query := `SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?`
+
+	err := db.Raw(query, chainID).Scan(&height).Error
+	if err != nil {
+		return 0, fmt.Errorf("error getting current chain height: %w", err)
+	}
+
+	if !height.Valid {
+		return 0, nil
+	}
+
+	return height.Int64, nil
+}
+
+// ====================================== ALERT METRICS ==============================
+
+// GetActiveAlertCount returns the count of currently active alerts (unresolved)
+// with the given severity level for the given chain.
+func GetActiveAlertCount(db *gorm.DB, chainID, level string) (int, error) {
+	var count int
+
+	// An alert is considered "active" if it's the most recent alert for that validator
+	// and has not been resolved (no subsequent RESOLVED alert exists).
+	// For simplicity: count alert_logs with given level, assuming most recent is active.
+	query := `
+		SELECT COUNT(DISTINCT addr)
+		FROM alert_logs
+		WHERE chain_id = ? AND level = ?
+		AND sent_at = (
+			SELECT MAX(sent_at) FROM alert_logs al2
+			WHERE al2.chain_id = alert_logs.chain_id
+			AND al2.addr = alert_logs.addr
+		)
+		AND level IN ('CRITICAL', 'WARNING')`
+
+	err := db.Raw(query, chainID, level).Scan(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("error counting active alerts: %w", err)
+	}
+
+	return count, nil
+}
+
+// GetTotalAlertCount returns the total count of alerts with the given level for the given chain.
+func GetTotalAlertCount(db *gorm.DB, chainID, level string) (int64, error) {
+	var count int64
+
+	query := `SELECT COUNT(*) FROM alert_logs WHERE chain_id = ? AND level = ?`
+
+	err := db.Raw(query, chainID, level).Scan(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("error counting total alerts: %w", err)
+	}
+
+	return count, nil
+}

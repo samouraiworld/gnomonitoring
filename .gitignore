@@ -17,3 +17,4 @@ Validator/secrets/*
 CLAUDE.md
 CODEX.md
 .claudeignore
+backend/db/backup**
