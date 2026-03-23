@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -174,8 +175,30 @@ func StartPrometheusServer(port int) {
 	}()
 }
 
-func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string) error {
+func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...context.Context) error {
+	// Accept optional context; default to background if not provided.
+	ctx := context.Background()
+	if len(ctxOpts) > 0 && ctxOpts[0] != nil {
+		ctx = ctxOpts[0]
+	}
+
+	// Use context-aware DB for all queries so they abort on timeout/cancellation.
+	db = db.WithContext(ctx)
+
 	log.Printf("🔄 [%s] Starting metrics update...", chainID)
+
+	// Blocker 1 fix: Delete stale per-validator metrics for this chain before
+	// re-populating. If a validator disappeared since the last cycle, its old
+	// gauge value is removed instead of lingering forever.
+	chainLabel := prometheus.Labels{"chain": chainID}
+	ValidatorParticipation.DeletePartialMatch(chainLabel)
+	ValidatorUptime.DeletePartialMatch(chainLabel)
+	ValidatorOperationTime.DeletePartialMatch(chainLabel)
+	ValidatorTxContribution.DeletePartialMatch(chainLabel)
+	ValidatorMissingBlocksMonth.DeletePartialMatch(chainLabel)
+	ValidatorFirstSeenUnix.DeletePartialMatch(chainLabel)
+	MissedBlocks.DeletePartialMatch(chainLabel)
+	ConsecutiveMissedBlocks.DeletePartialMatch(chainLabel)
 
 	// Phase 1: Base validator metrics (non-critical errors logged, execution continues)
 
@@ -364,20 +387,16 @@ func StartMetricsUpdater(db *gorm.DB) {
 						}
 					}()
 
-					done := make(chan struct{})
-					go func() {
-						log.Printf("-> Processing chain: %s", cid)
-						if err := UpdatePrometheusMetricsFromDB(db, cid); err != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), metricsTimeout)
+					defer cancel()
+
+					log.Printf("-> Processing chain: %s", cid)
+					if err := UpdatePrometheusMetricsFromDB(db, cid, ctx); err != nil {
+						if ctx.Err() != nil {
+							log.Printf("TIMEOUT [%s] metrics update exceeded %v, skipping this cycle", cid, metricsTimeout)
+						} else {
 							log.Printf("ERROR [%s] metrics update: %v", cid, err)
 						}
-						close(done)
-					}()
-
-					select {
-					case <-done:
-						// completed normally
-					case <-time.After(metricsTimeout):
-						log.Printf("TIMEOUT [%s] metrics update exceeded %v, skipping this cycle", cid, metricsTimeout)
 					}
 				}(chainID)
 			}
