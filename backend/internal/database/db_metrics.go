@@ -179,6 +179,7 @@ func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 				COUNT(*) AS total
 			FROM daily_participations p
 			INNER JOIN recent_blocks rb ON p.block_height = rb.block_height
+			WHERE p.chain_id = ?
 			GROUP BY p.chain_id, p.addr
 		)
 		SELECT
@@ -189,7 +190,7 @@ func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 		LEFT JOIN addr_monikers am ON am.chain_id = base.chain_id AND am.addr = base.addr
 		ORDER BY uptime ASC`
 
-	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
 
@@ -209,14 +210,14 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 		SELECT
 			COALESCE(am.moniker, dp.addr) AS moniker,
 			dp.addr,
-			ROUND((SUM(dp.tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations WHERE chain_id = ?)), 1) AS tx_contrib
+			ROUND((SUM(dp.tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations WHERE chain_id = ? AND date >= ? AND date < ?)), 1) AS tx_contrib
 		FROM daily_participations dp
 		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE
 			dp.chain_id = ? AND dp.date >= ? AND dp.date < ?
 		GROUP BY dp.addr`
 
-	if err := db.Raw(query, chainID, chainID, startStr, endStr).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, startStr, endStr, chainID, startStr, endStr).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
 	}
 
@@ -377,10 +378,10 @@ func GetActiveValidatorCount(db *gorm.DB, chainID string) (int, error) {
 	var count int
 
 	query := `
-		SELECT COUNT(DISTINCT addr)
+		SELECT COUNT(DISTINCT addr) AS count
 		FROM daily_participations
 		WHERE chain_id = ? AND participated = 1
-		AND block_height > (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - 100`
+		AND block_height >= (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - 99`
 
 	err := db.Raw(query, chainID, chainID).Scan(&count).Error
 	if err != nil {
@@ -396,10 +397,10 @@ func GetAvgParticipationRate(db *gorm.DB, chainID string) (float64, error) {
 	var avgRate sql.NullFloat64
 
 	query := `
-		SELECT AVG(CAST(participated AS FLOAT)) * 100
+		SELECT AVG(CAST(participated AS FLOAT)) * 100 AS avg_rate
 		FROM daily_participations
 		WHERE chain_id = ?
-		AND block_height > (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - 100`
+		AND block_height >= (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - 99`
 
 	err := db.Raw(query, chainID, chainID).Scan(&avgRate).Error
 	if err != nil {
@@ -417,7 +418,7 @@ func GetAvgParticipationRate(db *gorm.DB, chainID string) (float64, error) {
 func GetCurrentChainHeight(db *gorm.DB, chainID string) (int64, error) {
 	var height sql.NullInt64
 
-	query := `SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?`
+	query := `SELECT MAX(block_height) AS height FROM daily_participations WHERE chain_id = ?`
 
 	err := db.Raw(query, chainID).Scan(&height).Error
 	if err != nil {
@@ -435,22 +436,19 @@ func GetCurrentChainHeight(db *gorm.DB, chainID string) (int64, error) {
 
 // GetActiveAlertCount returns the count of currently active alerts (unresolved)
 // with the given severity level for the given chain.
+// Active = most recent alert for that validator has the given level.
 func GetActiveAlertCount(db *gorm.DB, chainID, level string) (int, error) {
 	var count int
 
-	// An alert is considered "active" if it's the most recent alert for that validator
-	// and has not been resolved (no subsequent RESOLVED alert exists).
-	// For simplicity: count alert_logs with given level, assuming most recent is active.
 	query := `
-		SELECT COUNT(DISTINCT addr)
+		SELECT COUNT(DISTINCT addr) AS count
 		FROM alert_logs
 		WHERE chain_id = ? AND level = ?
 		AND sent_at = (
 			SELECT MAX(sent_at) FROM alert_logs al2
 			WHERE al2.chain_id = alert_logs.chain_id
 			AND al2.addr = alert_logs.addr
-		)
-		AND level IN ('CRITICAL', 'WARNING')`
+		)`
 
 	err := db.Raw(query, chainID, level).Scan(&count).Error
 	if err != nil {
