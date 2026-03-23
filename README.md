@@ -645,13 +645,14 @@ Metrics are computed every 5 minutes with a 2-minute timeout per chain to preven
 
 **/status — list recent GovDAO proposals**
   ⮑ Params: `limit` (optional, default: 10)
- ```bash
+
+```bash
 /status limit=5
 ```
 
 #### /executedproposals — show the last executed proposals
 
-⮑ Params: ```limit``` (optional, default: 10)
+⮑ Params: `limit` (optional, default: 10)
 
 ```/executedproposals limit=5```
 

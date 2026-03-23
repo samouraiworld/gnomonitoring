@@ -4,9 +4,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// CalculateValidatorRates computes participation rates over the last 30 days
+// CalculateValidatorRates computes participation rates over the last 10,000 blocks
 // for the given chain. Scoping to a recent window avoids full-table scans on chains
-// with millions of rows (e.g. test11 with 14.6M rows).
+// with millions of rows (e.g. test11 with 14.6M rows). 10K blocks ≈ 30 days on typical chains.
 func CalculateValidatorRates(db *gorm.DB, chainID string) ([]ValidatorStat, error) {
 	var results []struct {
 		Addr               string
@@ -23,7 +23,7 @@ func CalculateValidatorRates(db *gorm.DB, chainID string) ([]ValidatorStat, erro
 		FROM daily_participations dp
 		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ?
-		  AND dp.date >= date('now', '-30 days')
+		  AND dp.block_height > (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - 10000
 		GROUP BY dp.addr`
 
 	err := db.Raw(query, chainID, chainID).Scan(&results).Error
