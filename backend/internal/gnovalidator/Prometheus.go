@@ -15,11 +15,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type ValidatorStat struct {
-	Address string
-	Moniker string
-	Rate    float64
-}
 type MissedBlockStat struct {
 	Address string
 	Moniker string
@@ -48,6 +43,15 @@ var (
 		},
 		[]string{"chain", "validator_address", "moniker"},
 	)
+
+	MissedBlocksWindow = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "gnoland_missed_blocks_window",
+			Help: "Number of blocks missed by a validator in the given time window (1h, 24h, 7d)",
+		},
+		[]string{"chain", "validator_address", "moniker", "window"},
+	)
+
 	ValidatorParticipation = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "gnoland_validator_participation_rate",
@@ -146,6 +150,7 @@ func Init() {
 		prometheus.MustRegister(ValidatorParticipation)
 		prometheus.MustRegister(MissedBlocks)
 		prometheus.MustRegister(ConsecutiveMissedBlocks)
+		prometheus.MustRegister(MissedBlocksWindow)
 		prometheus.MustRegister(ValidatorUptime)
 		prometheus.MustRegister(ValidatorOperationTime)
 		prometheus.MustRegister(ValidatorTxContribution)
@@ -199,17 +204,18 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	ValidatorFirstSeenUnix.DeletePartialMatch(chainLabel)
 	MissedBlocks.DeletePartialMatch(chainLabel)
 	ConsecutiveMissedBlocks.DeletePartialMatch(chainLabel)
+	MissedBlocksWindow.DeletePartialMatch(chainLabel)
 
 	// Phase 1: Base validator metrics (non-critical errors logged, execution continues)
 
-	// ValidatorParticipation
-	stats, err := CalculateValidatorRates(db, chainID)
+	// ValidatorParticipation (current calendar month)
+	participationRates, err := database.GetCurrentPeriodParticipationRate(db, chainID, "current_month")
 	if err != nil {
 		log.Printf("❌ [%s] Phase1.ValidatorParticipation: %v", chainID, err)
 	} else {
-		log.Printf("   → ValidatorParticipation: %d validators", len(stats))
-		for _, stat := range stats {
-			ValidatorParticipation.WithLabelValues(chainID, stat.Address, stat.Moniker).Set(stat.Rate)
+		log.Printf("   → ValidatorParticipation: %d validators", len(participationRates))
+		for _, stat := range participationRates {
+			ValidatorParticipation.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.ParticipationRate)
 		}
 	}
 
@@ -234,6 +240,25 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 		log.Printf("   → ConsecutiveMissedBlocks: %d validators", len(consecutiveStats))
 		for _, stat := range consecutiveStats {
 			ConsecutiveMissedBlocks.WithLabelValues(chainID, stat.Address, stat.Moniker).Set(float64(stat.Count))
+		}
+	}
+
+	// MissedBlocksWindow (1h, 24h, 7d)
+	log.Printf("   → Calculating MissedBlocksWindow...")
+	windows := map[string]time.Duration{
+		"1h":  time.Hour,
+		"24h": 24 * time.Hour,
+		"7d":  7 * 24 * time.Hour,
+	}
+	for windowLabel, dur := range windows {
+		since := time.Now().Add(-dur)
+		windowStats, err := database.GetMissedBlocksWindow(db, chainID, since)
+		if err != nil {
+			log.Printf("❌ [%s] Phase1.MissedBlocksWindow[%s]: %v", chainID, windowLabel, err)
+			continue
+		}
+		for _, stat := range windowStats {
+			MissedBlocksWindow.WithLabelValues(chainID, stat.Addr, stat.Moniker, windowLabel).Set(float64(stat.MissingBlock))
 		}
 	}
 
@@ -268,6 +293,16 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 		log.Printf("❌ [%s] Phase1.TxContribution: %v", chainID, err)
 	} else {
 		log.Printf("   → TxContribution: %d validators", len(txStats))
+		allZero := true
+		for _, s := range txStats {
+			if s.TxContrib > 0 {
+				allZero = false
+				break
+			}
+		}
+		if len(txStats) > 0 && allZero {
+			log.Printf("⚠️  [%s] TxContribution: all values are 0 — proposer data may be missing for this chain", chainID)
+		}
 		for _, stat := range txStats {
 			ValidatorTxContribution.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.TxContrib)
 		}

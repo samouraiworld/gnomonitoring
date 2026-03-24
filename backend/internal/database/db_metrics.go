@@ -157,18 +157,7 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 	return results, nil
 }
 func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
-	// Step 1: fetch max height (fast indexed lookup on idx_dp_chain_block_height)
-	var maxHeight int64
-	if err := db.Raw(`SELECT COALESCE(MAX(block_height), 0) FROM daily_participations WHERE chain_id = ?`, chainID).Scan(&maxHeight).Error; err != nil {
-		return nil, fmt.Errorf("error fetching max height for uptime: %s", err)
-	}
-	if maxHeight == 0 {
-		return nil, nil
-	}
-
 	var results []UptimeMetrics
-
-	// Step 2: calculate uptime for the last 500 blocks using a literal bound
 	query := `
 		SELECT
 			COALESCE(am.moniker, dp.addr) AS moniker,
@@ -178,14 +167,12 @@ func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE
 			dp.chain_id = ?
-			AND dp.block_height > ?
+			AND dp.date >= date('now', '-30 days')
 		GROUP BY dp.addr
 		ORDER BY uptime ASC`
-
-	if err := db.Raw(query, chainID, maxHeight-500).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
-
 	return results, nil
 }
 
@@ -202,7 +189,7 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 		SELECT
 			COALESCE(am.moniker, dp.addr) AS moniker,
 			dp.addr,
-			ROUND((SUM(dp.tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations WHERE chain_id = ? AND date >= ? AND date < ?)), 1) AS tx_contrib
+			ROUND((SUM(dp.tx_contribution) * 100.0 / NULLIF((SELECT SUM(tx_contribution) FROM daily_participations WHERE chain_id = ? AND date >= ? AND date < ?), 0)), 1) AS tx_contrib
 		FROM daily_participations dp
 		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE
@@ -241,6 +228,27 @@ func MissingBlock(db *gorm.DB, chainID, period string) ([]MissingBlockMetrics, e
 		return nil, fmt.Errorf("error in the request MissingBlock: %s", err)
 	}
 
+	return results, nil
+}
+
+// GetMissedBlocksWindow returns the count of missed blocks per validator
+// within the given time window (since = time.Now() - duration).
+func GetMissedBlocksWindow(db *gorm.DB, chainID string, since time.Time) ([]MissingBlockMetrics, error) {
+	var results []MissingBlockMetrics
+	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+	query := `
+		SELECT
+			COALESCE(am.moniker, dp.addr) AS moniker,
+			dp.addr,
+			SUM(CASE WHEN dp.participated = 0 THEN 1 ELSE 0 END) AS missing_block
+		FROM daily_participations dp
+		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		WHERE dp.chain_id = ?
+		  AND dp.date >= ?
+		GROUP BY dp.addr`
+	if err := db.Raw(query, chainID, sinceStr).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in GetMissedBlocksWindow: %w", err)
+	}
 	return results, nil
 }
 
