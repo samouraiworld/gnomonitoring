@@ -4,49 +4,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// CalculateValidatorRates computes participation rates over the last 10,000 blocks
-// for the given chain. Scoping to a recent window avoids full-table scans on chains
-// with millions of rows (e.g. test11 with 14.6M rows). 10K blocks ≈ 30 days on typical chains.
-func CalculateValidatorRates(db *gorm.DB, chainID string) ([]ValidatorStat, error) {
-	var results []struct {
-		Addr               string
-		Moniker            string
-		TotalBlocks        int64
-		ParticipatedBlocks int64
-	}
-
-	query := `
-		SELECT dp.addr,
-		       COALESCE(am.moniker, dp.moniker) AS moniker,
-		       COUNT(*) AS total_blocks,
-		       SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END) AS participated_blocks
-		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
-		WHERE dp.chain_id = ?
-		  AND dp.block_height > (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - 10000
-		GROUP BY dp.addr`
-
-	err := db.Raw(query, chainID, chainID).Scan(&results).Error
-	if err != nil {
-		return nil, err
-	}
-
-	var stats []ValidatorStat
-	for _, r := range results {
-		rate := 0.0
-		if r.TotalBlocks > 0 {
-			rate = float64(r.ParticipatedBlocks) / float64(r.TotalBlocks) * 100
-		}
-		stats = append(stats, ValidatorStat{
-			Address: r.Addr,
-			Moniker: r.Moniker,
-			Rate:    rate,
-		})
-	}
-
-	return stats, nil
-}
-
 // CalculateMissedBlocks counts blocks missed today by each validator.
 // Scoped to today's date to avoid scanning the entire history.
 func CalculateMissedBlocks(db *gorm.DB, chainID string) ([]MissedBlockStat, error) {

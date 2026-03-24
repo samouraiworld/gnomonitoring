@@ -40,22 +40,20 @@ const TestChainID = "betanet"
 func FakeData(t *testing.T, db *gorm.DB) {
 	t.Helper()
 
+	// Dates anchored to the current month so queries scoped to "current_month"
+	// (e.g. GetCurrentPeriodParticipationRate) can find the seeded rows.
+	now := time.Now().UTC()
+	day1 := time.Date(now.Year(), now.Month(), 1, 18, 14, 6, 0, time.UTC)
+	day2 := time.Date(now.Year(), now.Month(), 2, 18, 14, 6, 0, time.UTC)
+	day3 := time.Date(now.Year(), now.Month(), 3, 18, 14, 6, 0, time.UTC)
+
 	// Insert
 	rows := []database.DailyParticipation{
-		{ChainID: TestChainID, Addr: "g1abc", BlockHeight: 50, Date: mustParseDate("2025-09-15 18:14:06"), Participated: true, TxContribution: false},
-		{ChainID: TestChainID, Addr: "g1abc", BlockHeight: 51, Date: mustParseDate("2025-10-01 18:14:06"), Participated: true, TxContribution: true},
-		{ChainID: TestChainID, Addr: "g1abc", BlockHeight: 52, Date: mustParseDate("2025-10-02 18:14:06"), Participated: false, TxContribution: false},
+		{ChainID: TestChainID, Addr: "g1abc", BlockHeight: 50, Date: day1, Participated: true, TxContribution: false},
+		{ChainID: TestChainID, Addr: "g1abc", BlockHeight: 51, Date: day2, Participated: true, TxContribution: true},
+		{ChainID: TestChainID, Addr: "g1abc", BlockHeight: 52, Date: day3, Participated: false, TxContribution: false},
 	}
 	if err := db.Create(&rows).Error; err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
-}
-
-func mustParseDate(value string) time.Time {
-	layout := "2006-01-02 15:04:05"
-	t, err := time.Parse(layout, value)
-	if err != nil {
-		panic(err) // ok pour des seeds/tests
-	}
-	return t
 }
