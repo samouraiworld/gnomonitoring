@@ -157,39 +157,32 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 	return results, nil
 }
 func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
+	// Step 1: fetch max height (fast indexed lookup on idx_dp_chain_block_height)
+	var maxHeight int64
+	if err := db.Raw(`SELECT COALESCE(MAX(block_height), 0) FROM daily_participations WHERE chain_id = ?`, chainID).Scan(&maxHeight).Error; err != nil {
+		return nil, fmt.Errorf("error fetching max height for uptime: %s", err)
+	}
+	if maxHeight == 0 {
+		return nil, nil
+	}
 
 	var results []UptimeMetrics
 
-	// Use the actual last 500 scraped blocks per validator instead of a theoretical
-	// block_height range. This handles gaps where the scraper was not running and
-	// avoids returning 0% uptime due to missing block data.
+	// Step 2: calculate uptime for the last 500 blocks using a literal bound
 	query := `
-		WITH recent_blocks AS (
-			SELECT DISTINCT block_height
-			FROM daily_participations
-			WHERE chain_id = ?
-			ORDER BY block_height DESC
-			LIMIT 500
-		),
-		base AS (
-			SELECT
-				p.chain_id,
-				p.addr,
-				SUM(CASE WHEN p.participated THEN 1 ELSE 0 END) AS ok,
-				COUNT(*) AS total
-			FROM daily_participations p
-			INNER JOIN recent_blocks rb ON p.block_height = rb.block_height
-			GROUP BY p.chain_id, p.addr
-		)
 		SELECT
-			COALESCE(am.moniker, base.addr) AS moniker,
-			base.addr,
-			100.0 * ok / total AS uptime
-		FROM base
-		LEFT JOIN addr_monikers am ON am.chain_id = base.chain_id AND am.addr = base.addr
+			COALESCE(am.moniker, dp.addr) AS moniker,
+			dp.addr,
+			100.0 * SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END) / COUNT(*) AS uptime
+		FROM daily_participations dp
+		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		WHERE
+			dp.chain_id = ?
+			AND dp.block_height > ?
+		GROUP BY dp.addr
 		ORDER BY uptime ASC`
 
-	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, maxHeight-500).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
 
@@ -209,14 +202,14 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 		SELECT
 			COALESCE(am.moniker, dp.addr) AS moniker,
 			dp.addr,
-			ROUND((SUM(dp.tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations WHERE chain_id = ?)), 1) AS tx_contrib
+			ROUND((SUM(dp.tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations WHERE chain_id = ? AND date >= ? AND date < ?)), 1) AS tx_contrib
 		FROM daily_participations dp
 		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE
 			dp.chain_id = ? AND dp.date >= ? AND dp.date < ?
 		GROUP BY dp.addr`
 
-	if err := db.Raw(query, chainID, chainID, startStr, endStr).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, startStr, endStr, chainID, startStr, endStr).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
 	}
 
@@ -367,4 +360,123 @@ func GetTimeOfAlert(db *gorm.DB, chainID string, numBlock int64) (time.Time, err
 	}
 
 	return blockTime, nil
+}
+
+// ====================================== CHAIN HEALTH METRICS ==============================
+
+// GetActiveValidatorCount returns the count of validators with at least 1 participation
+// in the last 100 blocks scanned for the given chain.
+func GetActiveValidatorCount(db *gorm.DB, chainID string) (int, error) {
+	var maxHeight int64
+	if err := db.Raw(`SELECT COALESCE(MAX(block_height), 0) FROM daily_participations WHERE chain_id = ?`, chainID).Scan(&maxHeight).Error; err != nil {
+		return 0, fmt.Errorf("error fetching max height for active count: %w", err)
+	}
+	if maxHeight == 0 {
+		return 0, nil
+	}
+
+	var count int
+	query := `
+		SELECT COUNT(DISTINCT addr) AS count
+		FROM daily_participations
+		WHERE chain_id = ? AND participated = 1
+		AND block_height > ?`
+
+	err := db.Raw(query, chainID, maxHeight-100).Scan(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("error counting active validators: %w", err)
+	}
+
+	return count, nil
+}
+
+// GetAvgParticipationRate returns the average participation rate (0-100) across all validators
+// in the last 100 blocks of the given chain.
+func GetAvgParticipationRate(db *gorm.DB, chainID string) (float64, error) {
+	var maxHeight int64
+	if err := db.Raw(`SELECT COALESCE(MAX(block_height), 0) FROM daily_participations WHERE chain_id = ?`, chainID).Scan(&maxHeight).Error; err != nil {
+		return 0.0, fmt.Errorf("error fetching max height for avg rate: %w", err)
+	}
+	if maxHeight == 0 {
+		return 0.0, nil
+	}
+
+	var avgRate sql.NullFloat64
+	query := `
+		SELECT AVG(CAST(participated AS FLOAT)) * 100 AS avg_rate
+		FROM daily_participations
+		WHERE chain_id = ?
+		AND block_height > ?`
+
+	err := db.Raw(query, chainID, maxHeight-100).Scan(&avgRate).Error
+	if err != nil {
+		return 0.0, fmt.Errorf("error calculating avg participation rate: %w", err)
+	}
+
+	if !avgRate.Valid {
+		return 0.0, nil
+	}
+
+	return avgRate.Float64, nil
+}
+
+// GetCurrentChainHeight returns the latest block height for the given chain.
+func GetCurrentChainHeight(db *gorm.DB, chainID string) (int64, error) {
+	var height sql.NullInt64
+
+	query := `SELECT MAX(block_height) AS height FROM daily_participations WHERE chain_id = ?`
+
+	err := db.Raw(query, chainID).Scan(&height).Error
+	if err != nil {
+		return 0, fmt.Errorf("error getting current chain height: %w", err)
+	}
+
+	if !height.Valid {
+		return 0, nil
+	}
+
+	return height.Int64, nil
+}
+
+// ====================================== ALERT METRICS ==============================
+
+// GetActiveAlertCount returns the count of currently active alerts (unresolved)
+// with the given severity level for the given chain.
+// Active = most recent alert for that validator has the given level.
+func GetActiveAlertCount(db *gorm.DB, chainID, level string) (int, error) {
+	var count int
+
+	// Optimized: Use CTE to find latest alert per validator
+	query := `
+		WITH latest_alerts AS (
+			SELECT addr, MAX(sent_at) as last_sent
+			FROM alert_logs
+			WHERE chain_id = ?
+			GROUP BY addr
+		)
+		SELECT COUNT(*) as count
+		FROM alert_logs al
+		INNER JOIN latest_alerts la ON al.addr = la.addr AND al.sent_at = la.last_sent
+		WHERE al.chain_id = ? AND al.level = ?`
+
+	err := db.Raw(query, chainID, chainID, level).Scan(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("error counting active alerts: %w", err)
+	}
+
+	return count, nil
+}
+
+// GetTotalAlertCount returns the total count of alerts with the given level for the given chain.
+func GetTotalAlertCount(db *gorm.DB, chainID, level string) (int64, error) {
+	var count int64
+
+	query := `SELECT COUNT(*) FROM alert_logs WHERE chain_id = ? AND level = ?`
+
+	err := db.Raw(query, chainID, level).Scan(&count).Error
+	if err != nil {
+		return 0, fmt.Errorf("error counting total alerts: %w", err)
+	}
+
+	return count, nil
 }

@@ -1,0 +1,1401 @@
+2026/03/23 15:37:04 Enabled chains: [gnoland1 test11 test12]
+2026/03/23 15:37:04 Default chain: test12
+2026/03/23 15:37:04 DevMode value: true
+2026/03/23 15:37:04 Allowed CORS origins: [*]
+2026/03/23 15:37:47 ✅ daily_missing_series view created/updated
+2026/03/23 15:37:47 ✅ Database connection established successfully
+2026/03/23 15:37:47 Spawning monitoring loops for 3 enabled chains: [gnoland1 test11 test12]
+2026/03/23 15:37:47 Starting monitoring for chain: gnoland1
+2026/03/23 15:37:47 Starting monitoring for chain: test11
+2026/03/23 15:37:47 Monitoring started for chain: test11
+2026/03/23 15:37:47 Starting monitoring for chain: test12
+2026/03/23 15:37:47 Monitoring started for chain: test12
+2026/03/23 15:37:47 ℹ️ Hydrated chain preferences for 1 validator chats
+2026/03/23 15:37:47 ℹ️ Hydrated chain preferences for 1 govdao chats
+2026/03/23 15:37:47 Monitoring started for chain: gnoland1
+2026/03/23 15:37:47 Starting Webhook API server on :8989
+Scheduler started
+2026/03/23 15:37:47 🕓 Scheduled next report for chat -1003484764396 chain test12 at Tue, 24 Mar 2026 09:00:00 CET (13h22m12.925369408s)
+2026/03/23 15:37:47 🕓 Scheduled next report for chat -1003484764396 chain betanet at Tue, 24 Mar 2026 09:00:00 CET (13h22m12.925276191s)
+2026/03/23 15:37:47 🕓 Scheduled next report for chat -1003484764396 chain gnoland1 at Tue, 24 Mar 2026 09:00:00 CET (13h22m12.92521354s)
+2026/03/23 15:37:48 🎉 Total valopers fetched: 0
+2026/03/23 15:37:48 🎉 Total valopers fetched: 0
+2026/03/23 15:37:49 📦 Loaded from DB — Addr: g15atj32de45nqgm68298aua8ayy4aujwyewegvd, Moniker: gfanton-2
+2026/03/23 15:37:49 📦 Loaded from DB — Addr: g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe, Moniker: moul-2
+2026/03/23 15:37:49 📦 Loaded from DB — Addr: g18kp360plxkmh3yal3juzffjuqa0ugys0963a80, Moniker: gnocore-val-01
+2026/03/23 15:37:49 📦 Loaded from DB — Addr: g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6, Moniker: gnocore-val-02
+2026/03/23 15:37:49 📦 Loaded from DB — Addr: g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg, Moniker: aeddi-2
+2026/03/23 15:37:49 📦 Loaded from DB — Addr: g1qve0yt0vt4tskhxffv27p0fatsua2um6cqr5ve, Moniker: berty-val-02
+2026/03/23 15:37:49 📦 Loaded from DB — Addr: g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r, Moniker: samourai-crew-1
+2026/03/23 15:37:49 ✅ Loaded 7 monikers from DB
+2026/03/23 15:37:49 🔹 Validator: g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg — Moniker: aeddi-2
+2026/03/23 15:37:49 🔹 Validator: g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r — Moniker: samourai-crew-1
+2026/03/23 15:37:49 🔹 Validator: g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 — Moniker: gnocore-val-01
+2026/03/23 15:37:49 🔹 Validator: g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe — Moniker: moul-2
+2026/03/23 15:37:49 🔹 Validator: g15atj32de45nqgm68298aua8ayy4aujwyewegvd — Moniker: gfanton-2
+2026/03/23 15:37:49 🔹 Validator: g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 — Moniker: gnocore-val-02
+2026/03/23 15:37:49 ✅ MonikerMap initialized with 6 active validators
+2026/03/23 15:37:49 ✅ addr_monikers synced (1 entries)
+last block: 52307
+2026/03/23 15:37:49 ✅ Fetched 50 valopers from valopers.Render page 1
+2026/03/23 15:37:49 ## Prop #0 - Add initial validator set
+Author: g1edq4dugw0sgat4zxcw9xardvuydqf6cgleuc8p
+
+Bootstrap the gnoland1 initial validator set
+
+## Validator Updates
+- g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4: add
+- g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60: add
+- g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc: add
+- g10jdd8vlgydfypynrk23ul90jnsg5twrtvmcmh4: add
+- g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq: add
+- g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae: add
+- g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2: add
+
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:0/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=0) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=0) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=0)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:37:49 Title: Add initial validator set
+2026/03/23 15:37:49 Block Height: 0
+2026/03/23 15:37:49 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52308: {true 2026-03-23 18:35:37.481334241 +0000 UTC false}
+2026/03/23 15:37:49 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52308: {true 2026-03-23 18:35:37.481334241 +0000 UTC false}
+2026/03/23 15:37:49 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52308: {true 2026-03-23 18:35:37.481334241 +0000 UTC false}
+2026/03/23 15:37:49 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52308: {true 2026-03-23 18:35:37.481334241 +0000 UTC false}
+2026/03/23 15:37:49 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52308: {true 2026-03-23 18:35:37.481334241 +0000 UTC false}
+2026/03/23 15:37:49 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52308: {true 2026-03-23 18:35:37.481334241 +0000 UTC false}
+2026/03/23 15:37:49 ## Prop #3 - Add validator g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6
+Author: g1aeddlftlfk27ret5rf750d7w5dume3kcsm8r8m
+
+Add validator g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 with power 1
+
+## Validator Updates
+- g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6: add
+
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:3/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=3) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=3) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=3)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:37:49 Title: Add validator g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6
+2026/03/23 15:37:49 Block Height: 45
+2026/03/23 15:37:49 ✅ Fetched 9 valopers from valopers.Render page 2
+2026/03/23 15:37:49 tx URL https://gnoscan.io/transactions/details?txhash=9LuPz5IfetuVpM6AHpSQ3GKKbYWaJGXF22d1NTjkBRQ=
+2026/03/23 15:37:49 ID: 0
+
+2026/03/23 15:37:49 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[1.005ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (0,"gnoland1","https://betanet.testnets.gno.land/r/gov/dao:0","Add initial validator set","https://gnoscan.io/transactions/details?txhash=9LuPz5IfetuVpM6AHpSQ3GKKbYWaJGXF22d1NTjkBRQ=","ACCEPTED")
+2026/03/23 15:37:49 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:50 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52309: {true 2026-03-23 18:35:44.453913622 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52309: {true 2026-03-23 18:35:44.453913622 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52309: {true 2026-03-23 18:35:44.453913622 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52309: {true 2026-03-23 18:35:44.453913622 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52309: {true 2026-03-23 18:35:44.453913622 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52309: {true 2026-03-23 18:35:44.453913622 +0000 UTC false}
+2026/03/23 15:37:50 tx URL https://gnoscan.io/transactions/details?txhash=OUWvqYz+ea1XzRVpo8Yg2YUHrdYd5ghNVbVEGWp83dw=
+2026/03/23 15:37:50 ID: 3
+
+2026/03/23 15:37:50 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[0.183ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (3,"test12","https://test12.testnets.gno.land/r/gov/dao:3","Add validator g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6","https://gnoscan.io/transactions/details?txhash=OUWvqYz+ea1XzRVpo8Yg2YUHrdYd5ghNVbVEGWp83dw=","ACCEPTED")
+2026/03/23 15:37:50 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:50 🎉 Total valopers fetched: 59
+2026/03/23 15:37:50 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52310: {true 2026-03-23 18:35:49.079856806 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52310: {true 2026-03-23 18:35:49.079856806 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52310: {true 2026-03-23 18:35:49.079856806 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52310: {true 2026-03-23 18:35:49.079856806 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52310: {true 2026-03-23 18:35:49.079856806 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52310: {true 2026-03-23 18:35:49.079856806 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52311: {true 2026-03-23 18:35:54.429516618 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52311: {true 2026-03-23 18:35:54.429516618 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52311: {true 2026-03-23 18:35:54.429516618 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52311: {true 2026-03-23 18:35:54.429516618 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52311: {true 2026-03-23 18:35:54.429516618 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52311: {true 2026-03-23 18:35:54.429516618 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52312: {true 2026-03-23 18:35:58.909369459 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52312: {true 2026-03-23 18:35:58.909369459 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52312: {true 2026-03-23 18:35:58.909369459 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52312: {true 2026-03-23 18:35:58.909369459 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52312: {true 2026-03-23 18:35:58.909369459 +0000 UTC false}
+2026/03/23 15:37:50 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52312: {true 2026-03-23 18:35:58.909369459 +0000 UTC false}
+2026/03/23 15:37:50 ## Prop #0 - Add valoper berty-val1 to the valset
+Author: [@berty000](/u/berty000)
+
+Valoper profile: [berty-val1](/r/gnops/valopers:g1ce64dwqsqtzq5nr9hf5zryxp9zyh6n56gz4dnu)
+
+## berty-val1
+Validator name: Berty Validator Node 1 (moniker: berty-val1)
+
+The networks we are currently validating are the following: none
+
+Our total AUM is: 0
+
+Our organisation's coordinates: www.berty.tech; Discord handles: rems14, jefft0
+
+Contact details: hello@berty.tech, Discord: https://discord.gg/bdxYJMM7Kt
+
+We believe in gno.land's mission and, beyond our other contributions, we want to add our node to strengthen the resiliency of the network.
+
+Our contributions to gno.land: Gno Native Kit framework, dSocial experimental mobile social media dApp, Gno Key Mobile and multiple PRs supporting the work of the Gno Core team. We documented our contributions in our journies posts: https://github.com/gnolang/hackerspace/issues/28, https://github.com/gnolang/hackerspace/issues/51, https://github.com/gnolang/hackerspace/issues/67, https://github.com/gnolang/hackerspace/issues/92
+
+- Address: g1ce64dwqsqtzq5nr9hf5zryxp9zyh6n56gz4dnu
+- PubKey: gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zqzjn7qu3nk0ys7k5ayrlzw03mghff7e8ydesag80xt2f5y4ufn6dndghaq
+- Server Type: data-center
+
+[Profile link](/r/demo/profile:u/g1ce64dwqsqtzq5nr9hf5zryxp9zyh6n56gz4dnu)
+
+
+## Validator Updates
+- g1ce64dwqsqtzq5nr9hf5zryxp9zyh6n56gz4dnu: add
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 75%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:0/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=0) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=0) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=0)
+
+WARNING: Please double check transaction data before voting.
+
+**New**: Members **must** have a namespace to vote to enforce simpler tracking.
+2026/03/23 15:37:50 Title: Add valoper berty-val1 to the valset
+2026/03/23 15:37:50 Block Height: 18977
+2026/03/23 15:37:51 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52313: {true 2026-03-23 18:36:03.360425564 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52313: {true 2026-03-23 18:36:03.360425564 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52313: {true 2026-03-23 18:36:03.360425564 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52313: {true 2026-03-23 18:36:03.360425564 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52313: {true 2026-03-23 18:36:03.360425564 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52313: {true 2026-03-23 18:36:03.360425564 +0000 UTC false}
+2026/03/23 15:37:51 tx URL https://gnoscan.io/transactions/details?txhash=3VxhNvY847iXkgdoOclaSf9ieaKNSWxx6g+rMfNp8Rs=
+2026/03/23 15:37:51 ID: 0
+
+2026/03/23 15:37:51 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[0.187ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (0,"test11","https://test11.testnets.gno.land/r/gov/dao:0","Add valoper berty-val1 to the valset","https://gnoscan.io/transactions/details?txhash=3VxhNvY847iXkgdoOclaSf9ieaKNSWxx6g+rMfNp8Rs=","ACCEPTED")
+2026/03/23 15:37:51 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:51 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52314: {true 2026-03-23 18:36:08.809587592 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52314: {true 2026-03-23 18:36:08.809587592 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52314: {true 2026-03-23 18:36:08.809587592 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52314: {true 2026-03-23 18:36:08.809587592 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52314: {true 2026-03-23 18:36:08.809587592 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52314: {true 2026-03-23 18:36:08.809587592 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52315: {true 2026-03-23 18:36:15.322485684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52315: {true 2026-03-23 18:36:15.322485684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52315: {true 2026-03-23 18:36:15.322485684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52315: {true 2026-03-23 18:36:15.322485684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52315: {true 2026-03-23 18:36:15.322485684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52315: {true 2026-03-23 18:36:15.322485684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52316: {true 2026-03-23 18:36:19.973139684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52316: {true 2026-03-23 18:36:19.973139684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52316: {true 2026-03-23 18:36:19.973139684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52316: {true 2026-03-23 18:36:19.973139684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52316: {true 2026-03-23 18:36:19.973139684 +0000 UTC false}
+2026/03/23 15:37:51 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52316: {true 2026-03-23 18:36:19.973139684 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52317: {true 2026-03-23 18:36:25.063446032 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52317: {true 2026-03-23 18:36:25.063446032 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52317: {true 2026-03-23 18:36:25.063446032 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52317: {true 2026-03-23 18:36:25.063446032 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52317: {true 2026-03-23 18:36:25.063446032 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52317: {true 2026-03-23 18:36:25.063446032 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52318: {true 2026-03-23 18:36:29.389377697 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52318: {true 2026-03-23 18:36:29.389377697 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52318: {true 2026-03-23 18:36:29.389377697 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52318: {true 2026-03-23 18:36:29.389377697 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52318: {true 2026-03-23 18:36:29.389377697 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52318: {true 2026-03-23 18:36:29.389377697 +0000 UTC false}
+2026/03/23 15:37:52 ==========================Start resolv Alert==========00==
+2026/03/23 15:37:52 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52319: {true 2026-03-23 18:36:33.809077057 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52319: {true 2026-03-23 18:36:33.809077057 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52319: {true 2026-03-23 18:36:33.809077057 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52319: {true 2026-03-23 18:36:33.809077057 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52319: {true 2026-03-23 18:36:33.809077057 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52319: {true 2026-03-23 18:36:33.809077057 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52320: {true 2026-03-23 18:36:38.967752627 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52320: {true 2026-03-23 18:36:38.967752627 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52320: {true 2026-03-23 18:36:38.967752627 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52320: {true 2026-03-23 18:36:38.967752627 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52320: {true 2026-03-23 18:36:38.967752627 +0000 UTC false}
+2026/03/23 15:37:52 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52320: {true 2026-03-23 18:36:38.967752627 +0000 UTC false}
+2026/03/23 15:37:52 ## Prop #4 - Add validator g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe
+Author: g1aeddlftlfk27ret5rf750d7w5dume3kcsm8r8m
+
+Add validator g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe with power 1
+
+## Validator Updates
+- g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe: add
+
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:4/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=4) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=4) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=4)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:37:52 Title: Add validator g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe
+2026/03/23 15:37:52 Block Height: 479
+2026/03/23 15:37:53 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52321: {true 2026-03-23 18:36:45.871625068 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52321: {true 2026-03-23 18:36:45.871625068 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52321: {true 2026-03-23 18:36:45.871625068 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52321: {true 2026-03-23 18:36:45.871625068 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52321: {true 2026-03-23 18:36:45.871625068 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52321: {true 2026-03-23 18:36:45.871625068 +0000 UTC false}
+2026/03/23 15:37:53 ## Prop #1 - Add valoper onbloc-val-01 to the valset
+Author: [@jinoosss1010](/u/jinoosss1010)
+
+Valoper profile: [onbloc-val-01](/r/gnops/valopers:g16jqn9e738pwenxpseasr49sj3axcyd37262wal)
+
+## onbloc-val-01
+Validator name: Onbloc Validator Node 1 (moniker: onbloc-val-01)
+
+The networks we are currently validating are the following: none
+
+Our total AUM is: 0
+
+Our organisation's coordinates: www.onbloc.xyz; Discord handles: dongwon8247, jinoosss
+
+Contact details: info@onbloc.xyz, Discord: https://discord.gg/xsUbUwE9
+
+We believe in gno.land's mission and, beyond our other contributions, we want to add our node to strengthen the resiliency of the network.
+
+Our contributions to gno.land:
+ - Development and operation of Adena Wallet, enabling secure on-chain interactions and seamless user access to Gno applications
+ - Development and operation of Gnoscan, a block explorer providing transparency into transactions, blocks, and on-chain data
+ - Development and operation of Gnoswap, a decentralized exchange (DEX) enabling permissionless token swaps and liquidity provisioning
+
+
+- Address: g16jqn9e738pwenxpseasr49sj3axcyd37262wal
+- PubKey: gpub1pggj7ard9eg82cjtv4u52epjx56nzwgjyg9zq4pl45ducauw8qx6wz5nkfm5nuch4tjm9d0kzk97vcy595q2yny8rd285n
+- Server Type: data-center
+
+[Profile link](/r/demo/profile:u/g16jqn9e738pwenxpseasr49sj3axcyd37262wal)
+
+
+## Validator Updates
+- g16jqn9e738pwenxpseasr49sj3axcyd37262wal: add
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 81.81818181818183%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:1/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=1) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=1) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=1)
+
+WARNING: Please double check transaction data before voting.
+
+**New**: Members **must** have a namespace to vote to enforce simpler tracking.
+2026/03/23 15:37:53 Title: Add valoper onbloc-val-01 to the valset
+2026/03/23 15:37:53 Block Height: 23299
+2026/03/23 15:37:53 tx URL https://gnoscan.io/transactions/details?txhash=hVEhCAijloArA/SrSBKAfUBLDSe7Nb+tgS9tfvq4PDo=
+2026/03/23 15:37:53 ID: 4
+
+2026/03/23 15:37:53 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[0.169ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (4,"test12","https://test12.testnets.gno.land/r/gov/dao:4","Add validator g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe","https://gnoscan.io/transactions/details?txhash=hVEhCAijloArA/SrSBKAfUBLDSe7Nb+tgS9tfvq4PDo=","ACCEPTED")
+2026/03/23 15:37:53 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:53 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52322: {true 2026-03-23 18:36:50.28894878 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52322: {true 2026-03-23 18:36:50.28894878 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52322: {true 2026-03-23 18:36:50.28894878 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52322: {true 2026-03-23 18:36:50.28894878 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52322: {true 2026-03-23 18:36:50.28894878 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52322: {true 2026-03-23 18:36:50.28894878 +0000 UTC false}
+2026/03/23 15:37:53 tx URL https://gnoscan.io/transactions/details?txhash=JqWU4pwVCv3cfe/pCtF6VZSpMYQDsFaYxW/WMf5ufJ0=
+2026/03/23 15:37:53 ID: 1
+
+2026/03/23 15:37:53 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[0.229ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (1,"test11","https://test11.testnets.gno.land/r/gov/dao:1","Add valoper onbloc-val-01 to the valset","https://gnoscan.io/transactions/details?txhash=JqWU4pwVCv3cfe/pCtF6VZSpMYQDsFaYxW/WMf5ufJ0=","ACCEPTED")
+2026/03/23 15:37:53 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g13k6u5n6cahek2xg0k23kmatpt36dhfrdl62v27, Moniker: Chiter in Cosmos
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1533w0xpq76dws5tvggfg2u9du6ysnlhgys4z30, Moniker: MictoNode
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g15yc3kdd8jvf7pxc6pgt3qgdf0sk2p8knth0ldf, Moniker: Ruangnode
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g163nzpwjpmesnxmq75u8sa8k98xjanf3nktsljq, Moniker: Kleomedes
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g16827gpxn7sfyd34w6v2sy5z6749xp5x6kzl2te, Moniker: OshVanK
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g16jqn9e738pwenxpseasr49sj3axcyd37262wal, Moniker: onbloc-val-01
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g16tfqqk6wvtzkuaw7g79eun2nvpz0xq34gv2p4x, Moniker: samourai-crew
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g18k5nz67cg03lrdkwnf9qmdfzf0ptaq7lxefe4y, Moniker: gnocore-val-02
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g18nnlcy0efq92wxr000yk3zv3adh70v59lva86y, Moniker: Trace
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g18wr9fq2wpnnn4xutngvrwk9rlzru7m05t5pajy, Moniker: HazenNetworkSolutions
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1a4d5cn9nqh6m3thkvmelf756sjap6g3drrnx9m, Moniker: LuckyStar
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1ce64dwqsqtzq5nr9hf5zryxp9zyh6n56gz4dnu, Moniker: berty-val1
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1cn7pq5uu0vp3wgsgj552emz6jnf47l42k22wpq, Moniker: POSTHUMAN
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1d76we6yt3xnsgeccds07usp2gl5gnkrmeze8lm, Moniker: Cosmostation
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1e8j30772p4fvjd27eqq0e50vs74ekst50f5hz6, Moniker: gnocore-val-01
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1e9f40j7twds9ccg4up09dc6jndhfnqgz8ckuth, Moniker: ITRocket
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1jxklta2w5wn49nwdxtq095fcyv604w577efx97, Moniker: HusoNode
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1jyqu4jq63v6xvc7ykehhhdvhrkxhh2glha065z, Moniker: EquinoxDao
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1jzhxzmuh5vwvpw5cgea07lp3lm39rj8tmx240g, Moniker: Nodeist
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1k9cp2fz6n3fa4zftx7cz6wv2hwzaz6lkr0xk7z, Moniker: KalpaTech
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1nhg60gtqlrp4y0t7jmupggcg26f7y9mtgw099e, Moniker: Curiosity Nodes
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1rgwtaert8vguwq2dl7p7uu2g04x8yfvmf6heey, Moniker: Tecnodes
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1rs24l3czq53u9vsxghz4t26t99k4tzma0ull55, Moniker: ChainTools
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1rsrctfwmzxschvkf6e6dtawurx0z700tdgczuw, Moniker: plantree
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1sgu52u6hfffg9tyck7v3zgd27hhv2paf9rgamr, Moniker: Apollo
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1shpyvk059fcjwvdmdylg2adcx73rm6lgmlv2rf, Moniker: Shazoes
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1svwt7l54jmg0dq0wkzr8u09mn5pp9yyx3kgsj9, Moniker: Oneiric Stake
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1taf2x9vrvga5edd2e307ecdzymqf0r9gcx5cav, Moniker: BZE Community
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1uax59n7fnnm70mnxlldsremz06rsfuct75dzps, Moniker: dnsarz
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1v3xmq6m8k9cpwyz4ghdah6eq8cc8hlczelexqp, Moniker: KaLaMuC
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1wjrkxvx2heajm9dk7cprjs7872km2aa0fy0eym, Moniker: Ubik Capital
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1y6y2ttkdnmqd8addnsd8qcpvfu9rn677ywjhmz, Moniker: VinjanInc
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1yd75tc52xfm8zyllngzvul9cdum6med2par6h4, Moniker: KonsorTech
+2026/03/23 15:37:53 📦 Loaded from DB — Addr: g1zmua93u53na9xsvtmlh5d8p7pm0w7p52ehewc9, Moniker: PRO Delegators
+2026/03/23 15:37:53 ✅ Loaded 34 monikers from DB
+2026/03/23 15:37:53 🔹 Validator: g18k5nz67cg03lrdkwnf9qmdfzf0ptaq7lxefe4y — Moniker: gnocore-val-02
+2026/03/23 15:37:53 🔹 Validator: g1ce64dwqsqtzq5nr9hf5zryxp9zyh6n56gz4dnu — Moniker: berty-val1
+2026/03/23 15:37:53 🔹 Validator: g1rs24l3czq53u9vsxghz4t26t99k4tzma0ull55 — Moniker: ChainTools
+2026/03/23 15:37:53 🔹 Validator: g1jxklta2w5wn49nwdxtq095fcyv604w577efx97 — Moniker: HusoNode
+2026/03/23 15:37:53 🔹 Validator: g1nhg60gtqlrp4y0t7jmupggcg26f7y9mtgw099e — Moniker: Curiosity Nodes
+2026/03/23 15:37:53 🔹 Validator: g1zmua93u53na9xsvtmlh5d8p7pm0w7p52ehewc9 — Moniker: PRO Delegators
+2026/03/23 15:37:53 🔹 Validator: g1shpyvk059fcjwvdmdylg2adcx73rm6lgmlv2rf — Moniker: Shazoes
+2026/03/23 15:37:53 🔹 Validator: g1jzhxzmuh5vwvpw5cgea07lp3lm39rj8tmx240g — Moniker: Nodeist
+2026/03/23 15:37:53 🔹 Validator: g15yc3kdd8jvf7pxc6pgt3qgdf0sk2p8knth0ldf — Moniker: Ruangnode
+2026/03/23 15:37:53 🔹 Validator: g1cn7pq5uu0vp3wgsgj552emz6jnf47l42k22wpq — Moniker: POSTHUMAN
+2026/03/23 15:37:53 🔹 Validator: g1rsrctfwmzxschvkf6e6dtawurx0z700tdgczuw — Moniker: plantree
+2026/03/23 15:37:53 🔹 Validator: g18wr9fq2wpnnn4xutngvrwk9rlzru7m05t5pajy — Moniker: HazenNetworkSolutions
+2026/03/23 15:37:53 🔹 Validator: g1taf2x9vrvga5edd2e307ecdzymqf0r9gcx5cav — Moniker: BZE Community
+2026/03/23 15:37:53 🔹 Validator: g1wjrkxvx2heajm9dk7cprjs7872km2aa0fy0eym — Moniker: Ubik Capital
+2026/03/23 15:37:53 🔹 Validator: g13k6u5n6cahek2xg0k23kmatpt36dhfrdl62v27 — Moniker: Chiter in Cosmos
+2026/03/23 15:37:53 🔹 Validator: g1e8j30772p4fvjd27eqq0e50vs74ekst50f5hz6 — Moniker: gnocore-val-01
+2026/03/23 15:37:53 🔹 Validator: g163nzpwjpmesnxmq75u8sa8k98xjanf3nktsljq — Moniker: Kleomedes
+2026/03/23 15:37:53 🔹 Validator: g1rgwtaert8vguwq2dl7p7uu2g04x8yfvmf6heey — Moniker: Tecnodes
+2026/03/23 15:37:53 🔹 Validator: g1y6y2ttkdnmqd8addnsd8qcpvfu9rn677ywjhmz — Moniker: VinjanInc
+2026/03/23 15:37:53 🔹 Validator: g1v3xmq6m8k9cpwyz4ghdah6eq8cc8hlczelexqp — Moniker: KaLaMuC
+2026/03/23 15:37:53 🔹 Validator: g1e9f40j7twds9ccg4up09dc6jndhfnqgz8ckuth — Moniker: ITRocket
+2026/03/23 15:37:53 🔹 Validator: g1a4d5cn9nqh6m3thkvmelf756sjap6g3drrnx9m — Moniker: LuckyStar
+2026/03/23 15:37:53 🔹 Validator: g1jyqu4jq63v6xvc7ykehhhdvhrkxhh2glha065z — Moniker: EquinoxDao
+2026/03/23 15:37:53 🔹 Validator: g1k9cp2fz6n3fa4zftx7cz6wv2hwzaz6lkr0xk7z — Moniker: KalpaTech
+2026/03/23 15:37:53 🔹 Validator: g16827gpxn7sfyd34w6v2sy5z6749xp5x6kzl2te — Moniker: OshVanK
+2026/03/23 15:37:53 🔹 Validator: g16tfqqk6wvtzkuaw7g79eun2nvpz0xq34gv2p4x — Moniker: samourai-crew
+2026/03/23 15:37:53 🔹 Validator: g1uax59n7fnnm70mnxlldsremz06rsfuct75dzps — Moniker: dnsarz
+2026/03/23 15:37:53 🔹 Validator: g1d76we6yt3xnsgeccds07usp2gl5gnkrmeze8lm — Moniker: Cosmostation
+2026/03/23 15:37:53 🔹 Validator: g1svwt7l54jmg0dq0wkzr8u09mn5pp9yyx3kgsj9 — Moniker: Oneiric Stake
+2026/03/23 15:37:53 🔹 Validator: g1533w0xpq76dws5tvggfg2u9du6ysnlhgys4z30 — Moniker: MictoNode
+2026/03/23 15:37:53 🔹 Validator: g16jqn9e738pwenxpseasr49sj3axcyd37262wal — Moniker: onbloc-val-01
+2026/03/23 15:37:53 🔹 Validator: g1yd75tc52xfm8zyllngzvul9cdum6med2par6h4 — Moniker: KonsorTech
+2026/03/23 15:37:53 🔹 Validator: g18nnlcy0efq92wxr000yk3zv3adh70v59lva86y — Moniker: Trace
+2026/03/23 15:37:53 🔹 Validator: g1sgu52u6hfffg9tyck7v3zgd27hhv2paf9rgamr — Moniker: Apollo
+2026/03/23 15:37:53 ✅ MonikerMap initialized with 34 active validators
+2026/03/23 15:37:53 ✅ addr_monikers synced (2 entries)
+2026/03/23 15:37:53 ==========================Start resolv Alert==========00==
+last block: 244897
+2026/03/23 15:37:53 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52323: {true 2026-03-23 18:36:55.655636365 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52323: {true 2026-03-23 18:36:55.655636365 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52323: {true 2026-03-23 18:36:55.655636365 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52323: {true 2026-03-23 18:36:55.655636365 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52323: {true 2026-03-23 18:36:55.655636365 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52323: {true 2026-03-23 18:36:55.655636365 +0000 UTC false}
+2026/03/23 15:37:53 ## Prop #1 - Add unrestricted transfer accounts
+Author: g1edq4dugw0sgat4zxcw9xardvuydqf6cgleuc8p
+
+This proposal wants to add a new key to sys/params: auth:p:unrestricted_addrs
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:1/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=1) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=1) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=1)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:37:53 Title: Add unrestricted transfer accounts
+2026/03/23 15:37:53 Block Height: 0
+
+2026/03/23 15:37:53 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/gnovalidator_realtime.go:479 [33mSLOW SQL >= 200ms
+[0m[31;1m[1423.809ms] [33m[rows:1][35m 
+		WITH ranked AS (
+			SELECT
+				addr,
+				moniker,
+				date,
+				block_height,
+				participated,
+				CASE
+					WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) = 1
+					THEN 1
+					WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) IS NULL
+					THEN 1
+					ELSE 0
+				END AS new_seq
+			FROM daily_participations
+			WHERE chain_id = "test12" AND date >= datetime('now', '-24 hours')
+		),
+		grouped AS (
+			SELECT
+				*,
+				SUM(new_seq) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) AS seq_id
+			FROM ranked
+		),
+		series AS (
+			SELECT
+				addr,
+				moniker,
+				MIN(block_height) OVER (PARTITION BY addr, moniker, DATE(date), seq_id) AS start_height,
+				block_height AS end_height,
+				SUM(1) OVER (
+					PARTITION BY addr, moniker, DATE(date), seq_id
+					ORDER BY block_height
+					ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+				) AS missed
+			FROM grouped
+			WHERE participated = 0
+		)
+		SELECT addr, moniker, max(end_height) AS end_height, max(start_height) AS start_height
+		FROM series
+		WHERE missed >= 5
+		GROUP BY addr
+	[0m
+2026/03/23 15:37:53 ⏳ Backfill [244898..832132] (gap=587434)
+2026/03/23 15:37:53 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52324: {true 2026-03-23 18:37:00.137349841 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52324: {true 2026-03-23 18:37:00.137349841 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52324: {true 2026-03-23 18:37:00.137349841 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52324: {true 2026-03-23 18:37:00.137349841 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52324: {true 2026-03-23 18:37:00.137349841 +0000 UTC false}
+2026/03/23 15:37:53 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52324: {true 2026-03-23 18:37:00.137349841 +0000 UTC false}
+2026/03/23 15:37:53 ⏱️ Skipping resolve alert for samourai-crew-1 : already sent
+2026/03/23 15:37:53 tx URL https://gnoscan.io/transactions/details?txhash=9LuPz5IfetuVpM6AHpSQ3GKKbYWaJGXF22d1NTjkBRQ=
+2026/03/23 15:37:53 ID: 1
+
+2026/03/23 15:37:53 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[0.308ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (1,"gnoland1","https://betanet.testnets.gno.land/r/gov/dao:1","Add unrestricted transfer accounts","https://gnoscan.io/transactions/details?txhash=9LuPz5IfetuVpM6AHpSQ3GKKbYWaJGXF22d1NTjkBRQ=","ACCEPTED")
+2026/03/23 15:37:53 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:54 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52325: {true 2026-03-23 18:37:04.557905328 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52325: {true 2026-03-23 18:37:04.557905328 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52325: {true 2026-03-23 18:37:04.557905328 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52325: {true 2026-03-23 18:37:04.557905328 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52325: {true 2026-03-23 18:37:04.557905328 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52325: {true 2026-03-23 18:37:04.557905328 +0000 UTC false}
+2026/03/23 15:37:54 Message sent: {"type":"connection_ack"}
+
+2026/03/23 15:37:54 Message sent: {"type":"ka"}
+
+2026/03/23 15:37:54 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52326: {true 2026-03-23 18:37:09.637556769 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52326: {true 2026-03-23 18:37:09.637556769 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52326: {true 2026-03-23 18:37:09.637556769 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52326: {true 2026-03-23 18:37:09.637556769 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52326: {true 2026-03-23 18:37:09.637556769 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52326: {true 2026-03-23 18:37:09.637556769 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52327: {true 2026-03-23 18:37:16.574675202 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52327: {true 2026-03-23 18:37:16.574675202 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52327: {true 2026-03-23 18:37:16.574675202 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52327: {true 2026-03-23 18:37:16.574675202 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52327: {true 2026-03-23 18:37:16.574675202 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52327: {true 2026-03-23 18:37:16.574675202 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52328: {true 2026-03-23 18:37:20.855705653 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52328: {true 2026-03-23 18:37:20.855705653 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52328: {true 2026-03-23 18:37:20.855705653 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52328: {true 2026-03-23 18:37:20.855705653 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52328: {true 2026-03-23 18:37:20.855705653 +0000 UTC false}
+2026/03/23 15:37:54 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52328: {true 2026-03-23 18:37:20.855705653 +0000 UTC false}
+
+2026/03/23 15:37:54 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/metric.go:20 [33mSLOW SQL >= 200ms
+[0m[31;1m[7922.840ms] [33m[rows:15][35m SELECT addr, moniker, COUNT(*) as total_blocks, SUM(CASE WHEN participated THEN 1 ELSE 0 END) as participated_blocks FROM `daily_participations` WHERE chain_id = "gnoland1" GROUP BY addr, moniker[0m
+2026/03/23 15:37:55 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52329: {true 2026-03-23 18:37:25.839300267 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52329: {true 2026-03-23 18:37:25.839300267 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52329: {true 2026-03-23 18:37:25.839300267 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52329: {true 2026-03-23 18:37:25.839300267 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52329: {true 2026-03-23 18:37:25.839300267 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52329: {true 2026-03-23 18:37:25.839300267 +0000 UTC false}
+2026/03/23 15:37:55 ## Prop #2 - Add the batch of Gno.land partner validators to test11
+Author: [@zmilos000](/u/zmilos000)
+
+This valset change introduces the following validators for test11:
+		
+		- Samourai
+		
+
+## Validator Updates
+- g16tfqqk6wvtzkuaw7g79eun2nvpz0xq34gv2p4x: add
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 68.18181818181817%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:2/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=2) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=2) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=2)
+
+WARNING: Please double check transaction data before voting.
+
+**New**: Members **must** have a namespace to vote to enforce simpler tracking.
+2026/03/23 15:37:55 Title: Add the batch of Gno.land partner validators to test11
+2026/03/23 15:37:55 Block Height: 23300
+2026/03/23 15:37:55 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52330: {true 2026-03-23 18:37:30.374180107 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52330: {true 2026-03-23 18:37:30.374180107 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52330: {true 2026-03-23 18:37:30.374180107 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52330: {true 2026-03-23 18:37:30.374180107 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52330: {true 2026-03-23 18:37:30.374180107 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52330: {true 2026-03-23 18:37:30.374180107 +0000 UTC false}
+2026/03/23 15:37:55 tx URL https://gnoscan.io/transactions/details?txhash=Dp9+SEc5pflo4/g4CpIp/wcNuauKe8/Y5im6ofCsBKk=
+2026/03/23 15:37:55 ID: 2
+
+2026/03/23 15:37:55 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[0.913ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (2,"test11","https://test11.testnets.gno.land/r/gov/dao:2","Add the batch of Gno.land partner validators to test11","https://gnoscan.io/transactions/details?txhash=Dp9+SEc5pflo4/g4CpIp/wcNuauKe8/Y5im6ofCsBKk=","ACCEPTED")
+2026/03/23 15:37:55 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:55 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52331: {true 2026-03-23 18:37:34.861546926 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52331: {true 2026-03-23 18:37:34.861546926 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52331: {true 2026-03-23 18:37:34.861546926 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52331: {true 2026-03-23 18:37:34.861546926 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52331: {true 2026-03-23 18:37:34.861546926 +0000 UTC false}
+2026/03/23 15:37:55 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52331: {true 2026-03-23 18:37:34.861546926 +0000 UTC false}
+2026/03/23 15:37:55 ## Prop #2 - Proposal to lock the transfer of ugnot.
+Author: g1edq4dugw0sgat4zxcw9xardvuydqf6cgleuc8p
+
+This proposal wants to add a new key to sys/params: bank:p:restricted_denoms
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:2/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=2) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=2) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=2)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:37:55 Title: Proposal to lock the transfer of ugnot.
+2026/03/23 15:37:55 Block Height: 0
+2026/03/23 15:37:56 tx URL https://gnoscan.io/transactions/details?txhash=9LuPz5IfetuVpM6AHpSQ3GKKbYWaJGXF22d1NTjkBRQ=
+2026/03/23 15:37:56 ID: 2
+
+2026/03/23 15:37:56 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[0.175ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (2,"gnoland1","https://betanet.testnets.gno.land/r/gov/dao:2","Proposal to lock the transfer of ugnot.","https://gnoscan.io/transactions/details?txhash=9LuPz5IfetuVpM6AHpSQ3GKKbYWaJGXF22d1NTjkBRQ=","ACCEPTED")
+2026/03/23 15:37:56 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:56 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+
+2026/03/23 15:37:56 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/gnovalidator_realtime.go:567 [33mSLOW SQL >= 200ms
+[0m[31;1m[334.216ms] [33m[rows:1][35m 
+		INSERT OR REPLACE INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES ("test12", "2026-03-23 18:37:39.944", 52332, "moul-2", "g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe", true,false)
+	[0m
+2026/03/23 15:37:56 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:56 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52332: {true 2026-03-23 18:37:39.944488536 +0000 UTC false}
+2026/03/23 15:37:57 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:37:57 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:37:57 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:37:57 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:37:57 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:37:57 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:37:57 ## Prop #3 - Add the batch of Gno.land partner validators to test11
+Author: [@the_sw360cab_250](/u/the_sw360cab_250)
+
+This valset change introduces the following validators for test11:
+		
+		- POSTHUMAN (https://test11.testnets.gno.land/r/demo/profile:u/g1geep7yqmgcvexukkfxe982pvyu98mtcj0wrhp4)
+		- KalpaTech (https://test11.testnets.gno.land/r/demo/profile:u/g1yult50qe25jlv7vvw03d2xzcymhz02kv985qpe)
+		
+
+## Validator Updates
+- g1cn7pq5uu0vp3wgsgj552emz6jnf47l42k22wpq: add- g1k9cp2fz6n3fa4zftx7cz6wv2hwzaz6lkr0xk7z: add
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 75%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:3/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=3) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=3) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=3)
+
+WARNING: Please double check transaction data before voting.
+
+**New**: Members **must** have a namespace to vote to enforce simpler tracking.
+2026/03/23 15:37:57 Title: Add the batch of Gno.land partner validators to test11
+2026/03/23 15:37:57 Block Height: 165394
+2026/03/23 15:37:57 tx URL https://gnoscan.io/transactions/details?txhash=fDOY8LTonaKHNy1KenzD2EsjopBk76SRkhXk8bTW/pQ=
+2026/03/23 15:37:57 ID: 3
+
+2026/03/23 15:37:57 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[20.265ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (3,"test11","https://test11.testnets.gno.land/r/gov/dao:3","Add the batch of Gno.land partner validators to test11","https://gnoscan.io/transactions/details?txhash=fDOY8LTonaKHNy1KenzD2EsjopBk76SRkhXk8bTW/pQ=","ACCEPTED")
+2026/03/23 15:37:57 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:58 ## Prop #3 - Add validator g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud
+Author: g1manfred47kzduec920z88wfr64ylksmdcedlf5
+
+Add validator g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud with power 1
+
+## Validator Updates
+- g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud: add
+
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:3/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=3) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=3) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=3)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:37:58 Title: Add validator g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud
+2026/03/23 15:37:58 Block Height: 1386
+2026/03/23 15:37:58 tx URL https://gnoscan.io/transactions/details?txhash=1J0QNlL7Q+V8UwIrflsyhd+EQUsPxY6XTJnQRsl27wg=
+2026/03/23 15:37:58 ID: 3
+
+2026/03/23 15:37:58 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[106.136ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (3,"gnoland1","https://betanet.testnets.gno.land/r/gov/dao:3","Add validator g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud","https://gnoscan.io/transactions/details?txhash=1J0QNlL7Q+V8UwIrflsyhd+EQUsPxY6XTJnQRsl27wg=","ACCEPTED")
+2026/03/23 15:37:58 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2, Moniker: onbloc-val-01
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g10jdd8vlgydfypynrk23ul90jnsg5twrtvmcmh4, Moniker: aeddi-val-01
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g15sdr5dxpnwxwy28wqfxj488h3jsq3vkce5szv8, Moniker: gnocore-val-04
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg, Moniker: unknown
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60, Moniker: gnocore-val-02
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq, Moniker: berty-val-01
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1jyaxj5t95dhlp9f8edkm0p0evw87qejluld86p, Moniker: berty-val1
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06, Moniker: samourai-crew-2
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae, Moniker: samourai-crew-1
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x, Moniker: unknown
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8, Moniker: unknown
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc, Moniker: unknown
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc, Moniker: moul-val-01
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4, Moniker: gnocore-val-01
+2026/03/23 15:37:58 📦 Loaded from DB — Addr: g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud, Moniker: gnocore-val-03
+2026/03/23 15:37:58 ✅ Loaded 15 monikers from DB
+2026/03/23 15:37:58 🔹 Validator: g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc — Moniker: unknown
+2026/03/23 15:37:58 🔹 Validator: g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc — Moniker: moul-val-01
+2026/03/23 15:37:58 🔹 Validator: g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg — Moniker: unknown
+2026/03/23 15:37:58 🔹 Validator: g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 — Moniker: gnocore-val-01
+2026/03/23 15:37:58 🔹 Validator: g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 — Moniker: gnocore-val-02
+2026/03/23 15:37:58 🔹 Validator: g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 — Moniker: onbloc-val-01
+2026/03/23 15:37:58 🔹 Validator: g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 — Moniker: unknown
+2026/03/23 15:37:58 🔹 Validator: g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x — Moniker: unknown
+2026/03/23 15:37:58 🔹 Validator: g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud — Moniker: gnocore-val-03
+2026/03/23 15:37:58 🔹 Validator: g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 — Moniker: samourai-crew-2
+2026/03/23 15:37:58 🔹 Validator: g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae — Moniker: samourai-crew-1
+2026/03/23 15:37:58 🔹 Validator: g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq — Moniker: berty-val-01
+2026/03/23 15:37:58 ✅ MonikerMap initialized with 12 active validators
+
+2026/03/23 15:37:59 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:330 [33mSLOW SQL >= 200ms
+[0m[31;1m[330.574ms] [33m[rows:1][35m 
+		INSERT INTO addr_monikers (chain_id, addr, moniker)
+		VALUES ("gnoland1", "g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60", "gnocore-val-02")
+		ON CONFLICT(chain_id, addr) DO UPDATE SET moniker = excluded.moniker
+	[0m
+2026/03/23 15:37:59 ✅ addr_monikers synced (3 entries)
+last block: 183517
+2026/03/23 15:38:00 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183518: {true 2026-03-23 18:35:17.747127072 +0000 UTC false}
+2026/03/23 15:38:00 ## Prop #4 - Add unrestricted transfer accounts
+Author: g1manfred47kzduec920z88wfr64ylksmdcedlf5
+
+This proposal wants to add a new key to sys/params: auth:p:unrestricted_addrs
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:4/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=4) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=4) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=4)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:38:00 Title: Add unrestricted transfer accounts
+2026/03/23 15:38:00 Block Height: 1950
+2026/03/23 15:38:00 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183519: {true 2026-03-23 18:35:20.955553539 +0000 UTC false}
+2026/03/23 15:38:00 ## Prop #4 - Add another batch of Gno.land partner validators to test11
+Author: [@the_sw360cab_250](/u/the_sw360cab_250)
+
+This valset change introduces the following validators for test11:
+		
+		- Oneiric Stake (https://test11.testnets.gno.land/r/gnops/valopers:g1p8gjus6ugxr92c9jvcg9evqg99nyqj67gt5xz6)
+		- PRO Delegators (https://test11.testnets.gno.land/r/gnops/valopers:g1zmua93u53na9xsvtmlh5d8p7pm0w7p52ehewc9)
+		
+
+## Validator Updates
+- g1p8gjus6ugxr92c9jvcg9evqg99nyqj67gt5xz6: add- g1zmua93u53na9xsvtmlh5d8p7pm0w7p52ehewc9: add
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 70.45454545454545%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:4/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=4) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=4) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=4)
+
+WARNING: Please double check transaction data before voting.
+
+**New**: Members **must** have a namespace to vote to enforce simpler tracking.
+2026/03/23 15:38:00 Title: Add another batch of Gno.land partner validators to test11
+2026/03/23 15:38:00 Block Height: 166089
+2026/03/23 15:38:00 tx URL https://gnoscan.io/transactions/details?txhash=WsHBzl84C1qbv6JGmTZCF2ymA8mfp+dptgSd9RlW5D8=
+2026/03/23 15:38:00 ID: 4
+
+2026/03/23 15:38:00 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[132.797ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (4,"gnoland1","https://betanet.testnets.gno.land/r/gov/dao:4","Add unrestricted transfer accounts","https://gnoscan.io/transactions/details?txhash=WsHBzl84C1qbv6JGmTZCF2ymA8mfp+dptgSd9RlW5D8=","ACCEPTED")
+2026/03/23 15:38:00 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:38:00 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183520: {true 2026-03-23 18:35:26.411110854 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:38:00 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52333: {true 2026-03-23 18:37:47.028787126 +0000 UTC false}
+2026/03/23 15:38:00 tx URL https://gnoscan.io/transactions/details?txhash=pibuNr6zAPBMSY41PjB71JvdI0RI5Md6kSBoeT0XThY=
+2026/03/23 15:38:00 ID: 4
+
+2026/03/23 15:38:00 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[0.159ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (4,"test11","https://test11.testnets.gno.land/r/gov/dao:4","Add another batch of Gno.land partner validators to test11","https://gnoscan.io/transactions/details?txhash=pibuNr6zAPBMSY41PjB71JvdI0RI5Md6kSBoeT0XThY=","ACCEPTED")
+2026/03/23 15:38:00 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+
+2026/03/23 15:38:01 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/gnovalidator_realtime.go:567 [33mSLOW SQL >= 200ms
+[0m[31;1m[331.305ms] [33m[rows:1][35m 
+		INSERT OR REPLACE INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES ("test12", "2026-03-23 18:37:51.112", 52334, "aeddi-2", "g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg", true,false)
+	[0m
+2026/03/23 15:38:01 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:01 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:01 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:01 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:01 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:01 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+
+2026/03/23 15:38:02 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/metric.go:52 [33mSLOW SQL >= 200ms
+[0m[31;1m[7712.046ms] [33m[rows:15][35m SELECT addr, moniker, SUM(CASE WHEN participated = false THEN 1 ELSE 0 END) as missed FROM `daily_participations` WHERE chain_id = "gnoland1" GROUP BY addr, moniker[0m
+
+2026/03/23 15:38:02 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/gnovalidator_realtime.go:567 [33mSLOW SQL >= 200ms
+[0m[31;1m[1634.789ms] [33m[rows:1][35m 
+		INSERT OR REPLACE INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES ("gnoland1", "2026-03-23 18:35:29.607", 183521, "unknown", "g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8", true,false)
+	[0m
+2026/03/23 15:38:02 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ## Prop #5 - Add another batch of Gno.land partner validators to test11
+Author: [@the_sw360cab_250](/u/the_sw360cab_250)
+
+This valset change introduces the following validators for test11:
+		
+		- Inter Blockchain Services (https://test11.testnets.gno.land/r/gnops/valopers:g1fk2unyxhjls9lnmyka48qs8ys3ggwkm0cwx8fy)
+		- Cosmostation (https://test11.testnets.gno.land/r/gnops/valopers:g1d76we6yt3xnsgeccds07usp2gl5gnkrmeze8lm)
+		
+
+## Validator Updates
+- g1fk2unyxhjls9lnmyka48qs8ys3ggwkm0cwx8fy: add- g1d76we6yt3xnsgeccds07usp2gl5gnkrmeze8lm: add
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 70.45454545454545%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:5/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=5) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=5) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=5)
+
+WARNING: Please double check transaction data before voting.
+
+**New**: Members **must** have a namespace to vote to enforce simpler tracking.
+2026/03/23 15:38:02 Title: Add another batch of Gno.land partner validators to test11
+2026/03/23 15:38:02 Block Height: 398476
+2026/03/23 15:38:02 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:02 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183521: {true 2026-03-23 18:35:29.607825743 +0000 UTC false}
+2026/03/23 15:38:03 tx URL https://gnoscan.io/transactions/details?txhash=0e5WG9o45jP1Jhrzv5ZBpepdydfrYq8lvWkZfylITyE=
+2026/03/23 15:38:03 ID: 5
+
+2026/03/23 15:38:03 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[0.212ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (5,"test11","https://test11.testnets.gno.land/r/gov/dao:5","Add another batch of Gno.land partner validators to test11","https://gnoscan.io/transactions/details?txhash=0e5WG9o45jP1Jhrzv5ZBpepdydfrYq8lvWkZfylITyE=","ACCEPTED")
+2026/03/23 15:38:03 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:38:03 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:03 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183522: {true 2026-03-23 18:35:32.794630007 +0000 UTC false}
+2026/03/23 15:38:04 Message sent: {"type":"ka"}
+
+2026/03/23 15:38:04 ## Prop #5 - Add unrestricted transfer accounts
+Author: g1manfred47kzduec920z88wfr64ylksmdcedlf5
+
+This proposal wants to add a new key to sys/params: auth:p:unrestricted_addrs
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:5/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=5) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=5) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=5)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:38:04 Title: Add unrestricted transfer accounts
+2026/03/23 15:38:04 Block Height: 2177
+2026/03/23 15:38:04 tx URL https://gnoscan.io/transactions/details?txhash=R7MAjJQB/Ra480gkHkveDvPrk+59YpNzCiRKnohmc3Y=
+2026/03/23 15:38:04 ID: 5
+
+2026/03/23 15:38:04 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[437.211ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (5,"gnoland1","https://betanet.testnets.gno.land/r/gov/dao:5","Add unrestricted transfer accounts","https://gnoscan.io/transactions/details?txhash=R7MAjJQB/Ra480gkHkveDvPrk+59YpNzCiRKnohmc3Y=","ACCEPTED")
+2026/03/23 15:38:04 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:38:05 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52334: {true 2026-03-23 18:37:51.112260251 +0000 UTC false}
+2026/03/23 15:38:05 ## Prop #6 - Add another batch of Gno.land partner validators to test11
+Author: [@the_sw360cab_250](/u/the_sw360cab_250)
+
+This valset change introduces the following validators for test11:
+		
+		- AviaOne (https://test11.testnets.gno.land/r/gnops/valopers:g1e5sxezpafa8lcv5xu3nmw4plz30mnepq2wv9xs)
+		- LuckyStar (https://test11.testnets.gno.land/r/gnops/valopers:g1a4d5cn9nqh6m3thkvmelf756sjap6g3drrnx9m)
+		
+
+## Validator Updates
+- g1e5sxezpafa8lcv5xu3nmw4plz30mnepq2wv9xs: add- g1a4d5cn9nqh6m3thkvmelf756sjap6g3drrnx9m: add
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 70.45454545454545%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:6/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=6) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=6) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=6)
+
+WARNING: Please double check transaction data before voting.
+
+**New**: Members **must** have a namespace to vote to enforce simpler tracking.
+2026/03/23 15:38:05 Title: Add another batch of Gno.land partner validators to test11
+2026/03/23 15:38:05 Block Height: 398661
+2026/03/23 15:38:05 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183523: {true 2026-03-23 18:35:36.020758793 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:05 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:05 tx URL https://gnoscan.io/transactions/details?txhash=L+OQHhQqajX1auwuRnhBcTm5t3a5qdHVOaUWbPWiWtw=
+2026/03/23 15:38:05 ID: 6
+
+2026/03/23 15:38:05 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[34.997ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (6,"test11","https://test11.testnets.gno.land/r/gov/dao:6","Add another batch of Gno.land partner validators to test11","https://gnoscan.io/transactions/details?txhash=L+OQHhQqajX1auwuRnhBcTm5t3a5qdHVOaUWbPWiWtw=","ACCEPTED")
+2026/03/23 15:38:05 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+
+2026/03/23 15:38:06 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db_metrics.go:26 [33mSLOW SQL >= 200ms
+[0m[31;1m[430.579ms] [33m[rows:1][35m INSERT INTO `alert_logs` (`chain_id`,`addr`,`moniker`,`level`,`start_height`,`end_height`,`skipped`,`msg`,`sent_at`) VALUES ("gnoland1","g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x","unknown","CRITICAL",159982,160018,false,"","2026-03-23 15:38:05.714") ON CONFLICT DO NOTHING RETURNING `id`[0m
+2026/03/23 15:38:06 ## Prop #6 - Add unrestricted transfer accounts
+Author: g1manfred47kzduec920z88wfr64ylksmdcedlf5
+
+This proposal wants to add a new key to sys/params: auth:p:unrestricted_addrs
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:6/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=6) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=6) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=6)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:38:06 Title: Add unrestricted transfer accounts
+2026/03/23 15:38:06 Block Height: 7096
+2026/03/23 15:38:06 tx URL https://gnoscan.io/transactions/details?txhash=9e9UrylNIcl8mktxnWi+XPSAcbXod6zACezrI7lK6eA=
+2026/03/23 15:38:06 ID: 6
+
+2026/03/23 15:38:07 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[433.406ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (6,"gnoland1","https://betanet.testnets.gno.land/r/gov/dao:6","Add unrestricted transfer accounts","https://gnoscan.io/transactions/details?txhash=9e9UrylNIcl8mktxnWi+XPSAcbXod6zACezrI7lK6eA=","ACCEPTED")
+2026/03/23 15:38:07 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:38:08 ## Prop #7 - Add another batch of Gno.land partner validators to test11
+Author: [@the_sw360cab_250](/u/the_sw360cab_250)
+
+This valset change introduces the following validators for test11:
+		
+		- Cogwheel (https://test11.testnets.gno.land/r/gnops/valopers:g1fxqsg8lxw0nq5j0krfnhgq6m9x33fc7je7km7l)
+		- Nodeshub (https://test11.testnets.gno.land/r/gnops/valopers:g1shg3vtjxydfz20ssxgmtde0cup2a6y4tea0jcs)
+		
+
+## Validator Updates
+- g1fxqsg8lxw0nq5j0krfnhgq6m9x33fc7je7km7l: add- g1shg3vtjxydfz20ssxgmtde0cup2a6y4tea0jcs: add
+
+
+
+---
+
+### Stats
+- **Proposal is open for votes**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 70.45454545454545%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:7/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=7) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=7) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=7)
+
+WARNING: Please double check transaction data before voting.
+
+**New**: Members **must** have a namespace to vote to enforce simpler tracking.
+2026/03/23 15:38:08 Title: Add another batch of Gno.land partner validators to test11
+2026/03/23 15:38:08 Block Height: 398776
+2026/03/23 15:38:08 tx URL https://gnoscan.io/transactions/details?txhash=Y1usPNSrRc9LWFSuzj43WHYKZ1jCOuhM/ANN9jp0D3g=
+2026/03/23 15:38:08 ID: 7
+
+2026/03/23 15:38:08 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[35.227ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (7,"test11","https://test11.testnets.gno.land/r/gov/dao:7","Add another batch of Gno.land partner validators to test11","https://gnoscan.io/transactions/details?txhash=Y1usPNSrRc9LWFSuzj43WHYKZ1jCOuhM/ANN9jp0D3g=","IN PROGRESS")
+2026/03/23 15:38:08 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:38:09 ## Prop #7 - Add unrestricted transfer accounts
+Author: g1manfred47kzduec920z88wfr64ylksmdcedlf5
+
+This proposal wants to add a new key to sys/params: auth:p:unrestricted_addrs
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:7/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=7) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=7) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=7)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:38:09 Title: Add unrestricted transfer accounts
+2026/03/23 15:38:09 Block Height: 7103
+2026/03/23 15:38:09 tx URL https://gnoscan.io/transactions/details?txhash=Dg02sJElIplNIxxcZp9HzrG8sUfLUcgtlzKxhGewdbI=
+2026/03/23 15:38:09 ID: 7
+
+2026/03/23 15:38:09 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/gnovalidator_realtime.go:567 [33mSLOW SQL >= 200ms
+[0m[31;1m[4042.198ms] [33m[rows:1][35m 
+		INSERT OR REPLACE INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES ("gnoland1", "2026-03-23 18:35:39.175", 183524, "unknown", "g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc", true,false)
+	[0m
+2026/03/23 15:38:09 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+2026/03/23 15:38:09 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183524: {true 2026-03-23 18:35:39.17571513 +0000 UTC false}
+
+2026/03/23 15:38:10 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db_metrics.go:26 [33mSLOW SQL >= 200ms
+[0m[31;1m[3337.942ms] [33m[rows:1][35m INSERT INTO `alert_logs` (`chain_id`,`addr`,`moniker`,`level`,`start_height`,`end_height`,`skipped`,`msg`,`sent_at`) VALUES ("gnoland1","g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x","unknown","CRITICAL",159982,160022,false,"","2026-03-23 15:38:07.032") ON CONFLICT DO NOTHING RETURNING `id`[0m
+2026/03/23 15:38:10 ## Prop #8 - Fix addresses of Gno.land partner validators to test11
+Author: [@the_sw360cab_250](/u/the_sw360cab_250)
+
+This valset change fixes the following validators for test11:
+		
+		- Oneiric Stake (https://test11.testnets.gno.land/r/gnops/valopers:g1p8gjus6ugxr92c9jvcg9evqg99nyqj67gt5xz6)
+		
+
+## Validator Updates
+- g1svwt7l54jmg0dq0wkzr8u09mn5pp9yyx3kgsj9: add
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 70.45454545454545%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:8/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=8) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=8) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=8)
+
+WARNING: Please double check transaction data before voting.
+
+**New**: Members **must** have a namespace to vote to enforce simpler tracking.
+2026/03/23 15:38:10 Title: Fix addresses of Gno.land partner validators to test11
+2026/03/23 15:38:10 Block Height: 460791
+2026/03/23 15:38:11 tx URL https://gnoscan.io/transactions/details?txhash=mdEVQ5VYDVYvx6jNeyoVHx5DRh21GHYLtfSuc3WQcOY=
+2026/03/23 15:38:11 ID: 8
+
+2026/03/23 15:38:11 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/gnovalidator_realtime.go:567 [33mSLOW SQL >= 200ms
+[0m[31;1m[1131.482ms] [33m[rows:1][35m 
+		INSERT OR REPLACE INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES ("gnoland1", "2026-03-23 18:35:42.343", 183525, "berty-val-01", "g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq", true,false)
+	[0m
+2026/03/23 15:38:11 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+2026/03/23 15:38:11 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183525: {true 2026-03-23 18:35:42.343891727 +0000 UTC false}
+
+2026/03/23 15:38:12 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/gnovalidator_realtime.go:567 [33mSLOW SQL >= 200ms
+[0m[31;1m[2737.141ms] [33m[rows:1][35m 
+		INSERT OR REPLACE INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES ("test12", "2026-03-23 18:37:56.423", 52335, "samourai-crew-1", "g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r", true,false)
+	[0m
+2026/03/23 15:38:12 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:12 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:12 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:12 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:12 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+2026/03/23 15:38:12 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52335: {true 2026-03-23 18:37:56.423554491 +0000 UTC false}
+
+2026/03/23 15:38:12 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db_metrics.go:26 [33mSLOW SQL >= 200ms
+[0m[31;1m[2447.155ms] [33m[rows:1][35m INSERT INTO `alert_logs` (`chain_id`,`addr`,`moniker`,`level`,`start_height`,`end_height`,`skipped`,`msg`,`sent_at`) VALUES ("gnoland1","g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x","unknown","CRITICAL",159982,160023,false,"","2026-03-23 15:38:10.476") ON CONFLICT DO NOTHING RETURNING `id`[0m
+
+2026/03/23 15:38:13 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[3837.994ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (7,"gnoland1","https://betanet.testnets.gno.land/r/gov/dao:7","Add unrestricted transfer accounts","https://gnoscan.io/transactions/details?txhash=Dg02sJElIplNIxxcZp9HzrG8sUfLUcgtlzKxhGewdbI=","ACCEPTED")
+2026/03/23 15:38:13 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+
+2026/03/23 15:38:13 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/gnovalidator_realtime.go:567 [33mSLOW SQL >= 200ms
+[0m[31;1m[1036.794ms] [33m[rows:1][35m 
+		INSERT OR REPLACE INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES ("test12", "2026-03-23 18:38:01.156", 52336, "gnocore-val-01", "g18kp360plxkmh3yal3juzffjuqa0ugys0963a80", true,false)
+	[0m
+2026/03/23 15:38:13 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+
+2026/03/23 15:38:13 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/gnovalidator/gnovalidator_realtime.go:567 [33mSLOW SQL >= 200ms
+[0m[31;1m[1537.357ms] [33m[rows:1][35m 
+		INSERT OR REPLACE INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
+		VALUES ("gnoland1", "2026-03-23 18:35:46.348", 183526, "unknown", "g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8", true,false)
+	[0m
+2026/03/23 15:38:13 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183526: {true 2026-03-23 18:35:46.34842756 +0000 UTC false}
+2026/03/23 15:38:13 ==========================Start resolv Alert==========00==
+
+2026/03/23 15:38:13 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db_metrics.go:26 [33mSLOW SQL >= 200ms
+[0m[31;1m[738.838ms] [33m[rows:1][35m INSERT INTO `alert_logs` (`chain_id`,`addr`,`moniker`,`level`,`start_height`,`end_height`,`skipped`,`msg`,`sent_at`) VALUES ("gnoland1","g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x","unknown","CRITICAL",159982,160024,false,"","2026-03-23 15:38:13.049") ON CONFLICT DO NOTHING RETURNING `id`[0m
+2026/03/23 15:38:13 ✅ Saved participation for g1h7jw9uqflr636fe5ucfy43tlhfv4u0y752q0z6 (gnocore-val-02) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1qtxq5t3acclx03cznwusddg5mv4pfm2knjcmsg (aeddi-2) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r (samourai-crew-1) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g18kp360plxkmh3yal3juzffjuqa0ugys0963a80 (gnocore-val-01) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g15h3hgulk7sv2er8txzvzazwf9rv5nzxp8p8qwe (moul-2) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:13 ✅ Saved participation for g15atj32de45nqgm68298aua8ayy4aujwyewegvd (gfanton-2) at height 52336: {true 2026-03-23 18:38:01.156049821 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183527: {true 2026-03-23 18:35:49.5327974 +0000 UTC false}
+2026/03/23 15:38:14 Message sent: {"type":"ka"}
+
+2026/03/23 15:38:14 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183528: {true 2026-03-23 18:35:52.751737004 +0000 UTC false}
+
+2026/03/23 15:38:14 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[3313.787ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (8,"test11","https://test11.testnets.gno.land/r/gov/dao:8","Fix addresses of Gno.land partner validators to test11","https://gnoscan.io/transactions/details?txhash=mdEVQ5VYDVYvx6jNeyoVHx5DRh21GHYLtfSuc3WQcOY=","ACCEPTED")
+2026/03/23 15:38:14 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+2026/03/23 15:38:14 ✅ Saved participation for g1kn7p0wqumvqlcqzhkwnavkhf0z4qnr73ltwsae (samourai-crew-1) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1eueypc9w524ctda3y0kwd4jruw5p4zqpjna0jq (berty-val-01) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1vta7dwp4guuhkfzksenfcheky4xf9hue8mgne4 (gnocore-val-01) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g10j90aqjv6uju3dksq8m08s6u47x59glkdxqzm2 (onbloc-val-01) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1u3q5s5t20ywcw3txfatrv4tvptk2mjaw7a7vm8 (unknown) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x (unknown) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1u4z9tu4q5838zy07yrd97uu95mkgh4sz5phzsc (unknown) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1uhv7wr7nku89se3t7v8fpquc7n5sf8rfkywxpc (moul-val-01) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1a4v8nx7te0zm2m34we5epp8mj2qcjqda74k3yg (unknown) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1d5hh9fw3l00gugfzafskaxqlmsyvxfaj6l2q60 (gnocore-val-02) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1wu87cyc08tzs9wvj8twu30njxp87urq0e526ud (gnocore-val-03) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ✅ Saved participation for g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 (samourai-crew-2) at height 183529: {true 2026-03-23 18:35:55.947729968 +0000 UTC false}
+2026/03/23 15:38:14 ## Prop #8 - Add validator g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06
+Author: g1manfred47kzduec920z88wfr64ylksmdcedlf5
+
+Add validator g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06 with power 1
+
+## Validator Updates
+- g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06: add
+
+
+
+
+---
+
+### Stats
+- **PROPOSAL HAS BEEN ACCEPTED**
+- Tiers eligible to vote: T1, T2, T3
+- YES PERCENT: 100%
+- NO PERCENT: 0%
+
+[Detailed voting list](/r/gov/dao:8/votes)
+
+---
+
+### Actions
+[Vote YES](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=YES&pid=8) | [Vote NO](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=NO&pid=8) | [Vote ABSTAIN](/r/gov/dao$help&func=MustVoteOnProposalSimple&option=ABSTAIN&pid=8)
+
+WARNING: Please double check transaction data before voting.
+2026/03/23 15:38:14 Title: Add validator g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06
+2026/03/23 15:38:14 Block Height: 7153
+2026/03/23 15:38:15 tx URL https://gnoscan.io/transactions/details?txhash=fVpfyK0nSNzXPeM3q+D0fHJ/x7Wnl8gE0HHLRph+iWU=
+2026/03/23 15:38:15 ID: 8
+
+2026/03/23 15:38:15 [31;1m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db.go:22 [35;1mUNIQUE constraint failed: govdaos.id
+[0m[33m[20.257ms] [34;1m[rows:0][0m INSERT INTO `govdaos` (`id`,`chain_id`,`url`,`title`,`tx`,`status`) VALUES (8,"gnoland1","https://betanet.testnets.gno.land/r/gov/dao:8","Add validator g1jzet059p2l303p3w6jvfsajsywmr2g22n8qs06","https://gnoscan.io/transactions/details?txhash=fVpfyK0nSNzXPeM3q+D0fHJ/x7Wnl8gE0HHLRph+iWU=","ACCEPTED")
+2026/03/23 15:38:15 ❌ InsertGovdao: UNIQUE constraint failed: govdaos.id
+
+2026/03/23 15:38:15 [32m/home/louis/Documents/Samourai/repos/gnomonitoring/backend/internal/database/db_metrics.go:26 [33mSLOW SQL >= 200ms
+[0m[31;1m[1638.198ms] [33m[rows:1][35m INSERT INTO `alert_logs` (`chain_id`,`addr`,`moniker`,`level`,`start_height`,`end_height`,`skipped`,`msg`,`sent_at`) VALUES ("gnoland1","g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x","unknown","CRITICAL",159982,160025,false,"","2026-03-23 15:38:13.883") ON CONFLICT DO NOTHING RETURNING `id`[0m
+signal: interrupt

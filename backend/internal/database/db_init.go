@@ -275,6 +275,12 @@ func CreateOrReplaceIndexes(db *gorm.DB) error {
 		"CREATE INDEX IF NOT EXISTS idx_dp_chain_addr_participated ON daily_participations(chain_id, addr, participated)",
 		"CREATE INDEX IF NOT EXISTS idx_al_chain_addr ON alert_logs(chain_id, addr)",
 		"CREATE UNIQUE INDEX IF NOT EXISTS idx_tvs_chain_addr_chatid ON telegram_validator_subs(chain_id, addr, chat_id)",
+		// Covering index for consecutive-missed and uptime queries (block_height range + addr grouping)
+		"CREATE INDEX IF NOT EXISTS idx_dp_chain_addr_blockheight ON daily_participations(chain_id, addr, block_height)",
+		// Index for date-range queries with addr grouping (TxContrib, MissingBlock, ParticipationRate)
+		"CREATE INDEX IF NOT EXISTS idx_dp_chain_date_addr ON daily_participations(chain_id, date, addr)",
+		// Index for alert_logs sent_at ordering (used by GetActiveAlertCount CTE)
+		"CREATE INDEX IF NOT EXISTS idx_al_chain_addr_sentat ON alert_logs(chain_id, addr, sent_at)",
 	}
 	for _, stmt := range creates {
 		if _, err := sqlDB.Exec(stmt); err != nil {
