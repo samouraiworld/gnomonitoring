@@ -189,7 +189,7 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 		SELECT
 			COALESCE(am.moniker, dp.addr) AS moniker,
 			dp.addr,
-			ROUND((SUM(dp.tx_contribution) * 100.0 / (SELECT SUM(tx_contribution) FROM daily_participations WHERE chain_id = ? AND date >= ? AND date < ?)), 1) AS tx_contrib
+			ROUND((SUM(dp.tx_contribution) * 100.0 / NULLIF((SELECT SUM(tx_contribution) FROM daily_participations WHERE chain_id = ? AND date >= ? AND date < ?), 0)), 1) AS tx_contrib
 		FROM daily_participations dp
 		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE

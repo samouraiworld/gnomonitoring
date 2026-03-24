@@ -293,6 +293,16 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 		log.Printf("❌ [%s] Phase1.TxContribution: %v", chainID, err)
 	} else {
 		log.Printf("   → TxContribution: %d validators", len(txStats))
+		allZero := true
+		for _, s := range txStats {
+			if s.TxContrib > 0 {
+				allZero = false
+				break
+			}
+		}
+		if len(txStats) > 0 && allZero {
+			log.Printf("⚠️  [%s] TxContribution: all values are 0 — proposer data may be missing for this chain", chainID)
+		}
 		for _, stat := range txStats {
 			ValidatorTxContribution.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.TxContrib)
 		}
