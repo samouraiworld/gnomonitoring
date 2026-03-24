@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"fmt"
 	"log"
 	"time"
 
@@ -109,7 +110,7 @@ func PruneRawData(db *gorm.DB, chainID string) error {
 	result := db.Exec(
 		`DELETE FROM daily_participations WHERE chain_id = ? AND date < datetime('now', ?)`,
 		chainID,
-		"-7 days",
+		fmt.Sprintf("-%d days", rawRetentionDays),
 	)
 	if result.Error != nil {
 		return result.Error

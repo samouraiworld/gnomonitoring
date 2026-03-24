@@ -333,6 +333,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 			layouts := []string{
 				"2006-01-02 15:04:05-07:00", // with timezone
 				"2006-01-02 15:04:05",       // without timezone
+				"2006-01-02",                // date only (from daily_participation_agregas.block_date)
 			}
 			var parseErr error
 			for _, layout := range layouts {

@@ -238,12 +238,19 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64, chainID string) ([]Valida
 
 	var results []ValidatorStatus
 
+	// UNION raw (last 7 days) + agrega (all history) to keep validators visible
+	// even after raw data is pruned beyond the retention window.
 	query := `
 		WITH v AS (
-			SELECT DISTINCT dp.addr, COALESCE(am.moniker, dp.addr) AS moniker
-			FROM daily_participations dp
-			LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
-			WHERE dp.chain_id = ?
+			SELECT DISTINCT addr, COALESCE(
+				(SELECT moniker FROM addr_monikers am WHERE am.chain_id = ? AND am.addr = all_addrs.addr),
+				addr
+			) AS moniker
+			FROM (
+				SELECT dp.addr FROM daily_participations dp WHERE dp.chain_id = ?
+				UNION
+				SELECT dpa.addr FROM daily_participation_agregas dpa WHERE dpa.chain_id = ?
+			) all_addrs
 		)
 		SELECT
 			v.moniker,
@@ -260,7 +267,7 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64, chainID string) ([]Valida
 		ORDER BY status DESC;
 	`
 
-	err := db.Raw(query, chainID, chainID, chatID).Scan(&results).Error
+	err := db.Raw(query, chainID, chainID, chainID, chainID, chatID).Scan(&results).Error
 	if err != nil {
 		return nil, err
 	}
@@ -272,13 +279,17 @@ func GetAllValidators(db *gorm.DB, chainID string) ([]AddrMoniker, error) {
 
 	var results []AddrMoniker
 
+	// UNION raw + agrega so validators pruned from raw remain visible.
 	query := `
-			SELECT DISTINCT dp.addr, COALESCE(am.moniker, dp.addr) AS moniker
-			FROM daily_participations dp
-			LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
-			WHERE dp.chain_id = ?;`
+		SELECT DISTINCT all_addrs.addr, COALESCE(am.moniker, all_addrs.addr) AS moniker
+		FROM (
+			SELECT dp.addr FROM daily_participations dp WHERE dp.chain_id = ?
+			UNION
+			SELECT dpa.addr FROM daily_participation_agregas dpa WHERE dpa.chain_id = ?
+		) all_addrs
+		LEFT JOIN addr_monikers am ON am.chain_id = ? AND am.addr = all_addrs.addr;`
 
-	err := db.Raw(query, chainID).Scan(&results).Error
+	err := db.Raw(query, chainID, chainID, chainID).Scan(&results).Error
 	if err != nil {
 		return nil, err
 	}
