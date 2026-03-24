@@ -56,19 +56,33 @@ func runAggregation(db *gorm.DB) {
 
 // AggregateChain inserts or updates rows in daily_participation_agregas for all
 // complete days (< today UTC) not yet aggregated for the given chain.
+// Each day is processed in its own transaction to keep write locks short and
+// avoid blocking concurrent writers (realtime loop, moniker refresh, etc.).
 func AggregateChain(db *gorm.DB, chainID string) error {
-	// Find the last date already aggregated for this chain.
+	// Collect the distinct unaggregated days in one read (no write lock).
 	var lastDate string
-	err := db.Raw(
+	if err := db.Raw(
 		`SELECT COALESCE(MAX(block_date), '0001-01-01') FROM daily_participation_agregas WHERE chain_id = ?`,
 		chainID,
-	).Scan(&lastDate).Error
-	if err != nil {
+	).Scan(&lastDate).Error; err != nil {
 		return err
 	}
 
-	// Aggregate complete days from daily_participations that are after the last
-	// aggregated date and strictly before today (incomplete day excluded).
+	var days []string
+	if err := db.Raw(
+		`SELECT DISTINCT DATE(date) AS d
+		 FROM daily_participations
+		 WHERE chain_id = ? AND DATE(date) > ? AND DATE(date) < DATE('now')
+		 ORDER BY d ASC`,
+		chainID, lastDate,
+	).Scan(&days).Error; err != nil {
+		return err
+	}
+
+	if len(days) == 0 {
+		return nil
+	}
+
 	query := `
 		INSERT INTO daily_participation_agregas
 		  (chain_id, addr, block_date, moniker,
@@ -86,29 +100,32 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 		  MIN(block_height)                                    AS first_block_height,
 		  MAX(block_height)                                    AS last_block_height
 		FROM daily_participations
-		WHERE chain_id  = ?
-		  AND DATE(date) > ?
-		  AND DATE(date) < DATE('now')
+		WHERE chain_id = ? AND DATE(date) = ?
 		GROUP BY chain_id, addr, DATE(date)
 		ON CONFLICT(chain_id, addr, block_date) DO UPDATE SET
-		  moniker              = excluded.moniker,
-		  participated_count   = excluded.participated_count,
-		  missed_count         = excluded.missed_count,
+		  moniker               = excluded.moniker,
+		  participated_count    = excluded.participated_count,
+		  missed_count          = excluded.missed_count,
 		  tx_contribution_count = excluded.tx_contribution_count,
-		  total_blocks         = excluded.total_blocks,
-		  first_block_height   = excluded.first_block_height,
-		  last_block_height    = excluded.last_block_height
-	`
+		  total_blocks          = excluded.total_blocks,
+		  first_block_height    = excluded.first_block_height,
+		  last_block_height     = excluded.last_block_height`
 
-	result := db.Exec(query, chainID, lastDate)
-	if result.Error != nil {
-		return result.Error
+	var totalRows int64
+	for _, day := range days {
+		result := db.Exec(query, chainID, day)
+		if result.Error != nil {
+			return fmt.Errorf("aggregate day %s: %w", day, result.Error)
+		}
+		totalRows += result.RowsAffected
+		// Yield briefly between days so other writers (realtime loop, monikers)
+		// can acquire the write lock without hitting busy_timeout.
+		time.Sleep(5 * time.Millisecond)
 	}
 
-	if result.RowsAffected > 0 {
-		log.Printf("✅ [aggregator][%s] aggregated %d rows (since %s)", chainID, result.RowsAffected, lastDate)
+	if totalRows > 0 {
+		log.Printf("✅ [aggregator][%s] aggregated %d rows over %d days", chainID, totalRows, len(days))
 	}
-
 	return nil
 }
 
