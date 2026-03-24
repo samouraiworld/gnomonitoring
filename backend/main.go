@@ -107,6 +107,9 @@ func main() {
 	gnovalidator.StartMetricsUpdater(db) // update metrics prometheus / 5 min
 	go gnovalidator.StartPrometheusServer(internal.Config.MetricsPort)
 
+	// ====================== Aggregator (daily_participation_agregas) ============= //
+	gnovalidator.StartAggregator(db) // aggregate past days + prune raw rows every hour
+
 	// ====================== Run API ============================================== //
 
 	api.StartWebhookAPI(db) // API

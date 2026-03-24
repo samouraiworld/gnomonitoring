@@ -98,6 +98,19 @@ type DailyParticipation struct {
 	TxContribution bool      `gorm:"column:tx_contribution;not null"`
 }
 
+type DailyParticipationAgrega struct {
+	ChainID             string `gorm:"column:chain_id;not null;primaryKey"`
+	Addr                string `gorm:"column:addr;not null;primaryKey"`
+	BlockDate           string `gorm:"column:block_date;not null;primaryKey"` // DATE string YYYY-MM-DD
+	Moniker             string `gorm:"column:moniker"`
+	ParticipatedCount   int    `gorm:"column:participated_count;not null"`
+	MissedCount         int    `gorm:"column:missed_count;not null"`
+	TxContributionCount int    `gorm:"column:tx_contribution_count;not null"`
+	TotalBlocks         int    `gorm:"column:total_blocks;not null"`
+	FirstBlockHeight    int64  `gorm:"column:first_block_height;not null"`
+	LastBlockHeight     int64  `gorm:"column:last_block_height;not null"`
+}
+
 type AlertLog struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement;column:id"`
 	ChainID     string    `gorm:"column:chain_id;not null;default:betanet;index:idx_al_chain_addr,priority:1"`
@@ -291,6 +304,27 @@ func CreateOrReplaceIndexes(db *gorm.DB) error {
 	return nil
 }
 
+// CreateAggregaIndexes creates covering indexes on daily_participation_agrega
+// to speed up date-range and per-validator queries. Idempotent.
+func CreateAggregaIndexes(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("CreateAggregaIndexes: get sql.DB: %w", err)
+	}
+
+	creates := []string{
+		"CREATE INDEX IF NOT EXISTS idx_dpa_chain_date      ON daily_participation_agregas(chain_id, block_date)",
+		"CREATE INDEX IF NOT EXISTS idx_dpa_chain_addr_date ON daily_participation_agregas(chain_id, addr, block_date)",
+	}
+	for _, stmt := range creates {
+		if _, err := sqlDB.Exec(stmt); err != nil {
+			return fmt.Errorf("CreateAggregaIndexes: create: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // InitDB opens the SQLite database, enables performance pragmas, runs
 // AutoMigrate, applies multi-chain schema migrations, rebuilds indexes and
 // creates the missing-blocks view.
@@ -319,7 +353,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	err = db.AutoMigrate(
 		&User{}, &AlertContact{}, &WebhookValidator{},
 		&WebhookGovDAO{}, &HourReport{},
-		&DailyParticipation{}, &AlertLog{}, &AddrMoniker{}, &Govdao{}, &Telegram{}, &TelegramHourReport{}, &TelegramValidatorSub{},
+		&DailyParticipation{}, &DailyParticipationAgrega{}, &AlertLog{}, &AddrMoniker{}, &Govdao{}, &Telegram{}, &TelegramHourReport{}, &TelegramValidatorSub{},
 	)
 	if err != nil {
 		return nil, err
@@ -335,6 +369,10 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	if err := CreateOrReplaceIndexes(db); err != nil {
 		return nil, fmt.Errorf("CreateOrReplaceIndexes: %w", err)
+	}
+
+	if err := CreateAggregaIndexes(db); err != nil {
+		return nil, fmt.Errorf("CreateAggregaIndexes: %w", err)
 	}
 
 	if err := CreateMissingBlocksView(db); err != nil {
