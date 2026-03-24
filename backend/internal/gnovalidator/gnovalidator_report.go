@@ -136,53 +136,62 @@ func CalculateRate(db *gorm.DB, chainID, date string) (map[string]ValidatorRate,
 	rates := make(map[string]ValidatorRate)
 	log.Printf("[CalculateRate] date=%s chain=%s", date, chainID)
 
-	// Step 1: Retrieve the min/max heights for the given chain and date.
-	var minHeight, maxHeight int64
-	err := db.Raw(`
-		SELECT MIN(block_height), MAX(block_height)
-		FROM daily_participations
-		WHERE chain_id = ? AND date(date) = ?
-	`, chainID, date).Row().Scan(&minHeight, &maxHeight)
-
-	if err != nil {
-		log.Printf("[CalculateRate] Error retrieving block range: %v", err)
-		return rates, 0, 0
-	}
-
-	// Step 2: Request for participation.
+	// Single query combining agrega (fast path) with raw fallback for days not yet aggregated.
+	// Returns one row per validator with participation totals and block height range.
 	rows, err := db.Raw(`
-		SELECT
-			addr,
-			moniker,
-			COUNT(*) AS total_blocks,
-			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_blocks
-		FROM daily_participations
-		WHERE chain_id = ? AND date(date) = ?
-		GROUP BY addr, moniker
-	`, chainID, date).Rows()
+		SELECT addr, MAX(moniker) AS moniker,
+			SUM(total_blocks) AS total_blocks,
+			SUM(participated_count) AS participated_count,
+			MIN(first_block_height) AS first_block,
+			MAX(last_block_height)  AS last_block
+		FROM (
+			SELECT chain_id, addr, moniker, total_blocks, participated_count,
+				first_block_height, last_block_height
+			FROM daily_participation_agregas
+			WHERE chain_id = ? AND block_date = ?
+			UNION ALL
+			SELECT dp.chain_id, dp.addr, MAX(dp.moniker),
+				COUNT(*),
+				SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END),
+				MIN(dp.block_height), MAX(dp.block_height)
+			FROM daily_participations dp
+			LEFT JOIN daily_participation_agregas dpa
+				ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date = DATE(dp.date)
+			WHERE dp.chain_id = ? AND DATE(dp.date) = ? AND dpa.block_date IS NULL
+			GROUP BY dp.chain_id, dp.addr
+		) combined
+		GROUP BY addr
+	`, chainID, date, chainID, date).Rows()
 	if err != nil {
 		log.Printf("[CalculateRate] Error querying participation: %v", err)
-		return rates, minHeight, maxHeight
+		return rates, 0, 0
 	}
 	defer rows.Close()
 
-	// Step 3: Process the results.
+	var minHeight, maxHeight int64
+	first := true
 	for rows.Next() {
 		var addr, moniker string
 		var total, participated int
+		var firstBlock, lastBlock int64
 
-		if err := rows.Scan(&addr, &moniker, &total, &participated); err != nil {
+		if err := rows.Scan(&addr, &moniker, &total, &participated, &firstBlock, &lastBlock); err != nil {
 			log.Printf("[CalculateRate] Scan error: %v", err)
 			continue
 		}
 
 		if total > 0 {
 			rate := float64(participated) / float64(total) * 100
-			rates[addr] = ValidatorRate{
-				Rate:    rate,
-				Moniker: moniker,
-			}
+			rates[addr] = ValidatorRate{Rate: rate, Moniker: moniker}
 		}
+
+		if first || firstBlock < minHeight {
+			minHeight = firstBlock
+		}
+		if first || lastBlock > maxHeight {
+			maxHeight = lastBlock
+		}
+		first = false
 	}
 
 	return rates, minHeight, maxHeight
