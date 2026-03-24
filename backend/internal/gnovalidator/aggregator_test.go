@@ -133,9 +133,9 @@ func TestAggregateChain_Idempotent(t *testing.T) {
 func TestAggregateChain_MultipleDays(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
-	now := time.Now().UTC()
-	day1 := time.Date(now.Year(), now.Month(), now.Day()-10, 12, 0, 0, 0, time.UTC)
-	day2 := time.Date(now.Year(), now.Month(), now.Day()-9, 12, 0, 0, 0, time.UTC)
+	base := time.Now().UTC()
+	day1 := base.AddDate(0, 0, -10).Truncate(24*time.Hour).Add(12 * time.Hour)
+	day2 := base.AddDate(0, 0, -9).Truncate(24*time.Hour).Add(12 * time.Hour)
 
 	seedRaw(t, db, []database.DailyParticipation{
 		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 400, Date: day1, Participated: true, Moniker: "Alice"},

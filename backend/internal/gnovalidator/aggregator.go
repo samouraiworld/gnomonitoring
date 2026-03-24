@@ -20,18 +20,25 @@ const (
 // older than rawRetentionDays.
 func StartAggregator(db *gorm.DB) {
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("❌ [aggregator] panic recovered: %v", r)
-			}
-		}()
+		for {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("❌ [aggregator] panic recovered: %v", r)
+					}
+				}()
 
-		runAggregation(db)
+				runAggregation(db)
 
-		ticker := time.NewTicker(aggregatorPeriod)
-		defer ticker.Stop()
-		for range ticker.C {
-			runAggregation(db)
+				ticker := time.NewTicker(aggregatorPeriod)
+				defer ticker.Stop()
+				for range ticker.C {
+					runAggregation(db)
+				}
+			}()
+			// Only reached after a panic — brief pause before restarting.
+			log.Printf("⚠️  [aggregator] restarting after panic")
+			time.Sleep(30 * time.Second)
 		}
 	}()
 }
@@ -105,18 +112,35 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 	return nil
 }
 
-// PruneRawData deletes rows from daily_participations older than rawRetentionDays.
+const pruneBatchSize = 10_000
+
+// PruneRawData deletes rows from daily_participations older than rawRetentionDays
+// in batches of pruneBatchSize to avoid long write locks on SQLite.
 func PruneRawData(db *gorm.DB, chainID string) error {
-	result := db.Exec(
-		`DELETE FROM daily_participations WHERE chain_id = ? AND date < datetime('now', ?)`,
-		chainID,
-		fmt.Sprintf("-%d days", rawRetentionDays),
-	)
-	if result.Error != nil {
-		return result.Error
+	cutoff := fmt.Sprintf("-%d days", rawRetentionDays)
+	var totalPruned int64
+
+	for {
+		result := db.Exec(
+			`DELETE FROM daily_participations
+			 WHERE rowid IN (
+			   SELECT rowid FROM daily_participations
+			   WHERE chain_id = ? AND date < datetime('now', ?)
+			   LIMIT ?
+			 )`,
+			chainID, cutoff, pruneBatchSize,
+		)
+		if result.Error != nil {
+			return result.Error
+		}
+		totalPruned += result.RowsAffected
+		if result.RowsAffected < int64(pruneBatchSize) {
+			break
+		}
 	}
-	if result.RowsAffected > 0 {
-		log.Printf("🗑️  [aggregator][%s] pruned %d raw rows (> %d days old)", chainID, result.RowsAffected, rawRetentionDays)
+
+	if totalPruned > 0 {
+		log.Printf("🗑️  [aggregator][%s] pruned %d raw rows (> %d days old)", chainID, totalPruned, rawRetentionDays)
 	}
 	return nil
 }

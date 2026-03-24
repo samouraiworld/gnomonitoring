@@ -152,7 +152,7 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 				SELECT chain_id, addr, block_date AS last_down
 				FROM daily_participation_agregas WHERE chain_id = ? AND missed_count > 0
 				UNION ALL
-				SELECT dp.chain_id, dp.addr, dp.date AS last_down
+				SELECT dp.chain_id, dp.addr, DATE(dp.date) AS last_down
 				FROM daily_participations dp
 				LEFT JOIN daily_participation_agregas dpa
 					ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date = DATE(dp.date)
@@ -164,7 +164,7 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 				SELECT chain_id, addr, block_date AS last_up
 				FROM daily_participation_agregas WHERE chain_id = ? AND participated_count > 0
 				UNION ALL
-				SELECT dp.chain_id, dp.addr, dp.date AS last_up
+				SELECT dp.chain_id, dp.addr, DATE(dp.date) AS last_up
 				FROM daily_participations dp
 				LEFT JOIN daily_participation_agregas dpa
 					ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date = DATE(dp.date)
@@ -412,7 +412,7 @@ func GetFirstSeen(db *gorm.DB, chainID string) ([]FirstSeenMetrics, error) {
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND participated_count > 0
 			UNION ALL
-			SELECT dp.chain_id, dp.addr, dp.date AS first_seen
+			SELECT dp.chain_id, dp.addr, DATE(dp.date) AS first_seen
 			FROM daily_participations dp
 			LEFT JOIN daily_participation_agregas dpa
 				ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date = DATE(dp.date)
