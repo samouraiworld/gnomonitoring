@@ -22,23 +22,26 @@ func TestUpdatePrometheusMetricsFromDB_ChainLabel(t *testing.T) {
 	gnovalidator.Init()
 
 	// Insert additional data for gnoland1 chain with moniker
+	// Dates must be in the current month so GetCurrentPeriodParticipationRate finds them.
+	now := time.Now()
+	currentMonthDay := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	gnolandData := []database.DailyParticipation{
 		{
-			ChainID:       "gnoland1",
-			Addr:          "g1gnoland1",
-			Moniker:       "GnolandVal",
-			BlockHeight:   1000,
-			Date:          time.Date(2025, 9, 15, 0, 0, 0, 0, time.UTC),
-			Participated:  true,
+			ChainID:        "gnoland1",
+			Addr:           "g1gnoland1",
+			Moniker:        "GnolandVal",
+			BlockHeight:    1000,
+			Date:           currentMonthDay,
+			Participated:   true,
 			TxContribution: false,
 		},
 		{
-			ChainID:       "gnoland1",
-			Addr:          "g1gnoland1",
-			Moniker:       "GnolandVal",
-			BlockHeight:   1001,
-			Date:          time.Date(2025, 9, 15, 0, 0, 0, 0, time.UTC),
-			Participated:  true,
+			ChainID:        "gnoland1",
+			Addr:           "g1gnoland1",
+			Moniker:        "GnolandVal",
+			BlockHeight:    1001,
+			Date:           currentMonthDay,
+			Participated:   true,
 			TxContribution: false,
 		},
 	}
@@ -51,9 +54,10 @@ func TestUpdatePrometheusMetricsFromDB_ChainLabel(t *testing.T) {
 	err = gnovalidator.UpdatePrometheusMetricsFromDB(db, "betanet")
 	require.NoError(t, err)
 
-	// Verify betanet metrics were set with proper chain label
-	// The seeded betanet data has addr "g1abc" with empty moniker
-	val := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("betanet", "g1abc", ""))
+	// Verify betanet metrics were set with proper chain label.
+	// GetCurrentPeriodParticipationRate uses COALESCE(am.moniker, dp.addr) so the
+	// moniker label is the address when no addr_monikers entry exists.
+	val := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("betanet", "g1abc", "g1abc"))
 	assert.Greater(t, val, 0.0, "betanet ValidatorParticipation should be set")
 
 	// Update metrics for gnoland1
@@ -61,16 +65,17 @@ func TestUpdatePrometheusMetricsFromDB_ChainLabel(t *testing.T) {
 	err = gnovalidator.UpdatePrometheusMetricsFromDB(db, "gnoland1")
 	require.NoError(t, err)
 
-	// Verify gnoland1 metrics were set with proper chain label
-	val = testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1gnoland1", "GnolandVal"))
+	// Verify gnoland1 metrics were set with proper chain label.
+	// Moniker comes from COALESCE(am.moniker, dp.addr) = "g1gnoland1" (no addr_monikers entry).
+	val = testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1gnoland1", "g1gnoland1"))
 	assert.Greater(t, val, 0.0, "gnoland1 ValidatorParticipation should be set")
 
 	// Verify metrics are chain-isolated
 	// When we query with wrong chain, the metric should be 0 (not set)
-	wrongChainVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("betanet", "g1gnoland1", "GnolandVal"))
+	wrongChainVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("betanet", "g1gnoland1", "g1gnoland1"))
 	assert.Equal(t, 0.0, wrongChainVal, "gnoland1 validator should not appear in betanet metrics")
 
-	wrongChainVal = testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1abc", ""))
+	wrongChainVal = testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1abc", "g1abc"))
 	assert.Equal(t, 0.0, wrongChainVal, "betanet validator should not appear in gnoland1 metrics")
 }
 
@@ -82,36 +87,39 @@ func TestUpdatePrometheusMetricsFromDB_MultipleChains(t *testing.T) {
 	// Initialize Prometheus metrics
 	gnovalidator.Init()
 
-	// Insert data for multiple chains
+	// Insert data for multiple chains.
+	// Dates must be in the current month so GetCurrentPeriodParticipationRate finds them.
+	now2 := time.Now()
+	currentMonth := time.Date(now2.Year(), now2.Month(), 5, 0, 0, 0, 0, time.UTC)
 	multiChainData := []database.DailyParticipation{
 		// betanet data - already seeded with g1abc, add more
 		{
-			ChainID:       "betanet",
-			Addr:          "g1val2",
-			Moniker:       "BetanetVal2",
-			BlockHeight:   53,
-			Date:          time.Date(2025, 10, 3, 0, 0, 0, 0, time.UTC),
-			Participated:  true,
+			ChainID:        "betanet",
+			Addr:           "g1val2",
+			Moniker:        "BetanetVal2",
+			BlockHeight:    53,
+			Date:           currentMonth,
+			Participated:   true,
 			TxContribution: false,
 		},
 		// gnoland1 data
 		{
-			ChainID:       "gnoland1",
-			Addr:          "g1gnoland2",
-			Moniker:       "GnolandVal2",
-			BlockHeight:   1100,
-			Date:          time.Date(2025, 9, 20, 0, 0, 0, 0, time.UTC),
-			Participated:  false,
+			ChainID:        "gnoland1",
+			Addr:           "g1gnoland2",
+			Moniker:        "GnolandVal2",
+			BlockHeight:    1100,
+			Date:           currentMonth,
+			Participated:   false,
 			TxContribution: false,
 		},
 		// test3 data
 		{
-			ChainID:       "test3",
-			Addr:          "g1test3",
-			Moniker:       "Test3Val",
-			BlockHeight:   2000,
-			Date:          time.Date(2025, 9, 10, 0, 0, 0, 0, time.UTC),
-			Participated:  true,
+			ChainID:        "test3",
+			Addr:           "g1test3",
+			Moniker:        "Test3Val",
+			BlockHeight:    2000,
+			Date:           currentMonth,
+			Participated:   true,
 			TxContribution: false,
 		},
 	}
@@ -125,17 +133,18 @@ func TestUpdatePrometheusMetricsFromDB_MultipleChains(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Verify each chain has its own metrics
-	// Seeded betanet data has addr "g1abc" with empty moniker
-	betanetVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("betanet", "g1abc", ""))
+	// Verify each chain has its own metrics.
+	// GetCurrentPeriodParticipationRate uses COALESCE(am.moniker, dp.addr) so the
+	// moniker label is the address when no addr_monikers entry exists.
+	betanetVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("betanet", "g1abc", "g1abc"))
 	assert.Greater(t, betanetVal, 0.0, "betanet metrics should be set")
 
-	// gnoland1 data has addr "g1gnoland2" with moniker "GnolandVal2"
-	gnolandVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1gnoland2", "GnolandVal2"))
+	// gnoland1 data has addr "g1gnoland2"; participated=false so rate is 0, but metric is set.
+	gnolandVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1gnoland2", "g1gnoland2"))
 	assert.GreaterOrEqual(t, gnolandVal, 0.0, "gnoland1 metrics should be set or 0")
 
-	// test3 data has addr "g1test3" with moniker "Test3Val"
-	test3Val := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("test3", "g1test3", "Test3Val"))
+	// test3 data has addr "g1test3"; participated=true so rate is 100%.
+	test3Val := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("test3", "g1test3", "g1test3"))
 	assert.Greater(t, test3Val, 0.0, "test3 metrics should be set")
 }
 
@@ -400,6 +409,51 @@ func TestUpdatePrometheusMetricsFromDB_AlertMetrics(t *testing.T) {
 	// Test AlertsTotal for WARNING level (should be 2)
 	totalWarning := testutil.ToFloat64(gnovalidator.AlertsTotal.WithLabelValues(chainID, "WARNING"))
 	assert.Equal(t, float64(2), totalWarning, "AlertsTotal WARNING should be 2")
+}
+
+// TestMissedBlocksWindow verifies that the MissedBlocksWindow metric is populated
+// correctly for the 1h, 24h, and 7d windows.
+func TestMissedBlocksWindow(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	gnovalidator.Init()
+
+	chainID := "betanet"
+	addr := "g1winval"
+	moniker := "WinVal"
+	now := time.Now().UTC()
+
+	// 2 missed in last 1h, 1 missed between 1h and 24h, 1 missed between 24h and 7d.
+	data := []database.DailyParticipation{
+		{ChainID: chainID, Addr: addr, Moniker: moniker, BlockHeight: 2000, Date: now.Add(-10 * time.Minute), Participated: false, TxContribution: false},
+		{ChainID: chainID, Addr: addr, Moniker: moniker, BlockHeight: 2001, Date: now.Add(-30 * time.Minute), Participated: false, TxContribution: false},
+		{ChainID: chainID, Addr: addr, Moniker: moniker, BlockHeight: 2002, Date: now.Add(-2 * time.Hour), Participated: false, TxContribution: false},
+		{ChainID: chainID, Addr: addr, Moniker: moniker, BlockHeight: 2003, Date: now.Add(-48 * time.Hour), Participated: false, TxContribution: false},
+		{ChainID: chainID, Addr: addr, Moniker: moniker, BlockHeight: 2004, Date: now.Add(-5 * time.Minute), Participated: true, TxContribution: false},
+	}
+
+	err := db.Create(&data).Error
+	require.NoError(t, err)
+
+	// Register the moniker in addr_monikers so COALESCE resolves to "WinVal".
+	addrMoniker := database.AddrMoniker{ChainID: chainID, Addr: addr, Moniker: moniker}
+	err = db.Create(&addrMoniker).Error
+	require.NoError(t, err)
+
+	err = gnovalidator.UpdatePrometheusMetricsFromDB(db, chainID)
+	require.NoError(t, err)
+
+	// 1h window: 2 missed blocks
+	val1h := testutil.ToFloat64(gnovalidator.MissedBlocksWindow.WithLabelValues(chainID, addr, moniker, "1h"))
+	assert.Equal(t, float64(2), val1h, "MissedBlocksWindow[1h] should be 2")
+
+	// 24h window: 3 missed blocks
+	val24h := testutil.ToFloat64(gnovalidator.MissedBlocksWindow.WithLabelValues(chainID, addr, moniker, "24h"))
+	assert.Equal(t, float64(3), val24h, "MissedBlocksWindow[24h] should be 3")
+
+	// 7d window: 4 missed blocks
+	val7d := testutil.ToFloat64(gnovalidator.MissedBlocksWindow.WithLabelValues(chainID, addr, moniker, "7d"))
+	assert.Equal(t, float64(4), val7d, "MissedBlocksWindow[7d] should be 4")
 }
 
 // TestUpdatePrometheusMetricsFromDB_AllMetricsChainIsolation verifies chain isolation for all metrics

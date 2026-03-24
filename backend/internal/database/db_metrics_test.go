@@ -338,6 +338,66 @@ func TestGetFirstSeen_CrossChain(t *testing.T) {
 	}
 }
 
+// TestGetMissedBlocksWindow verifies that missed blocks are counted correctly per time window.
+func TestGetMissedBlocksWindow(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	chainID := "betanet"
+	now := time.Now().UTC()
+
+	// Insert blocks: 2 missed in last 1h, 1 more missed between 1h and 24h, 1 more missed between 24h and 7d.
+	data := []database.DailyParticipation{
+		// Within 1h window — missed
+		{ChainID: chainID, Addr: "g1win", Moniker: "WinVal", BlockHeight: 1000, Date: now.Add(-10 * time.Minute), Participated: false, TxContribution: false},
+		{ChainID: chainID, Addr: "g1win", Moniker: "WinVal", BlockHeight: 1001, Date: now.Add(-30 * time.Minute), Participated: false, TxContribution: false},
+		// Within 24h but outside 1h — missed
+		{ChainID: chainID, Addr: "g1win", Moniker: "WinVal", BlockHeight: 1002, Date: now.Add(-2 * time.Hour), Participated: false, TxContribution: false},
+		// Within 7d but outside 24h — missed
+		{ChainID: chainID, Addr: "g1win", Moniker: "WinVal", BlockHeight: 1003, Date: now.Add(-48 * time.Hour), Participated: false, TxContribution: false},
+		// Within 1h — participated (should not be counted)
+		{ChainID: chainID, Addr: "g1win", Moniker: "WinVal", BlockHeight: 1004, Date: now.Add(-5 * time.Minute), Participated: true, TxContribution: false},
+	}
+
+	err := db.Create(&data).Error
+	require.NoError(t, err)
+
+	// 1h window: 2 missed blocks
+	results1h, err := database.GetMissedBlocksWindow(db, chainID, now.Add(-time.Hour))
+	require.NoError(t, err)
+	var found bool
+	for _, r := range results1h {
+		if r.Addr == "g1win" {
+			found = true
+			assert.Equal(t, 2, r.MissingBlock, "1h window should count 2 missed blocks")
+		}
+	}
+	assert.True(t, found, "g1win should appear in 1h results")
+
+	// 24h window: 3 missed blocks
+	results24h, err := database.GetMissedBlocksWindow(db, chainID, now.Add(-24*time.Hour))
+	require.NoError(t, err)
+	found = false
+	for _, r := range results24h {
+		if r.Addr == "g1win" {
+			found = true
+			assert.Equal(t, 3, r.MissingBlock, "24h window should count 3 missed blocks")
+		}
+	}
+	assert.True(t, found, "g1win should appear in 24h results")
+
+	// 7d window: 4 missed blocks
+	results7d, err := database.GetMissedBlocksWindow(db, chainID, now.Add(-7*24*time.Hour))
+	require.NoError(t, err)
+	found = false
+	for _, r := range results7d {
+		if r.Addr == "g1win" {
+			found = true
+			assert.Equal(t, 4, r.MissingBlock, "7d window should count 4 missed blocks")
+		}
+	}
+	assert.True(t, found, "g1win should appear in 7d results")
+}
+
 // TestGetMoniker_CrossChain verifies moniker lookups are isolated by chain
 func TestGetMoniker_CrossChain(t *testing.T) {
 	db := testoutils.NewTestDB(t)

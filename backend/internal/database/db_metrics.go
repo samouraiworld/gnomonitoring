@@ -244,6 +244,27 @@ func MissingBlock(db *gorm.DB, chainID, period string) ([]MissingBlockMetrics, e
 	return results, nil
 }
 
+// GetMissedBlocksWindow returns the count of missed blocks per validator
+// within the given time window (since = time.Now() - duration).
+func GetMissedBlocksWindow(db *gorm.DB, chainID string, since time.Time) ([]MissingBlockMetrics, error) {
+	var results []MissingBlockMetrics
+	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+	query := `
+		SELECT
+			COALESCE(am.moniker, dp.addr) AS moniker,
+			dp.addr,
+			SUM(CASE WHEN dp.participated = 0 THEN 1 ELSE 0 END) AS missing_block
+		FROM daily_participations dp
+		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		WHERE dp.chain_id = ?
+		  AND dp.date >= ?
+		GROUP BY dp.addr`
+	if err := db.Raw(query, chainID, sinceStr).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in GetMissedBlocksWindow: %w", err)
+	}
+	return results, nil
+}
+
 // ====================================== ADDR MONIKER =============================
 
 func InsertAddrMoniker(db *gorm.DB, addr, moniker string) error {
