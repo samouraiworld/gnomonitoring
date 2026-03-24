@@ -138,34 +138,37 @@ func TestGetCurrentPeriodParticipationRate_CrossChain(t *testing.T) {
 func TestUptimeMetricsaddr_CrossChain(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
+	// Use recent dates so they fall within the 30-day window used by UptimeMetricsaddr.
+	recentDate := time.Now().UTC().AddDate(0, 0, -1)
+
 	// Insert participation data for multiple chains
 	// betanet: 3 blocks, 2 participated -> ~66.67% uptime
 	betanetData := []database.DailyParticipation{
 		{
-			ChainID:       "betanet",
-			Addr:          "g1val1",
-			Moniker:       "BetanetVal1",
-			BlockHeight:   100,
-			Date:          time.Date(2025, 9, 15, 0, 0, 0, 0, time.UTC),
-			Participated:  true,
+			ChainID:        "betanet",
+			Addr:           "g1val1",
+			Moniker:        "BetanetVal1",
+			BlockHeight:    100,
+			Date:           recentDate,
+			Participated:   true,
 			TxContribution: false,
 		},
 		{
-			ChainID:       "betanet",
-			Addr:          "g1val1",
-			Moniker:       "BetanetVal1",
-			BlockHeight:   101,
-			Date:          time.Date(2025, 9, 15, 0, 0, 0, 0, time.UTC),
-			Participated:  true,
+			ChainID:        "betanet",
+			Addr:           "g1val1",
+			Moniker:        "BetanetVal1",
+			BlockHeight:    101,
+			Date:           recentDate,
+			Participated:   true,
 			TxContribution: false,
 		},
 		{
-			ChainID:       "betanet",
-			Addr:          "g1val1",
-			Moniker:       "BetanetVal1",
-			BlockHeight:   102,
-			Date:          time.Date(2025, 9, 15, 0, 0, 0, 0, time.UTC),
-			Participated:  false,
+			ChainID:        "betanet",
+			Addr:           "g1val1",
+			Moniker:        "BetanetVal1",
+			BlockHeight:    102,
+			Date:           recentDate,
+			Participated:   false,
 			TxContribution: false,
 		},
 	}
@@ -173,21 +176,21 @@ func TestUptimeMetricsaddr_CrossChain(t *testing.T) {
 	// gnoland1: different validator with different uptime
 	gnolandData := []database.DailyParticipation{
 		{
-			ChainID:       "gnoland1",
-			Addr:          "g1val2",
-			Moniker:       "GnolandVal2",
-			BlockHeight:   200,
-			Date:          time.Date(2025, 9, 15, 0, 0, 0, 0, time.UTC),
-			Participated:  true,
+			ChainID:        "gnoland1",
+			Addr:           "g1val2",
+			Moniker:        "GnolandVal2",
+			BlockHeight:    200,
+			Date:           recentDate,
+			Participated:   true,
 			TxContribution: false,
 		},
 		{
-			ChainID:       "gnoland1",
-			Addr:          "g1val2",
-			Moniker:       "GnolandVal2",
-			BlockHeight:   201,
-			Date:          time.Date(2025, 9, 15, 0, 0, 0, 0, time.UTC),
-			Participated:  false,
+			ChainID:        "gnoland1",
+			Addr:           "g1val2",
+			Moniker:        "GnolandVal2",
+			BlockHeight:    201,
+			Date:           recentDate,
+			Participated:   false,
 			TxContribution: false,
 		},
 	}

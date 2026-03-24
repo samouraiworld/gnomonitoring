@@ -157,18 +157,7 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 	return results, nil
 }
 func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
-	// Step 1: fetch max height (fast indexed lookup on idx_dp_chain_block_height)
-	var maxHeight int64
-	if err := db.Raw(`SELECT COALESCE(MAX(block_height), 0) FROM daily_participations WHERE chain_id = ?`, chainID).Scan(&maxHeight).Error; err != nil {
-		return nil, fmt.Errorf("error fetching max height for uptime: %s", err)
-	}
-	if maxHeight == 0 {
-		return nil, nil
-	}
-
 	var results []UptimeMetrics
-
-	// Step 2: calculate uptime for the last 500 blocks using a literal bound
 	query := `
 		SELECT
 			COALESCE(am.moniker, dp.addr) AS moniker,
@@ -178,14 +167,12 @@ func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE
 			dp.chain_id = ?
-			AND dp.block_height > ?
+			AND dp.date >= date('now', '-30 days')
 		GROUP BY dp.addr
 		ORDER BY uptime ASC`
-
-	if err := db.Raw(query, chainID, maxHeight-500).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
-
 	return results, nil
 }
 
