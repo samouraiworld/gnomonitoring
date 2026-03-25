@@ -160,24 +160,24 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 				time.Sleep(3 * time.Second)
 				continue
 			}
-			// *** RATTRAPAGE BLOQUANT SI GROS RETARD ***
+			// *** BLOCKING BACKFILL IF LARGE GAP ***
 			if latest-currentHeight > 500 {
-				// on rattrape jusqu’à latest-200 pour laisser un tampon
-				// (évite la course avec le flux temps réel ensuite)
+				// catch up to latest-200 to leave a buffer
+				// (avoids race with realtime stream afterwards)
 				stop := latest - 200
 				if stop < currentHeight {
-					stop = latest // au pire, rattrape tout
+					stop = latest // at worst, catch up everything
 				}
 				log.Printf("[monitor][%s] backfill [%d..%d] (gap=%d)", chainID, currentHeight, stop, latest-currentHeight)
 				if err := BackfillParallel(db, client, chainID, currentHeight, stop, GetMonikerMap(chainID)); err != nil {
 					log.Printf("[monitor][%s] backfill error: %v", chainID, err)
-					// si backfill échoue, on ne bloque pas indéfiniment
+					// if backfill fails, do not block indefinitely
 				} else {
-					// on saute directement à la fin du backfill
+					// jump directly to the end of the backfill
 					currentHeight = stop + 1
 					log.Printf("[monitor][%s] backfill complete up to %d, switching to realtime", chainID, stop)
 				}
-				// on ne passe pas au “temps réel” tant que l’écart reste gros
+				// do not switch to “realtime” while the gap is still large
 				continue
 			}
 			// log.Println("last block ", latest)
@@ -401,7 +401,7 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 					continue
 				}
 				if mute >= 1 {
-					// Activer un mute 1h
+					// Enable 1h mute
 					log.Printf("[validator][%s] muting %s for 1h — too many alerts", chainID, moniker)
 
 					if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
@@ -511,7 +511,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 			continue
 		}
 		if recentResolves >= 4 {
-			// Activer un mute d'1h
+			// Enable 1h mute
 			log.Printf("[validator][%s] muting %s for 1h — too many resolves", chainID, a.Moniker)
 			if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
 				log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)

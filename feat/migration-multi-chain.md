@@ -1,4 +1,4 @@
-# Migration Multi-Chain - Guide Complet
+# Multi-Chain Migration - Complete Guide
 
 **Date:** 2026-03-19
 **Version:** Phase 9 Complete
@@ -6,11 +6,11 @@
 
 ---
 
-## 📋 Résumé des Modifications de Schéma
+## 📋 Summary of Schema Changes
 
-### Tables Modifiées (14 total)
+### Modified Tables (14 total)
 
-| Table | Colonnes Ajoutées | Migrations Required | Impact |
+| Table | Added Columns | Migrations Required | Impact |
 |-------|-------------------|-------------------|--------|
 | `daily_participations` | `chain_id` | ✅ ALTER TABLE | CRITICAL |
 | `alert_logs` | `chain_id` | ✅ ALTER TABLE | CRITICAL |
@@ -26,35 +26,35 @@
 
 ---
 
-## 🔄 Étapes de Migration EN PRODUCTION
+## 🔄 Migration Steps IN PRODUCTION
 
-### Phase 1: Préparation (AVANT le déploiement)
+### Phase 1: Preparation (BEFORE deployment)
 
 ```bash
-# 1. Sauvegarder la DB actuelle
+# 1. Backup the current DB
 cp backend/db/webhooks.db backend/db/webhooks.db.backup-2026-03-19
 
-# 2. Vérifier le schéma existant
+# 2. Check existing schema
 sqlite3 backend/db/webhooks.db ".tables"
 sqlite3 backend/db/webhooks.db ".schema daily_participations"
 
-# 3. Déterminer la chaîne par défaut ACTUELLE
-# Si votre deployment actuel utilisait une seule chaîne:
+# 3. Determine the CURRENT default chain
+# If your current deployment uses a single chain:
 # - Betanet → default_chain: "betanet"
 # - Gnoland1 → default_chain: "gnoland1"
 ```
 
-### Phase 2: Déployer la nouvelle version du code
+### Phase 2: Deploy the new code version
 
 ```bash
-# 1. Mettre à jour config.yaml
+# 1. Update config.yaml
 # OLD:
 # rpc_endpoint: "https://rpc.betanet.gno.land"
 # graphql: "https://indexer.betanet.gno.land/graphql/query"
 # gnoweb: "https://betanet.gno.land"
 
 # NEW:
-# default_chain: "betanet"  # IMPORTANT: À ajuster selon votre setup
+# default_chain: "betanet"  # IMPORTANT: Adjust based on your setup
 # chains:
 #   betanet:
 #     rpc_endpoint: "https://rpc.betanet.gno.land"
@@ -65,40 +65,40 @@ sqlite3 backend/db/webhooks.db ".schema daily_participations"
 #     rpc_endpoint: "https://rpc.gno.land"
 #     graphql: "https://indexer.gno.land/graphql/query"
 #     gnoweb: "https://gno.land"
-#     enabled: false  # Activer si besoin
+#     enabled: false  # Enable if needed
 
-# 2. Arrêter l'application
-systemctl stop gnomonitoring  # ou votre script de démarrage
+# 2. Stop the application
+systemctl stop gnomonitoring  # or your startup script
 
-# 3. Déployer le nouveau binaire
+# 3. Deploy the new binary
 go build -o /usr/local/bin/gnomonitoring ./backend
 
-# 4. Démarrer l'application (elle appliquera les migrations)
+# 4. Start the application (it will apply migrations)
 systemctl start gnomonitoring
 ```
 
-### Phase 3: Vérifier les migrations
+### Phase 3: Verify migrations
 
 ```bash
-# 1. Vérifier que chain_id a été ajouté à daily_participations
+# 1. Verify that chain_id was added to daily_participations
 sqlite3 backend/db/webhooks.db ".schema daily_participations"
-# Vous devriez voir: chain_id TEXT NOT NULL DEFAULT 'betanet'
+# You should see: chain_id TEXT NOT NULL DEFAULT 'betanet'
 
-# 2. Vérifier les données
+# 2. Check data
 sqlite3 backend/db/webhooks.db "SELECT DISTINCT chain_id FROM daily_participations LIMIT 5;"
-# Doit retourner: betanet (ou votre chaîne par défaut)
+# Must return: betanet (or your default chain)
 
-# 3. Vérifier que les indexes ont été créés
+# 3. Verify that indexes were created
 sqlite3 backend/db/webhooks.db "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_dp_%';"
 ```
 
 ---
 
-## 🗺️ Tables Détaillées et Migrations
+## 🗺️ Detailed Tables and Migrations
 
 ### 1. CRITICAL: `daily_participations`
 
-**Ancienne structure:**
+**Old structure:**
 ```sql
 CREATE TABLE daily_participations (
     date DATETIME,
@@ -111,41 +111,41 @@ CREATE TABLE daily_participations (
 -- Unique Index: (addr, block_height)
 ```
 
-**Nouvelle structure:**
+**New structure:**
 ```sql
 ALTER TABLE daily_participations ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'betanet';
 -- New Unique Index: (chain_id, addr, block_height)
--- Old Index: (addr, block_height) — À SUPPRIMER
+-- Old Index: (addr, block_height) — TO BE REMOVED
 ```
 
-**Migration SQL (si manuel):**
+**Migration SQL (if manual):**
 ```sql
--- 1. Ajouter la colonne
+-- 1. Add the column
 ALTER TABLE daily_participations ADD COLUMN chain_id TEXT DEFAULT 'betanet';
 
--- 2. Mettre à jour les données (si besoin)
+-- 2. Update data (if needed)
 UPDATE daily_participations SET chain_id = 'betanet' WHERE chain_id IS NULL;
 
--- 3. Rendre NOT NULL
+-- 3. Make NOT NULL
 ALTER TABLE daily_participations MODIFY chain_id TEXT NOT NULL;
 
--- 4. Créer les nouveaux indexes
+-- 4. Create new indexes
 CREATE INDEX idx_dp_chain_block_height ON daily_participations(chain_id, block_height);
 CREATE INDEX idx_dp_chain_addr ON daily_participations(chain_id, addr);
 CREATE INDEX idx_dp_chain_date ON daily_participations(chain_id, date);
 CREATE INDEX idx_dp_chain_addr_participated ON daily_participations(chain_id, addr, participated);
 
--- 5. Créer la nouvelle unique constraint
+-- 5. Create new unique constraint
 CREATE UNIQUE INDEX uniq_chain_addr_height ON daily_participations(chain_id, addr, block_height);
 
--- 6. Supprimer l'ancien index (SQLite ne supporte pas les contraintes)
--- Note: SQLite ne permet pas de supprimer les índices automatiques
+-- 6. Remove old index (SQLite does not support constraints)
+-- Note: SQLite does not allow dropping automatic indexes
 ```
 
 **Impact:**
-- ✅ Zéro perte de données
-- ✅ Toutes les lignes existantes → `chain_id = 'betanet'`
-- ✅ Backward compatible (si on garde `chain_id = NULL`)
+- ✅ Zero data loss
+- ✅ All existing rows → `chain_id = 'betanet'`
+- ✅ Backward compatible (if keeping `chain_id = NULL`)
 
 ---
 
@@ -158,8 +158,8 @@ CREATE INDEX idx_al_chain_addr ON alert_logs(chain_id, addr);
 ```
 
 **Impact:**
-- ✅ Zéro perte de données
-- ✅ Nouvelles alertes seront correctement scoped par chaîne
+- ✅ Zero data loss
+- ✅ New alerts will be correctly scoped by chain
 
 ---
 
@@ -172,8 +172,8 @@ CREATE UNIQUE INDEX uniq_chain_addr ON addr_monikers(chain_id, addr);
 ```
 
 **Impact:**
-- ✅ Chaque chaîne peut avoir sa propre version du moniker pour une adresse
-- ⚠️ Les monikers existants seront associés à 'betanet'
+- ✅ Each chain can have its own version of the moniker for an address
+- ⚠️ Existing monikers will be associated with 'betanet'
 
 ---
 
@@ -185,8 +185,8 @@ ALTER TABLE govdaos ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'betanet';
 ```
 
 **Impact:**
-- ✅ Proposals à venir seront scoped par chaîne
-- ✅ Historique existant restera lié à betanet
+- ✅ Future proposals will be scoped by chain
+- ✅ Existing history will remain linked to betanet
 
 ---
 
@@ -198,8 +198,8 @@ ALTER TABLE telegrams ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'betanet';
 ```
 
 **Impact:**
-- ✅ Chaque chat Telegram peut maintenant avoir des préférences différentes par chaîne
-- ✅ Les préférences existantes seront associées à betanet
+- ✅ Each Telegram chat can now have different preferences per chain
+- ✅ Existing preferences will be associated with betanet
 
 ---
 
@@ -211,8 +211,8 @@ ALTER TABLE telegram_hour_reports ADD COLUMN chain_id TEXT NOT NULL DEFAULT 'bet
 ```
 
 **Impact:**
-- ✅ Chaque chat peut recevoir des rapports pour plusieurs chaînes
-- ✅ Les rapports existants continueront de fonctionner
+- ✅ Each chat can receive reports for multiple chains
+- ✅ Existing reports will continue to work
 
 ---
 
@@ -225,8 +225,8 @@ CREATE UNIQUE INDEX idx_tvs_chain_addr_chatid ON telegram_validator_subs(chain_i
 ```
 
 **Impact:**
-- ✅ Chaque chat peut souscrire au même validateur sur plusieurs chaînes
-- ⚠️ Les subscriptions existantes seront liées à betanet
+- ✅ Each chat can subscribe to the same validator on multiple chains
+- ⚠️ Existing subscriptions will be linked to betanet
 
 ---
 
@@ -239,23 +239,23 @@ ALTER TABLE webhook_gov_daos ADD COLUMN chain_id TEXT DEFAULT NULL;
 ```
 
 **Impact:**
-- ✅ `chain_id = NULL` → reçoit les alertes de TOUTES les chaînes
-- ✅ `chain_id = 'betanet'` → reçoit les alertes de betanet uniquement
-- ✅ Backward compatible (NULL = comportement ancien)
+- ✅ `chain_id = NULL` → receives alerts from ALL chains
+- ✅ `chain_id = 'betanet'` → receives alerts from betanet only
+- ✅ Backward compatible (NULL = old behavior)
 
 ---
 
-## ⚠️ Points Critiques à Vérifier
+## ⚠️ Critical Points to Check
 
-### 1. Vérifier `config.yaml` AVANT la migration
+### 1. Check `config.yaml` BEFORE migration
 
 ```yaml
-# ❌ ANCIEN (va CASSER):
+# ❌ OLD (will BREAK):
 rpc_endpoint: "https://rpc.betanet.gno.land"
 graphql: "https://indexer.betanet.gno.land/graphql/query"
 gnoweb: "https://betanet.gno.land"
 
-# ✅ NOUVEAU (requis):
+# ✅ NEW (required):
 default_chain: "betanet"
 chains:
   betanet:
@@ -265,116 +265,116 @@ chains:
     enabled: true
 ```
 
-### 2. Déterminer le `default_chain` CORRECT
+### 2. Determine the CORRECT `default_chain`
 
-Votre deployment actuel utilise quelle chaîne? Sélectionnez le nom exact:
+Which chain does your current deployment use? Select the exact name:
 
 ```bash
-# Déterminer automatiquement
+# Determine automatically
 curl -s $(cat /path/to/config.yaml | grep rpc_endpoint | cut -d'"' -f2) /status
-# Indiquez le chaîne dans les logs
+# Indicate the chain in the logs
 
-# Ou vérifier manuellement la DB
+# Or check manually in the DB
 sqlite3 backend/db/webhooks.db "SELECT COUNT(*) as proposal_count FROM govdaos;"
-# Beaucoup de proposals → C'est probablement votre chaîne actuelle
+# Many proposals → This is probably your current chain
 ```
 
-### 3. Vérifier les Webhooks
+### 3. Check Webhooks
 
 ```bash
-# Compter les webhooks existants
+# Count existing webhooks
 sqlite3 backend/db/webhooks.db "SELECT 'validators' as type, COUNT(*) FROM webhook_validators UNION SELECT 'govdao' as type, COUNT(*) FROM webhook_gov_daos;"
 
-# Résultat: Après migration, tous auront chain_id = NULL (reçoivent toutes les alertes)
-# C'est BACKWARD COMPATIBLE
+# Result: After migration, all will have chain_id = NULL (receive all alerts)
+# This is BACKWARD COMPATIBLE
 ```
 
 ---
 
-## 🔙 ROLLBACK: Revenir à Single-Chain
+## 🔙 ROLLBACK: Return to Single-Chain
 
-Si vous devez revenir à la version single-chain:
+If you need to revert to the single-chain version:
 
-### Option 1: Restaurer depuis la backup
+### Option 1: Restore from Backup
 
 ```bash
-# 1. Arrêter l'application
+# 1. Stop the application
 systemctl stop gnomonitoring
 
-# 2. Restaurer la backup
+# 2. Restore the backup
 cp backend/db/webhooks.db.backup-2026-03-19 backend/db/webhooks.db
 
-# 3. Revenir au code ancien
+# 3. Revert to old code
 git checkout main -- backend/
 go build -o /usr/local/bin/gnomonitoring ./backend
 
-# 4. Redémarrer
+# 4. Restart
 systemctl start gnomonitoring
 ```
 
-### Option 2: Supprimer les colonnes `chain_id` (DÉCONSEILLÉ)
+### Option 2: Remove `chain_id` columns (NOT RECOMMENDED)
 
 ```bash
-# ⚠️ TRÈS DESTRUCTIF - Les données de chaîne seront perdues
+# ⚠️ VERY DESTRUCTIVE - Chain data will be lost
 
-# Pour SQLite, vous devez recréer les tables (pas d'ALTER TABLE DROP COLUMN)
--- Cela est complexe et risqué. Utilisez l'Option 1 à la place.
+# For SQLite, you must recreate tables (no ALTER TABLE DROP COLUMN)
+-- This is complex and risky. Use Option 1 instead.
 ```
 
 ---
 
-## 📊 Checklist de Migration
+## 📊 Migration Checklist
 
 ### PRE-MIGRATION
-- [ ] Sauvegarder `webhooks.db`
-- [ ] Vérifier `config.yaml` structure (ancien format)
-- [ ] Déterminer `default_chain` à utiliser
-- [ ] Tester la nouvelle config.yaml en DEV
-- [ ] Vérifier les webhooks existants (compte)
-- [ ] Vérifier les Telegram chats existants (compte)
+- [ ] Backup `webhooks.db`
+- [ ] Check `config.yaml` structure (old format)
+- [ ] Determine `default_chain` to use
+- [ ] Test new config.yaml in DEV
+- [ ] Check existing webhooks (count)
+- [ ] Check existing Telegram chats (count)
 
 ### MIGRATION
-- [ ] Arrêter gnomonitoring
-- [ ] Mettre à jour `config.yaml`
-- [ ] Déployer le nouveau binaire
-- [ ] Démarrer gnomonitoring (migrations appliquées automatiquement)
-- [ ] Vérifier les logs pour erreurs
+- [ ] Stop gnomonitoring
+- [ ] Update `config.yaml`
+- [ ] Deploy new binary
+- [ ] Start gnomonitoring (migrations applied automatically)
+- [ ] Check logs for errors
 
 ### POST-MIGRATION
-- [ ] Vérifier `chain_id` a été ajouté partout
-- [ ] Tester l'API: `GET /Participation?chain=betanet&address=...`
-- [ ] Tester Telegram: `/chain` command
-- [ ] Tester GovDAO: `/chain` command
-- [ ] Vérifier les webhooks reçoivent les alertes
-- [ ] Vérifier les rapports Telegram fonctionnent
-- [ ] Archiver la backup: `webhooks.db.backup-2026-03-19`
+- [ ] Verify `chain_id` was added everywhere
+- [ ] Test API: `GET /Participation?chain=betanet&address=...`
+- [ ] Test Telegram: `/chain` command
+- [ ] Test GovDAO: `/chain` command
+- [ ] Verify webhooks receive alerts
+- [ ] Verify Telegram reports work
+- [ ] Archive backup: `webhooks.db.backup-2026-03-19`
 
 ---
 
-## 🎯 Tableau Récapitulatif des Changements
+## 🎯 Summary Table of Changes
 
 ### Configuration
 
-| Élément | Ancien | Nouveau | Action |
+| Element | Old | New | Action |
 |---------|--------|---------|--------|
-| Format config | Flat (rpc_endpoint, graphql) | Hierarchical (chains) | Rewrite config.yaml |
-| Nombres de chaînes | 1 | N (enabled: true) | Ajouter nouvelles chaînes |
-| Default chain | Implicite (première) | Explicite (default_chain) | Spécifier dans config |
+| Config format | Flat (rpc_endpoint, graphql) | Hierarchical (chains) | Rewrite config.yaml |
+| Number of chains | 1 | N (enabled: true) | Add new chains |
+| Default chain | Implicit (first) | Explicit (default_chain) | Specify in config |
 
-### Base de Données
+### Database
 
-| Table | Avant | Après | Données | Migration |
-|-------|-------|-------|---------|-----------|
-| daily_participations | sans chain_id | avec chain_id | Set à 'betanet' | ALTER TABLE |
-| alert_logs | sans chain_id | avec chain_id | Set à 'betanet' | ALTER TABLE |
-| addr_monikers | sans chain_id | avec chain_id | Set à 'betanet' | ALTER TABLE |
-| telegram_* | sans chain_id | avec chain_id | Set à 'betanet' | ALTER TABLE |
-| webhooks_* | sans chain_id | avec chain_id (NULL) | Unchanged | ALTER TABLE |
+| Table | Before | After | Data | Migration |
+|-------|--------|-------|---------|-----------|
+| daily_participations | no chain_id | with chain_id | Set to 'betanet' | ALTER TABLE |
+| alert_logs | no chain_id | with chain_id | Set to 'betanet' | ALTER TABLE |
+| addr_monikers | no chain_id | with chain_id | Set to 'betanet' | ALTER TABLE |
+| telegram_* | no chain_id | with chain_id | Set to 'betanet' | ALTER TABLE |
+| webhooks_* | no chain_id | with chain_id (NULL) | Unchanged | ALTER TABLE |
 
 ### API
 
-| Endpoint | Avant | Après | Change |
-|----------|-------|-------|--------|
+| Endpoint | Before | After | Change |
+|----------|--------|-------|--------|
 | GET /Participation | Global | ?chain=betanet | Optional param |
 | GET /uptime | Global | ?chain=betanet | Optional param |
 | POST /webhooks | Global scope | chain_id (optional) | Chain scoping |
@@ -382,66 +382,66 @@ systemctl start gnomonitoring
 
 ### Telegram
 
-| Commande | Avant | Après | Comportement |
-|----------|-------|-------|---|
-| /subscribe | Single chain | Per-chat choice | Utilise /setchain |
-| /status | Single chain | Per-chat choice | Utilise /setchain |
-| /chain | N/A | List chains | NOUVEAU |
-| /setchain | N/A | Switch chain | NOUVEAU |
+| Command | Before | After | Behavior |
+|---------|--------|-------|---|
+| /subscribe | Single chain | Per-chat choice | Uses /setchain |
+| /status | Single chain | Per-chat choice | Uses /setchain |
+| /chain | N/A | List chains | NEW |
+| /setchain | N/A | Switch chain | NEW |
 
 ---
 
-## 📝 Commandes Utiles de Vérification
+## 📝 Useful Verification Commands
 
 ```bash
-# 1. Vérifier la DB après migration
+# 1. Check DB after migration
 sqlite3 backend/db/webhooks.db "PRAGMA table_info(daily_participations);"
 
-# 2. Compter les lignes par chaîne
+# 2. Count rows per chain
 sqlite3 backend/db/webhooks.db "SELECT chain_id, COUNT(*) FROM daily_participations GROUP BY chain_id;"
 
-# 3. Vérifier les indexes
+# 3. Check indexes
 sqlite3 backend/db/webhooks.db ".indices"
 
-# 4. Vérifier la taille de la DB
+# 4. Check DB size
 ls -lh backend/db/webhooks.db
 
-# 5. Vérifier les webhooks
+# 5. Check webhooks
 sqlite3 backend/db/webhooks.db "SELECT type, COUNT(*), COUNT(CASE WHEN chain_id IS NOT NULL THEN 1 END) FROM webhook_validators GROUP BY type;"
 ```
 
 ---
 
-## 🚨 Erreurs Courantes et Solutions
+## 🚨 Common Errors and Solutions
 
-### Erreur 1: `column chain_id already exists`
-**Cause:** La colonne a déjà été ajoutée
-**Solution:** Vérifier le schéma, la migration est idempotente
+### Error 1: `column chain_id already exists`
+**Cause:** The column was already added
+**Solution:** Check the schema, the migration is idempotent
 
-### Erreur 2: `config.yaml: missing field rpc_endpoint`
-**Cause:** Format config non mis à jour
-**Solution:** Utiliser le format hierarchique avec `chains:`
+### Error 2: `config.yaml: missing field rpc_endpoint`
+**Cause:** Config format not updated
+**Solution:** Use the hierarchical format with `chains:`
 
-### Erreur 3: Webhooks ne reçoivent rien
-**Cause:** chain_id = NULL (correct) mais handlers ne filtrent pas
-**Solution:** Redémarrer l'application, vérifier les logs
+### Error 3: Webhooks receive nothing
+**Cause:** chain_id = NULL (correct) but handlers don't filter
+**Solution:** Restart the application, check logs
 
-### Erreur 4: Telegram commands /chain, /setchain introuvables
-**Cause:** Vieux binaire en mémoire ou pas compilé
+### Error 4: Telegram commands /chain, /setchain not found
+**Cause:** Old binary in memory or not compiled
 **Solution:** `go build ./...` + `systemctl restart gnomonitoring`
 
 ---
 
-## 📞 Support et Questions
+## 📞 Support and Questions
 
-Pour les questions sur la migration:
-1. Vérifier que `config.yaml` est correct
-2. Vérifier que `default_chain` corresponds à votre setup
-3. Consulter les logs: `journalctl -u gnomonitoring -f`
-4. Utiliser les commandes de vérification ci-dessus
+For questions about migration:
+1. Verify that `config.yaml` is correct
+2. Verify that `default_chain` matches your setup
+3. Check logs: `journalctl -u gnomonitoring -f`
+4. Use the verification commands above
 
 ---
 
-**Status:** ✅ Migration Multi-Chain Ready
+**Status:** ✅ Multi-Chain Migration Ready
 **Document Version:** 2026-03-19
 **Applicable to:** Phase 9 and later
