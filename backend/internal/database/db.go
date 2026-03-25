@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ===================================State GovDao=====================================
@@ -19,7 +20,7 @@ func InsertGovdao(db *gorm.DB, id int, chainID, url, title, tx, status string) e
 		Tx:      tx,
 		Status:  status,
 	}
-	return db.Create(&govdao).Error
+	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&govdao).Error
 
 }
 
