@@ -22,7 +22,7 @@ Ces logs génèrent des centaines ou milliers de lignes par heure en fonctionnem
 
 | Fichier | Log actuel | Action | Raison |
 |---------|-----------|--------|--------|
-| `gnovalidator/gnovalidator_realtime.go` | `✅ Saved participation for %s (%s) at height %d: %v` | Supprimer | Se déclenche pour chaque validateur à chaque bloc → ~600 lignes/min avec 10 validateurs |
+| `gnovalidator/gnovalidator_realtime.go` | `✅ Saved participation for %s (%s) at height %d: %v` | **Remplacer** par `[monitor][%s] synced block %d` toutes les 100 blocs (`if h % 100 == 0`) | Trop verbeux (1 ligne/validateur/bloc) mais nécessaire pour confirmer que le sync est vivant |
 | `gnovalidator/gnovalidator_realtime.go` | `⏱️ Skipping resolve alert for %s : already sent` | Supprimer | Se déclenche pour chaque validateur toutes les 20 secondes en fonctionnement normal |
 | `gnovalidator/gnovalidator_realtime.go` | `==========================Start resolv Alert==========00==` | Supprimer | Bannière décorative avec typo, toutes les 20 secondes par chain |
 | `database/db_metrics.go` | `📦 Loaded from DB — Addr: %s, Moniker: %s` | Supprimer | Se déclenche par validateur à chaque refresh moniker (toutes les 5 min) |

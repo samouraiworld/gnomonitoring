@@ -190,7 +190,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	// Use context-aware DB for all queries so they abort on timeout/cancellation.
 	db = db.WithContext(ctx)
 
-	log.Printf("🔄 [%s] Starting metrics update...", chainID)
+	log.Printf("[metrics][%s] updating", chainID)
 
 	// Blocker 1 fix: Delete stale per-validator metrics for this chain before
 	// re-populating. If a validator disappeared since the last cycle, its old
@@ -211,40 +211,34 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	// ValidatorParticipation (current calendar month)
 	participationRates, err := database.GetCurrentPeriodParticipationRate(db, chainID, "current_month")
 	if err != nil {
-		log.Printf("❌ [%s] Phase1.ValidatorParticipation: %v", chainID, err)
+		log.Printf("[metrics][%s] ValidatorParticipation error: %v", chainID, err)
 	} else {
-		log.Printf("   → ValidatorParticipation: %d validators", len(participationRates))
 		for _, stat := range participationRates {
 			ValidatorParticipation.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.ParticipationRate)
 		}
 	}
 
 	// MissedBlocks
-	log.Printf("   → Calculating MissedBlocks...")
 	missedStats, err := CalculateMissedBlocks(db, chainID)
 	if err != nil {
-		log.Printf("❌ [%s] Phase1.MissedBlocks: %v", chainID, err)
+		log.Printf("[metrics][%s] MissedBlocks error: %v", chainID, err)
 	} else {
-		log.Printf("   → MissedBlocks: %d validators", len(missedStats))
 		for _, stat := range missedStats {
 			MissedBlocks.WithLabelValues(chainID, stat.Address, stat.Moniker).Set(float64(stat.Missed))
 		}
 	}
 
 	// ConsecutiveMissedBlocks
-	log.Printf("   → Calculating ConsecutiveMissedBlocks...")
 	consecutiveStats, err := CalculateConsecutiveMissedBlocks(db, chainID)
 	if err != nil {
-		log.Printf("❌ [%s] Phase1.ConsecutiveMissedBlocks: %v", chainID, err)
+		log.Printf("[metrics][%s] ConsecutiveMissedBlocks error: %v", chainID, err)
 	} else {
-		log.Printf("   → ConsecutiveMissedBlocks: %d validators", len(consecutiveStats))
 		for _, stat := range consecutiveStats {
 			ConsecutiveMissedBlocks.WithLabelValues(chainID, stat.Address, stat.Moniker).Set(float64(stat.Count))
 		}
 	}
 
 	// MissedBlocksWindow (1h, 24h, 7d)
-	log.Printf("   → Calculating MissedBlocksWindow...")
 	windows := map[string]time.Duration{
 		"1h":  time.Hour,
 		"24h": 24 * time.Hour,
@@ -254,7 +248,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 		since := time.Now().Add(-dur)
 		windowStats, err := database.GetMissedBlocksWindow(db, chainID, since)
 		if err != nil {
-			log.Printf("❌ [%s] Phase1.MissedBlocksWindow[%s]: %v", chainID, windowLabel, err)
+			log.Printf("[metrics][%s] MissedBlocksWindow[%s] error: %v", chainID, windowLabel, err)
 			continue
 		}
 		for _, stat := range windowStats {
@@ -263,36 +257,30 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	}
 
 	// ValidatorUptime (last 500 blocks)
-	log.Printf("   → Calculating ValidatorUptime...")
 	uptimeStats, err := database.UptimeMetricsaddr(db, chainID)
 	if err != nil {
-		log.Printf("❌ [%s] Phase1.ValidatorUptime: %v", chainID, err)
+		log.Printf("[metrics][%s] ValidatorUptime error: %v", chainID, err)
 	} else {
-		log.Printf("   → ValidatorUptime: %d validators", len(uptimeStats))
 		for _, stat := range uptimeStats {
 			ValidatorUptime.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.Uptime)
 		}
 	}
 
 	// ValidatorOperationTime (days since last down)
-	log.Printf("   → Calculating OperationTime...")
 	operationStats, err := database.OperationTimeMetricsaddr(db, chainID)
 	if err != nil {
-		log.Printf("❌ [%s] Phase1.OperationTime: %v", chainID, err)
+		log.Printf("[metrics][%s] OperationTime error: %v", chainID, err)
 	} else {
-		log.Printf("   → OperationTime: %d validators", len(operationStats))
 		for _, stat := range operationStats {
 			ValidatorOperationTime.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.DaysDiff)
 		}
 	}
 
 	// ValidatorTxContribution (current month)
-	log.Printf("   → Calculating TxContribution...")
 	txStats, err := database.TxContrib(db, chainID, "current_month")
 	if err != nil {
-		log.Printf("❌ [%s] Phase1.TxContribution: %v", chainID, err)
+		log.Printf("[metrics][%s] TxContribution error: %v", chainID, err)
 	} else {
-		log.Printf("   → TxContribution: %d validators", len(txStats))
 		allZero := true
 		for _, s := range txStats {
 			if s.TxContrib > 0 {
@@ -301,7 +289,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 			}
 		}
 		if len(txStats) > 0 && allZero {
-			log.Printf("⚠️  [%s] TxContribution: all values are 0 — proposer data may be missing for this chain", chainID)
+			log.Printf("[metrics][%s] TxContribution: all zero — proposer data may be missing", chainID)
 		}
 		for _, stat := range txStats {
 			ValidatorTxContribution.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.TxContrib)
@@ -309,24 +297,20 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	}
 
 	// ValidatorMissingBlocksMonth (current month)
-	log.Printf("   → Calculating MissingBlocksMonth...")
 	missingStats, err := database.MissingBlock(db, chainID, "current_month")
 	if err != nil {
-		log.Printf("❌ [%s] Phase1.MissingBlocksMonth: %v", chainID, err)
+		log.Printf("[metrics][%s] MissingBlocksMonth error: %v", chainID, err)
 	} else {
-		log.Printf("   → MissingBlocksMonth: %d validators", len(missingStats))
 		for _, stat := range missingStats {
 			ValidatorMissingBlocksMonth.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(float64(stat.MissingBlock))
 		}
 	}
 
 	// ValidatorFirstSeenUnix (unix timestamp of first participation)
-	log.Printf("   → Calculating FirstSeen...")
 	firstSeenStats, err := database.GetFirstSeen(db, chainID)
 	if err != nil {
-		log.Printf("❌ [%s] Phase1.FirstSeen: %v", chainID, err)
+		log.Printf("[metrics][%s] FirstSeen error: %v", chainID, err)
 	} else {
-		log.Printf("   → FirstSeen: %d validators", len(firstSeenStats))
 		for _, stat := range firstSeenStats {
 			// Parse the date string returned from SQL (format: "YYYY-MM-DD HH:MM:SS" or with timezone)
 			var t time.Time
@@ -343,7 +327,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 				}
 			}
 			if parseErr != nil {
-				log.Printf("⚠️ Failed to parse first_seen date for %s: %v", stat.Addr, parseErr)
+				log.Printf("[metrics][%s] failed to parse first_seen date for %s: %v", chainID, stat.Addr, parseErr)
 				continue
 			}
 			ValidatorFirstSeenUnix.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(float64(t.Unix()))
@@ -351,48 +335,46 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	}
 
 	// Phase 2: Chain-level metrics
-	log.Printf("📈 [%s] PHASE 2: Chain metrics", chainID)
 
 	activeCount, err := database.GetActiveValidatorCount(db, chainID)
 	if err != nil {
-		log.Printf("❌ [%s] Phase2.ActiveValidatorCount: %v", chainID, err)
+		log.Printf("[metrics][%s] ActiveValidatorCount error: %v", chainID, err)
 	} else {
 		ChainActiveValidators.WithLabelValues(chainID).Set(float64(activeCount))
 	}
 
 	avgRate, err := database.GetAvgParticipationRate(db, chainID)
 	if err != nil {
-		log.Printf("❌ [%s] Phase2.AvgParticipation: %v", chainID, err)
+		log.Printf("[metrics][%s] AvgParticipation error: %v", chainID, err)
 	} else {
 		ChainAvgParticipationRate.WithLabelValues(chainID).Set(avgRate)
 	}
 
 	height, err := database.GetCurrentChainHeight(db, chainID)
 	if err != nil {
-		log.Printf("❌ [%s] Phase2.CurrentHeight: %v", chainID, err)
+		log.Printf("[metrics][%s] CurrentHeight error: %v", chainID, err)
 	} else {
 		ChainCurrentHeight.WithLabelValues(chainID).Set(float64(height))
 	}
 
 	// Phase 3: Alert metrics
-	log.Printf("🚨 [%s] PHASE 3: Alert metrics", chainID)
 	for _, level := range []string{"CRITICAL", "WARNING"} {
 		alertActiveCount, err := database.GetActiveAlertCount(db, chainID, level)
 		if err != nil {
-			log.Printf("❌ [%s] Phase3.ActiveAlerts[%s]: %v", chainID, level, err)
+			log.Printf("[metrics][%s] ActiveAlerts[%s] error: %v", chainID, level, err)
 			continue
 		}
 		ActiveAlerts.WithLabelValues(chainID, level).Set(float64(alertActiveCount))
 
 		totalCount, err := database.GetTotalAlertCount(db, chainID, level)
 		if err != nil {
-			log.Printf("❌ [%s] Phase3.TotalAlerts[%s]: %v", chainID, level, err)
+			log.Printf("[metrics][%s] TotalAlerts[%s] error: %v", chainID, level, err)
 			continue
 		}
 		AlertsTotal.WithLabelValues(chainID, level).Set(float64(totalCount))
 	}
 
-	log.Printf("✅ [%s] All metrics updated", chainID)
+	log.Printf("[metrics][%s] update complete", chainID)
 	return nil
 }
 
@@ -406,11 +388,11 @@ func StartMetricsUpdater(db *gorm.DB) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("PANIC in StartMetricsUpdater: %v", r)
+				log.Printf("[metrics] panic recovered: %v", r)
 			}
 		}()
 
-		log.Printf("StartMetricsUpdater started. Enabled chains: %v", internal.EnabledChains)
+		log.Printf("[metrics] started, chains: %v", internal.EnabledChains)
 
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), metricsTimeout)
@@ -419,16 +401,15 @@ func StartMetricsUpdater(db *gorm.DB) {
 				func(cid string) {
 					defer func() {
 						if r := recover(); r != nil {
-							log.Printf("PANIC in metrics update [%s]: %v", cid, r)
+							log.Printf("[metrics][%s] panic recovered: %v", cid, r)
 						}
 					}()
 
-					log.Printf("-> Processing chain: %s", cid)
 					if err := UpdatePrometheusMetricsFromDB(db, cid, ctx); err != nil {
 						if ctx.Err() != nil {
-							log.Printf("TIMEOUT metrics update cycle exceeded %v, skipping remaining chains", metricsTimeout)
+							log.Printf("[metrics] cycle timed out after %v, remaining chains skipped", metricsTimeout)
 						} else {
-							log.Printf("ERROR [%s] metrics update: %v", cid, err)
+							log.Printf("[metrics][%s] update failed: %v", cid, err)
 						}
 					}
 				}(chainID)
