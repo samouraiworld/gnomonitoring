@@ -24,7 +24,7 @@ func StartAggregator(db *gorm.DB) {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						log.Printf("❌ [aggregator] panic recovered: %v", r)
+						log.Printf("[aggregator] panic recovered: %v", r)
 					}
 				}()
 
@@ -37,7 +37,7 @@ func StartAggregator(db *gorm.DB) {
 				}
 			}()
 			// Only reached after a panic — brief pause before restarting.
-			log.Printf("⚠️  [aggregator] restarting after panic")
+			log.Printf("[aggregator] restarting after panic")
 			time.Sleep(30 * time.Second)
 		}
 	}()
@@ -46,10 +46,10 @@ func StartAggregator(db *gorm.DB) {
 func runAggregation(db *gorm.DB) {
 	for _, chainID := range internal.EnabledChains {
 		if err := AggregateChain(db, chainID); err != nil {
-			log.Printf("❌ [aggregator][%s] aggregation failed: %v", chainID, err)
+			log.Printf("[aggregator][%s] aggregation failed: %v", chainID, err)
 		}
 		if err := PruneRawData(db, chainID); err != nil {
-			log.Printf("❌ [aggregator][%s] prune failed: %v", chainID, err)
+			log.Printf("[aggregator][%s] prune failed: %v", chainID, err)
 		}
 	}
 }
@@ -124,7 +124,7 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 	}
 
 	if totalRows > 0 {
-		log.Printf("✅ [aggregator][%s] aggregated %d rows over %d days", chainID, totalRows, len(days))
+		log.Printf("[aggregator][%s] aggregated %d rows over %d days", chainID, totalRows, len(days))
 	}
 	return nil
 }
@@ -157,7 +157,7 @@ func PruneRawData(db *gorm.DB, chainID string) error {
 	}
 
 	if totalPruned > 0 {
-		log.Printf("🗑️  [aggregator][%s] pruned %d raw rows (> %d days old)", chainID, totalPruned, rawRetentionDays)
+		log.Printf("[aggregator][%s] pruned %d raw rows (older than %d days)", chainID, totalPruned, rawRetentionDays)
 	}
 	return nil
 }

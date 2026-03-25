@@ -16,12 +16,11 @@ import (
 )
 
 func startChainMonitoring(db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
-	log.Printf("Starting monitoring for chain: %s", chainID)
+	log.Printf("[main] starting monitoring for chain %s", chainID)
 
 	go gnovalidator.StartValidatorMonitoring(db, chainID, chainCfg)
 	go govdao.StartGovDAo(db, chainID, chainCfg.GraphqlEndpoint, chainCfg.RPCEndpoint, chainCfg.GnowebEndpoint)
 
-	log.Printf("Monitoring started for chain: %s", chainID)
 }
 
 func main() {
@@ -33,27 +32,27 @@ func main() {
 
 	db, err := database.InitDB("./db/webhooks.db")
 	if err != nil {
-		log.Fatalf("❌ Failed to initialize database: %v", err)
+		log.Fatalf("[main] failed to initialize database: %v", err)
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		log.Fatalf("❌ Failed to get underlying SQL DB: %v", err)
+		log.Fatalf("[main] failed to get underlying SQL DB: %v", err)
 	}
 
 	if err := sqlDB.Ping(); err != nil {
-		log.Fatalf("❌ Database is not reachable: %v", err)
+		log.Fatalf("[main] database not reachable: %v", err)
 	}
 
-	log.Println("✅ Database connection established successfully")
+	log.Printf("[main] database ready")
 
 	// ==================== Per-Chain Monitoring Loops =============== //
-	log.Printf("Spawning monitoring loops for %d enabled chains: %v", len(internal.EnabledChains), internal.EnabledChains)
+	log.Printf("[main] enabled chains (%d): %v", len(internal.EnabledChains), internal.EnabledChains)
 
 	for _, chainID := range internal.EnabledChains {
 		chainCfg, err := internal.Config.GetChainConfig(chainID)
 		if err != nil {
-			log.Printf("Skipping chain %s: %v", chainID, err)
+			log.Printf("[main] skipping chain %s: %v", chainID, err)
 			continue
 		}
 		go startChainMonitoring(db, chainID, chainCfg)
@@ -64,7 +63,7 @@ func main() {
 	if !*internal.DisableReport {
 		go scheduler.InitScheduler(db)
 	} else {
-		log.Println("⚠️ Daily report scheduler disabled by flag")
+		log.Printf("[main] daily report scheduler disabled")
 	}
 
 	// ====================== Gov Dao Proposal ====================================== //
@@ -80,7 +79,7 @@ func main() {
 
 	go func() {
 		if err := telegram.StartCommandLoop(ctx, internal.Config.TokenTelegramValidator, handlers, callbackHandler, "validator", db, internal.Config.DefaultChain); err != nil {
-			log.Fatalf("command loop error bot validator : %v", err)
+			log.Fatalf("[main] validator bot command loop failed: %v", err)
 		}
 	}()
 
@@ -97,7 +96,7 @@ func main() {
 
 	go func() {
 		if err := telegram.StartCommandLoop(ctxgovdao, internal.Config.TokenTelegramGovdao, handlersgovdao, nil, "govdao", db, internal.Config.DefaultChain); err != nil {
-			log.Fatalf("command loop error bot govdao: %v", err)
+			log.Fatalf("[main] govdao bot command loop failed: %v", err)
 		}
 	}()
 

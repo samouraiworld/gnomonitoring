@@ -56,12 +56,11 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 			// log.Printf("name %s addr %s", m[1], m[2])
 		}
 
-		log.Printf("✅ Fetched %d valopers from valopers.Render page %d\n", len(matches), page)
 
 		page++
 	}
 
-	log.Printf("🎉 Total valopers fetched: %d\n", len(allValopers))
+	log.Printf("[valoper] fetched %d valopers", len(allValopers))
 	return allValopers, nil
 }
 func GetGenesisMonikers(rpcURL string) (map[string]string, error) {
@@ -131,7 +130,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEnd
 		return e
 	})
 	if err != nil {
-		log.Printf("❌ Failed to retrieve validators after retries: %v", err)
+		log.Printf("[valoper][%s] failed to retrieve validators after retries: %v", chainID, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -196,19 +195,17 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEnd
 	}
 
 	for addr, moniker := range tempMonikers {
-		log.Printf("🔹 Validator: %s — Moniker: %s", addr, moniker)
 		SetMoniker(chainID, addr, moniker)
 	}
 
-	log.Printf("✅ MonikerMap initialized with %d active validators\n", len(tempMonikers))
+	log.Printf("[valoper][%s] moniker map initialized: %d validators", chainID, len(tempMonikers))
 
 	// Sync MonikerMap to addr_monikers table
 	for addr, moniker := range tempMonikers {
 		if err := database.UpsertAddrMoniker(db, chainID, addr, moniker); err != nil {
-			log.Printf("⚠️ Failed to upsert addr_moniker %s: %v", addr, err)
+			log.Printf("[valoper][%s] failed to upsert moniker for %s: %v", chainID, addr, err)
 		}
 	}
-	log.Printf("✅ addr_monikers synced (%d entries)", len(MonikerMap))
 }
 func doWithRetry(attempts int, sleep time.Duration, fn func() error) error {
 	var err error
@@ -217,7 +214,7 @@ func doWithRetry(attempts int, sleep time.Duration, fn func() error) error {
 		if err == nil {
 			return nil
 		}
-		log.Printf("🔁 Retry %d/%d after error: %v", i+1, attempts, err)
+		log.Printf("[valoper] retry %d/%d: %v", i+1, attempts, err)
 		time.Sleep(sleep)
 		sleep *= 2 // backoff
 	}

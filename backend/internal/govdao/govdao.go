@@ -103,7 +103,6 @@ func GetMessageTitle(height int, graphqlEndpoint string) error {
 	}
 
 	// Log la réponse brute
-	log.Printf("Blocks fetched: %+v\n", respData)
 
 	// // Parcours les transactions et décode le content_raw
 	// for _, block := range respData.GetBlocks {
@@ -193,7 +192,7 @@ func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEnd
 	for {
 		c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		if err != nil {
-			log.Printf("WebsocketGovdao dial error: %v — retrying in %s", err, backoff)
+			log.Printf("[govdao][%s] dial error: %v — retrying in %s", chainID, err, backoff)
 			time.Sleep(backoff)
 			if backoff < backoffMax {
 				backoff *= 2
@@ -211,7 +210,7 @@ func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEnd
 			Type: "connection_init",
 		}
 		if err := c.WriteJSON(initMsg); err != nil {
-			log.Printf("❌ WriteJSON initMsg: %v", err)
+			log.Printf("[govdao][%s] send init message failed: %v", chainID, err)
 		}
 
 		query := `
@@ -250,22 +249,21 @@ func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEnd
 			},
 		}
 		if err := c.WriteJSON(startMsg); err != nil {
-			log.Printf("❌ WriteJSON startMsg: %v", err)
+			log.Printf("[govdao][%s] send start message failed: %v", chainID, err)
 		}
 
 		readErr := false
 		for {
 			_, message, err := c.ReadMessage()
 			if err != nil {
-				log.Println("Read error:", err)
+				log.Printf("[govdao][%s] websocket read error: %v", chainID, err)
 				readErr = true
 				break
 			}
-			log.Println("Message sent:", string(message))
 
 			var msg WSMessage
 			if err := json.Unmarshal(message, &msg); err != nil {
-				log.Println("JSON decode error:", err)
+				log.Printf("[govdao][%s] JSON decode error: %v", chainID, err)
 				continue
 			}
 
@@ -280,7 +278,7 @@ func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEnd
 
 		c.Close()
 		if readErr {
-			log.Printf("WebsocketGovdao lost connection — retrying in %s", backoff)
+			log.Printf("[govdao][%s] connection lost — retrying in %s", chainID, backoff)
 			time.Sleep(backoff)
 			if backoff < backoffMax {
 				backoff *= 2
@@ -366,7 +364,7 @@ func GetTxsByBlockHeight(height int, graphqlEndpoint string) (*TxBlock, error) {
 func InitGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
 	Trans, err := FetchGovDAOEvents(graphqlEndpoint)
 	if err != nil {
-		log.Printf("Error fetch govdao %s", err)
+		log.Printf("[govdao][%s] init fetch failed: %v", chainID, err)
 		return
 	}
 	for _, tx := range Trans {
@@ -386,26 +384,24 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, gr
 					// Convert ID to Int
 					idInt, err := strconv.Atoi(attr.Value)
 					if err != nil {
-						log.Printf("Error converting id to int: %v", err)
+						log.Printf("[govdao][%s] error parsing proposal ID: %v", chainID, err)
 						continue
 					}
 
 					// Get Title
 					title, err := ExtractTitle(idInt, rpcEndpoint)
 					if err != nil {
-						log.Printf("Error fetching title: %v", err)
+						log.Printf("[govdao][%s] error fetching title: %v", chainID, err)
 						continue
 					}
 
 					status, err := ExtractProposalRender(idInt, rpcEndpoint)
 					if err != nil {
-						log.Printf("Error fetching status: %v", err)
+						log.Printf("[govdao][%s] error fetching status: %v", chainID, err)
 						continue
 					}
 
 					// Show block height
-					log.Printf("Title: %s", title)
-					log.Printf("Block Height: %d", tx.BlockHeight)
 
 					// Get hash of transaction
 					txData, err := GetTxsByBlockHeight(tx.BlockHeight, graphqlEndpoint)
@@ -418,16 +414,14 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, gr
 						"https://gnoscan.io/transactions/details?txhash=%s",
 						txData.Hash,
 					)
-					log.Printf("tx URL %s", txurl)
 
 					// Insert to db
-					log.Printf("ID: %d", idInt)
 					if err := database.InsertGovdao(db, idInt, chainID, url, title, txurl, status); err != nil {
-						log.Printf("❌ InsertGovdao: %v", err)
+						log.Printf("[govdao][%s] InsertGovdao error: %v", chainID, err)
 					}
 					if who == "socket" {
 						if err := internal.MultiSendReportGovdao(idInt, title, url, txurl, db); err != nil {
-							log.Printf("❌ MultiSendReportGovdao: %v", err)
+							log.Printf("[govdao][%s] MultiSendReportGovdao error: %v", chainID, err)
 						}
 					}
 
@@ -463,7 +457,6 @@ func ExtractProposalRender(proposalID int, rpcEndpoint string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Println(res)
 
 	switch {
 	case strings.Contains(res, "ACCEPTED"):
@@ -480,24 +473,24 @@ func ExtractProposalRender(proposalID int, rpcEndpoint string) (string, error) {
 func CheckProposalStatus(db *gorm.DB) {
 	var govdao []database.Govdao
 	if err := db.Find(&govdao).Error; err != nil {
-		log.Printf("Error fetching proposals: %v", err)
+		log.Printf("[govdao] error fetching proposals: %v", err)
 		return
 	}
 
 	for _, p := range govdao {
 		chainCfg, err := internal.Config.GetChainConfig(p.ChainID)
 		if err != nil {
-			log.Printf("CheckProposalStatus: unknown chain %q for proposal %d: %v", p.ChainID, p.Id, err)
+			log.Printf("[govdao] unknown chain %q for proposal %d: %v", p.ChainID, p.Id, err)
 			continue
 		}
 		currentStatus, err := ExtractProposalRender(p.Id, chainCfg.RPCEndpoint)
 		if err != nil {
-			log.Printf("Error fetching status for %d: %v", p.Id, err)
+			log.Printf("[govdao][%s] error fetching status for proposal %d: %v", p.ChainID, p.Id, err)
 			continue
 		}
 
 		if currentStatus == "ACCEPTED" && p.Status != "ACCEPTED" {
-			log.Printf("✅ Proposal %d (%s) has been ACCEPTED!", p.Id, p.Title)
+			log.Printf("[govdao] proposal %d (%s) accepted", p.Id, p.Title)
 
 			// Send notification
 			msg := fmt.Sprintf("--- \n 🗳️"+
@@ -506,7 +499,7 @@ func CheckProposalStatus(db *gorm.DB) {
 				" ACCEPTED",
 				p.Id, p.Title, p.Url)
 			if err := internal.SendInfoGovdao(msg, db); err != nil {
-				log.Printf("❌ SendInfoGovdao: %v", err)
+				log.Printf("[govdao] SendInfoGovdao error: %v", err)
 			}
 
 			// Send Telegram message
@@ -519,14 +512,14 @@ func CheckProposalStatus(db *gorm.DB) {
 				p.Url,
 			)
 			if err := telegram.MsgTelegram(msgT, internal.Config.TokenTelegramGovdao, "govdao", db); err != nil {
-				log.Printf("❌ MsgTelegram: %v", err)
+				log.Printf("[govdao] MsgTelegram error: %v", err)
 			}
 
 			// update GovDao (explicit WHERE to handle id=0)
 			if err := db.Model(&database.Govdao{}).
 				Where("id = ?", p.Id).
 				Update("status", "ACCEPTED").Error; err != nil {
-				log.Printf("❌ Failed to update govdao status id=%d: %v", p.Id, err)
+				log.Printf("[govdao] failed to update proposal %d status: %v", p.Id, err)
 			}
 		}
 	}
@@ -539,7 +532,7 @@ func StartProposalWatcher(db *gorm.DB) {
 
 	for {
 		<-ticker.C
-		log.Println("⏳ Checking proposal status...")
+		log.Printf("[govdao] checking proposal statuses")
 		CheckProposalStatus(db)
 	}
 }

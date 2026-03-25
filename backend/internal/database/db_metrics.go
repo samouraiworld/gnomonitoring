@@ -80,8 +80,6 @@ func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 
 	startStr := start.Format("2006-01-02")
 	endStr := end.Format("2006-01-02")
-	log.Printf("start %s", startStr)
-	log.Printf("end %s", endStr)
 
 	result := db.
 		Model(&AlertLog{}).
@@ -95,11 +93,10 @@ func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 }
 
 func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string) ([]ParticipationRate, error) {
-	log.Println("==========Start Get Participate Rate ")
 	var results []ParticipationRate
 	startStr, _, err := getPeriodParams(period)
 	if err != nil {
-		log.Printf("Error invalid period %s", err)
+		log.Printf("[db] invalid period: %v", err)
 		return nil, err
 	}
 
@@ -229,7 +226,7 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 
 	startStr, _, err := getPeriodParams(period)
 	if err != nil {
-		log.Printf("Error invalid period %s", err)
+		log.Printf("[db] invalid period: %v", err)
 		return nil, err
 	}
 
@@ -274,7 +271,7 @@ func MissingBlock(db *gorm.DB, chainID, period string) ([]MissingBlockMetrics, e
 
 	startStr, _, err := getPeriodParams(period)
 	if err != nil {
-		log.Printf("Error invalid period %s", err)
+		log.Printf("[db] invalid period: %v", err)
 		return nil, err
 	}
 
@@ -352,9 +349,8 @@ func GetMoniker(db *gorm.DB, chainID string) (map[string]string, error) {
 	monikerMap := make(map[string]string)
 	for _, e := range entries {
 		monikerMap[e.Addr] = e.Moniker
-		log.Printf("📦 Loaded from DB — Addr: %s, Moniker: %s", e.Addr, e.Moniker)
 	}
-	log.Printf("✅ Loaded %d monikers from DB", len(monikerMap))
+	log.Printf("[db] loaded %d monikers", len(monikerMap))
 	return monikerMap, nil
 }
 

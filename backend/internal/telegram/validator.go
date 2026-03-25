@@ -208,11 +208,11 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 
 			msg, err := reportActivate(db, chatID, chainID, activate)
 			if err != nil {
-				log.Printf("error report activate%s", err)
+				log.Printf("[telegram] report activate error: %v", err)
 			}
 
 			if err := SendMessageTelegram(token, chatID, msg); err != nil {
-				log.Printf("send %s failed: %v", "/missing", err)
+				log.Printf("[telegram] send /report failed: %v", err)
 			}
 
 		},
@@ -246,7 +246,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 			}
 			setActiveChain(chatID, requested)
 			if err := database.UpdateChatChain(db, chatID, requested); err != nil {
-				log.Printf("⚠️ UpdateChatChain chat_id=%d: %v", chatID, err)
+				log.Printf("[telegram] UpdateChatChain chat=%d: %v", chatID, err)
 			}
 			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("Chain set to <code>%s</code>.", html.EscapeString(requested)))
 		},
@@ -260,7 +260,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 		"*": func(chatID int64, _ string) {
 			if err := SendMessageTelegram(token, chatID,
 				"Unknown command ❓ try /help"); err != nil {
-				log.Printf("send %s failed: %v", "/status", err)
+				log.Printf("[telegram] send failed: %v", err)
 			}
 		},
 	}
@@ -552,7 +552,7 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, chainID, args stri
 	case "list":
 		subs, err := database.GetValidatorStatusList(db, chatID, chainID)
 		if err != nil {
-			log.Printf("subscribe:list fail: %v", err)
+			log.Printf("[telegram] subscribe list failed: %v", err)
 			_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch list of validators.")
 			return
 		}
@@ -685,11 +685,11 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB, defaultChainID stri
 
 		msg, markup, err := buildPaginatedResponse(db, chainID, cmdKey, period, filter, page, limit, sortOrder)
 		if err != nil {
-			log.Printf("error build paginated response (%s): %v", cmdKey, err)
+			log.Printf("[telegram] paginated response error cmd=%s: %v", cmdKey, err)
 			return
 		}
 		if err := EditMessageTelegramWithMarkup(token, chatID, messageID, msg, markup); err != nil {
-			log.Printf("edit message failed (%s): %v", cmdKey, err)
+			log.Printf("[telegram] edit message failed cmd=%s: %v", cmdKey, err)
 		}
 	}
 }
@@ -697,12 +697,12 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB, defaultChainID stri
 func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, chainID, cmdKey, period, filter string, page, limit int, sortOrder string) {
 	msg, markup, err := buildPaginatedResponse(db, chainID, cmdKey, period, filter, page, limit, sortOrder)
 	if err != nil {
-		log.Printf("error build paginated response (%s): %v", cmdKey, err)
+		log.Printf("[telegram] paginated response error cmd=%s: %v", cmdKey, err)
 		_ = SendMessageTelegram(token, chatID, "⚠️ Unable to fetch data.")
 		return
 	}
 	if err := SendMessageTelegramWithMarkup(token, chatID, msg, markup); err != nil {
-		log.Printf("send %s failed: %v", cmdKey, err)
+		log.Printf("[telegram] send failed cmd=%s: %v", cmdKey, err)
 	}
 }
 
@@ -1054,7 +1054,7 @@ func parseIntWithDefault(v string, def int, name string) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		log.Printf("error conversion %s: %v", name, err)
+		log.Printf("[telegram] parse error param=%s: %v", name, err)
 		return def
 	}
 	return n
