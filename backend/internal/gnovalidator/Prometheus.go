@@ -396,10 +396,11 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	return nil
 }
 
-// metricsTimeout is the maximum duration allowed for a single chain's metrics
-// update. If a chain's queries exceed this, the update is abandoned for that
-// cycle so other chains are not starved.
-const metricsTimeout = 2 * time.Minute
+// metricsTimeout is the maximum duration allowed for a full metrics update cycle
+// (all chains combined). With SetMaxOpenConns(1) all chains are serialised on a
+// single connection, so a per-chain timeout would cause later chains to time out
+// while waiting in the pool queue. A single global timeout is simpler and correct.
+const metricsTimeout = 10 * time.Minute
 
 func StartMetricsUpdater(db *gorm.DB) {
 	go func() {
@@ -412,31 +413,33 @@ func StartMetricsUpdater(db *gorm.DB) {
 		log.Printf("StartMetricsUpdater started. Enabled chains: %v", internal.EnabledChains)
 
 		for {
-			var wg sync.WaitGroup
+			ctx, cancel := context.WithTimeout(context.Background(), metricsTimeout)
+
 			for _, chainID := range internal.EnabledChains {
-				wg.Add(1)
-				go func(cid string) {
-					defer wg.Done()
+				func(cid string) {
 					defer func() {
 						if r := recover(); r != nil {
 							log.Printf("PANIC in metrics update [%s]: %v", cid, r)
 						}
 					}()
 
-					ctx, cancel := context.WithTimeout(context.Background(), metricsTimeout)
-					defer cancel()
-
 					log.Printf("-> Processing chain: %s", cid)
 					if err := UpdatePrometheusMetricsFromDB(db, cid, ctx); err != nil {
 						if ctx.Err() != nil {
-							log.Printf("TIMEOUT [%s] metrics update exceeded %v, skipping this cycle", cid, metricsTimeout)
+							log.Printf("TIMEOUT metrics update cycle exceeded %v, skipping remaining chains", metricsTimeout)
 						} else {
 							log.Printf("ERROR [%s] metrics update: %v", cid, err)
 						}
 					}
 				}(chainID)
+
+				// Stop processing remaining chains if the cycle deadline is exceeded.
+				if ctx.Err() != nil {
+					break
+				}
 			}
-			wg.Wait()
+
+			cancel()
 			time.Sleep(5 * time.Minute)
 		}
 	}()
