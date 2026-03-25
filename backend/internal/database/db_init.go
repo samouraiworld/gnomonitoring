@@ -339,6 +339,12 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite allows only one writer at a time. Limiting the pool to a single
+	// connection serialises all access and prevents "database is locked" errors
+	// that arise when multiple goroutines (realtime loop, aggregator, Prometheus
+	// updater, etc.) hold separate connections and race on the write lock.
+	sqlDB.SetMaxOpenConns(1)
+
 	_, err = sqlDB.Exec("PRAGMA journal_mode = WAL;")
 	if err != nil {
 		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
