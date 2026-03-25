@@ -141,7 +141,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 				timeMu.Unlock()
 
 				if IsAlertSent(chainID, "all") && !IsRestoredNotified(chainID, "all") {
-					msg := "✅ Activity Restored: Gno.land is back to normal."
+					msg := fmt.Sprintf("[%s] ✅ Activity Restored: Gno.land is back to normal.", chainID)
 					if err := internal.SendInfoValidator(chainID, msg, "INFO", db); err != nil {
 						log.Printf("❌ SendInfoValidator: %v", err)
 					}
@@ -253,7 +253,7 @@ func WatchNewValidators(db *gorm.DB, chainID string, client gnoclient.Client, rp
 			// Compare with the old Monikermap
 			for addr, moniker := range GetMonikerMap(chainID) {
 				if _, exists := oldMap[addr]; !exists {
-					msg := fmt.Sprintf("✅ **New Validator detected**: %s (%s)", moniker, addr)
+					msg := fmt.Sprintf("[%s] ✅ **New Validator detected**: %s (%s)", chainID, moniker, addr)
 					log.Println(msg)
 					if err := internal.SendInfoValidator(chainID, msg, "info", db); err != nil {
 						log.Printf("❌ SendInfoValidator: %v", err)
@@ -538,7 +538,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 			// log.Printf("Not resolve error")
 			continue
 		}
-		resolveMsg := fmt.Sprintf("✅ RESOLVED: No more missed blocks for %s (%s) at Block %d ", a.Moniker, a.Addr, a.EndHeight+1)
+		resolveMsg := fmt.Sprintf("[%s] ✅ RESOLVED: No more missed blocks for %s (%s) at Block %d", chainID, a.Moniker, a.Addr, a.EndHeight+1)
 		if err := internal.SendResolveValidator(chainID, resolveMsg, a.Addr, db); err != nil {
 			log.Printf("❌ SendResolveValidator: %v", err)
 		}
