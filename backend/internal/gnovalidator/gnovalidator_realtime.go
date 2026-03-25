@@ -265,11 +265,20 @@ func WatchNewValidators(db *gorm.DB, chainID string, client gnoclient.Client, rp
 }
 
 func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Duration) {
+	type missedWindow struct {
+		Addr        string
+		Moniker     string
+		StartHeight int64
+		EndHeight   int64
+		Missed      int
+	}
+
 	go func() {
 		for {
 			today := time.Now().Format("2006-01-02")
 
-			rows, err := db.Raw(`
+			var windows []missedWindow
+			err := db.Raw(`
 				WITH ranked AS (
 					SELECT
 						addr,
@@ -306,22 +315,19 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 				FROM grouped
 				WHERE participated = 0
 				ORDER BY addr, moniker, date, seq_id, block_height
-			`, chainID).Rows()
+			`, chainID).Scan(&windows).Error
 			if err != nil {
 				log.Printf("❌ Error executing query: %v", err)
 				time.Sleep(checkInterval)
 				continue
 			}
 
-			for rows.Next() {
-				var addr, moniker string
-				var missed int
-				var start_height, end_height int64
-
-				if err := rows.Scan(&addr, &moniker, &start_height, &end_height, &missed); err != nil {
-					log.Printf("❌ Error scanning row: %v", err)
-					continue
-				}
+			for _, w := range windows {
+				addr := w.Addr
+				moniker := w.Moniker
+				start_height := w.StartHeight
+				end_height := w.EndHeight
+				missed := w.Missed
 
 				var level string
 				switch {
@@ -416,7 +422,6 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 
 			}
 
-			rows.Close()
 			SendResolveAlerts(db, chainID)
 			time.Sleep(checkInterval)
 		}
