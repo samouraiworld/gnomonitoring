@@ -126,10 +126,11 @@ type AlertLog struct {
 }
 
 type AddrMoniker struct {
-	ID      uint   `gorm:"primaryKey;autoIncrement;column:id"`
-	ChainID string `gorm:"column:chain_id;not null;default:betanet;uniqueIndex:uniq_chain_addr,priority:1"`
-	Addr    string `gorm:"column:addr;not null;uniqueIndex:uniq_chain_addr,priority:2"`
-	Moniker string `gorm:"column:moniker;not null" `
+	ID               uint   `gorm:"primaryKey;autoIncrement;column:id"`
+	ChainID          string `gorm:"column:chain_id;not null;default:betanet;uniqueIndex:uniq_chain_addr,priority:1"`
+	Addr             string `gorm:"column:addr;not null;uniqueIndex:uniq_chain_addr,priority:2"`
+	Moniker          string `gorm:"column:moniker;not null"`
+	FirstActiveBlock int64  `gorm:"column:first_active_block;default:-1"`
 }
 type AlertSummary struct {
 	Moniker     string    `json:"moniker"`
@@ -388,5 +389,86 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("CreateMissingBlocksView: %w", err)
 	}
 
+	if err := PopulateFirstActiveBlocks(db); err != nil {
+		return nil, fmt.Errorf("PopulateFirstActiveBlocks: %w", err)
+	}
+
+	if err := CleanupSpuriousParticipations(db); err != nil {
+		return nil, fmt.Errorf("CleanupSpuriousParticipations: %w", err)
+	}
+
 	return db, nil
+}
+
+// PopulateFirstActiveBlocks sets first_active_block for validators where it is still -1.
+// Queries daily_participation_agregas first (historical data), then daily_participations
+// as a fallback for recent validators within the 7-day retention window.
+// Idempotent: only updates rows where first_active_block = -1.
+func PopulateFirstActiveBlocks(db *gorm.DB) error {
+	result := db.Exec(`
+		UPDATE addr_monikers
+		SET first_active_block = COALESCE(
+			(SELECT first_block_height
+			 FROM daily_participation_agregas
+			 WHERE addr = addr_monikers.addr
+			   AND chain_id = addr_monikers.chain_id
+			   AND participated_count > 0
+			 ORDER BY block_date ASC
+			 LIMIT 1),
+			(SELECT MIN(block_height)
+			 FROM daily_participations
+			 WHERE addr = addr_monikers.addr
+			   AND chain_id = addr_monikers.chain_id
+			   AND participated = 1)
+		)
+		WHERE first_active_block = -1
+	`)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		log.Printf("[db] populated first_active_block for %d validators", result.RowsAffected)
+	}
+	return nil
+}
+
+// CleanupSpuriousParticipations deletes participated=false rows that predate each
+// validator's first_active_block from both daily_participations and daily_participation_agregas.
+// Idempotent: safe to run on every startup (no-op once all spurious rows are removed).
+func CleanupSpuriousParticipations(db *gorm.DB) error {
+	raw := db.Exec(`
+		DELETE FROM daily_participations
+		WHERE participated = 0
+		  AND EXISTS (
+			  SELECT 1 FROM addr_monikers am
+			  WHERE am.addr = daily_participations.addr
+				AND am.chain_id = daily_participations.chain_id
+				AND am.first_active_block > 0
+				AND daily_participations.block_height < am.first_active_block
+		  )
+	`)
+	if raw.Error != nil {
+		return raw.Error
+	}
+	if raw.RowsAffected > 0 {
+		log.Printf("[db] deleted %d spurious participated=false rows from daily_participations", raw.RowsAffected)
+	}
+
+	agrega := db.Exec(`
+		DELETE FROM daily_participation_agregas
+		WHERE EXISTS (
+			SELECT 1 FROM addr_monikers am
+			WHERE am.addr = daily_participation_agregas.addr
+			  AND am.chain_id = daily_participation_agregas.chain_id
+			  AND am.first_active_block > 0
+			  AND daily_participation_agregas.last_block_height < am.first_active_block
+		)
+	`)
+	if agrega.Error != nil {
+		return agrega.Error
+	}
+	if agrega.RowsAffected > 0 {
+		log.Printf("[db] deleted %d spurious rows from daily_participation_agregas", agrega.RowsAffected)
+	}
+	return nil
 }

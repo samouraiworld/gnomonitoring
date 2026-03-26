@@ -17,6 +17,46 @@ import (
 var MonikerMap = make(map[string]map[string]string)
 var MonikerMutex sync.RWMutex
 
+// FirstActiveBlockMap[chainID][addr] = first block height where the validator participated.
+// -1 means unknown (not yet seen or not yet populated).
+var FirstActiveBlockMap = make(map[string]map[string]int64)
+var FirstActiveBlockMutex sync.RWMutex
+
+func GetFirstActiveBlock(chainID, addr string) int64 {
+	FirstActiveBlockMutex.RLock()
+	defer FirstActiveBlockMutex.RUnlock()
+	if chain, ok := FirstActiveBlockMap[chainID]; ok {
+		if fab, ok := chain[addr]; ok {
+			return fab
+		}
+	}
+	return -1
+}
+
+func SetFirstActiveBlock(chainID, addr string, block int64) {
+	FirstActiveBlockMutex.Lock()
+	defer FirstActiveBlockMutex.Unlock()
+	if _, ok := FirstActiveBlockMap[chainID]; !ok {
+		FirstActiveBlockMap[chainID] = make(map[string]int64)
+	}
+	FirstActiveBlockMap[chainID][addr] = block
+}
+
+// GetFirstActiveBlockMap returns a snapshot of the first_active_block map for a chain.
+func GetFirstActiveBlockMap(chainID string) map[string]int64 {
+	FirstActiveBlockMutex.RLock()
+	defer FirstActiveBlockMutex.RUnlock()
+	chain, ok := FirstActiveBlockMap[chainID]
+	if !ok {
+		return make(map[string]int64)
+	}
+	snapshot := make(map[string]int64, len(chain))
+	for addr, fab := range chain {
+		snapshot[addr] = fab
+	}
+	return snapshot
+}
+
 // timeMu protects lastRPCErrorAlert and lastProgressTime since time.Time is not
 // atomic-safe and must be guarded by a mutex.
 var timeMu sync.Mutex
@@ -562,7 +602,20 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 	`
 
 	for valAddr, moniker := range monikerMap {
-		participated := participating[valAddr] // false if not find
+		participated := participating[valAddr] // false if not found
+
+		if participated.Participated {
+			// Dynamic detection: record first_active_block when first seen
+			if GetFirstActiveBlock(chainID, valAddr) == -1 {
+				SetFirstActiveBlock(chainID, valAddr, blockHeight)
+				_ = database.UpsertFirstActiveBlock(tx, chainID, valAddr, blockHeight)
+			}
+		} else {
+			// Guard: skip rows before the validator's activation block
+			if fab := GetFirstActiveBlock(chainID, valAddr); fab > 0 && blockHeight < fab {
+				continue
+			}
+		}
 
 		if err := tx.Exec(stmt, chainID, timeStp, blockHeight, moniker, valAddr, participated.Participated, participated.TxContribution).Error; err != nil {
 			log.Printf("[monitor][%s] error saving participation for %s: %v", chainID, valAddr, err)

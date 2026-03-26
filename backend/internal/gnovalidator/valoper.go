@@ -198,6 +198,16 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEnd
 		SetMoniker(chainID, addr, moniker)
 	}
 
+	// Load first_active_block from DB into FirstActiveBlockMap
+	fabMap, err := database.GetFirstActiveBlocksMap(db, chainID)
+	if err != nil {
+		log.Printf("[valoper][%s] failed to load first_active_block map: %v", chainID, err)
+	} else {
+		for addr, fab := range fabMap {
+			SetFirstActiveBlock(chainID, addr, fab)
+		}
+	}
+
 	log.Printf("[valoper][%s] moniker map initialized: %d validators", chainID, len(tempMonikers))
 
 	// Sync MonikerMap to addr_monikers table

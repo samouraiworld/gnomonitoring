@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
 
@@ -85,6 +86,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 	const chunk = int64(1000)   // number of blocks per tranche
 	const flushThreshold = 3000 // number row before row flush
 
+	firstActiveBlocks := GetFirstActiveBlockMap(chainID)
 	buf := make([]dpRow, 0, flushThreshold)
 
 	for start := from + 1; start <= to; start += chunk {
@@ -129,7 +131,21 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 				}
 			}
 			for valAddr, moniker := range monikerMap {
-				participated := participating[valAddr] // false if not find
+				participated := participating[valAddr] // false if not found
+
+				if participated.Participated {
+					// Dynamic detection: record first_active_block when first seen
+					if fab := firstActiveBlocks[valAddr]; fab == -1 {
+						firstActiveBlocks[valAddr] = h
+						SetFirstActiveBlock(chainID, valAddr, h)
+						_ = database.UpsertFirstActiveBlock(db, chainID, valAddr, h)
+					}
+				} else {
+					// Guard: skip rows before the validator's activation block
+					if fab := firstActiveBlocks[valAddr]; fab > 0 && h < fab {
+						continue
+					}
+				}
 
 				buf = append(buf, dpRow{
 					ChainID:        chainID,
@@ -144,7 +160,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 					if err := flushBatch(db, buf); err != nil {
 						return err
 					}
-					// empty the  buffer
+					// empty the buffer
 					buf = buf[:0]
 				}
 
@@ -167,6 +183,7 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 	const workers = 20
 	const flushThreshold = 2000
 
+	firstActiveBlocks := GetFirstActiveBlockMap(chainID)
 	jobs := make(chan job, 2048)
 	outs := make(chan out, 2048)
 
@@ -200,6 +217,11 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 					}
 					addr := pc.ValidatorAddress.String()
 					seen[addr] = struct{}{}
+					// Dynamic detection: record first_active_block when first seen
+					if fab := firstActiveBlocks[addr]; fab == -1 {
+						SetFirstActiveBlock(chainID, addr, j.H)
+						_ = database.UpsertFirstActiveBlock(db, chainID, addr, j.H)
+					}
 					rows = append(rows, dpRow{
 						ChainID:        chainID,
 						Date:           tStr,
@@ -213,6 +235,10 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 				// participated false
 				for addr, mon := range monikerMap {
 					if _, ok := seen[addr]; ok {
+						continue
+					}
+					// Guard: skip rows before the validator's activation block
+					if fab := firstActiveBlocks[addr]; fab > 0 && j.H < fab {
 						continue
 					}
 					rows = append(rows, dpRow{

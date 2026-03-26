@@ -326,6 +326,14 @@ func DeleteAlertContact(db *gorm.DB, id int, userID string) error {
 	return db.Where("id = ? AND user_id = ?", id, userID).Delete(&AlertContact{}).Error
 }
 
+// UpsertFirstActiveBlock sets first_active_block for a validator only if it is still -1.
+func UpsertFirstActiveBlock(db *gorm.DB, chainID, addr string, block int64) error {
+	return db.Exec(`
+		UPDATE addr_monikers SET first_active_block = ?
+		WHERE chain_id = ? AND addr = ? AND first_active_block = -1
+	`, block, chainID, addr).Error
+}
+
 // UpsertAddrMoniker inserts or updates the moniker for a given validator address.
 func UpsertAddrMoniker(db *gorm.DB, chainID, addr, moniker string) error {
 	return db.Exec(`
