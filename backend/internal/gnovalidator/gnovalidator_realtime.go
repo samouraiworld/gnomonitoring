@@ -332,7 +332,7 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 							ELSE 0
 						END AS new_seq
 					FROM daily_participations
-					WHERE chain_id = ? AND date >= datetime('now', '-24 hours')
+					WHERE chain_id = ? AND date >= datetime('now', '-2 hours')
 				),
 				grouped AS (
 					SELECT
@@ -491,7 +491,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 					ELSE 0
 				END AS new_seq
 			FROM daily_participations
-			WHERE chain_id = ? AND date >= datetime('now', '-24 hours')
+			WHERE chain_id = ? AND date >= datetime('now', '-2 hours')
 		),
 		grouped AS (
 			SELECT
