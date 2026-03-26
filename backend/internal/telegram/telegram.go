@@ -27,7 +27,7 @@ var telegramHTTPClient = &http.Client{Timeout: 10 * time.Second}
 //	}
 type chat struct {
 	ID   int64  `json:"id"`
-	Type string `json:"type"` // optionnel mais utile (private/group/...)
+	Type string `json:"type"` // optional but useful (private/group/...)
 }
 
 type message struct {
@@ -53,7 +53,7 @@ type updatesResp struct {
 }
 type tgEntity struct {
 	Type   string `json:"type"`   // "bot_command"
-	Offset int    `json:"offset"` // position dans msg.Text
+	Offset int    `json:"offset"` // position in msg.Text
 	Length int    `json:"length"`
 }
 
@@ -98,7 +98,7 @@ func SendMessageTelegram(botToken string, chatID int64, text string) error {
 		Ok          bool   `json:"ok"`
 		Description string `json:"description"`
 	}
-	// on décode TOUJOURS (même si 400) pour récupérer Description
+	// always decode (even if 400) to retrieve Description
 	_ = json.NewDecoder(resp.Body).Decode(&res)
 
 	if resp.StatusCode/100 != 2 || !res.Ok {
@@ -364,7 +364,7 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 
 		resp, err := httpClient.Get(url)
 		if err != nil {
-			time.Sleep(2 * time.Second) // petit backoff réseau
+			time.Sleep(2 * time.Second) // small network backoff
 			continue
 		}
 		var payload updatesResp

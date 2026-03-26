@@ -354,6 +354,20 @@ func GetMoniker(db *gorm.DB, chainID string) (map[string]string, error) {
 	return monikerMap, nil
 }
 
+// GetFirstActiveBlocksMap returns a map of addr -> first_active_block for a chain.
+func GetFirstActiveBlocksMap(db *gorm.DB, chainID string) (map[string]int64, error) {
+	var entries []AddrMoniker
+	result := db.Where("chain_id = ?", chainID).Find(&entries)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	fabMap := make(map[string]int64, len(entries))
+	for _, e := range entries {
+		fabMap[e.Addr] = e.FirstActiveBlock
+	}
+	return fabMap, nil
+}
+
 // getPeriodParams returns parameterized date boundaries for a given period.
 // Returns date strings suitable for use as GORM query parameters (not for fmt.Sprintf).
 func getPeriodParams(period string) (startStr, endStr string, err error) {
