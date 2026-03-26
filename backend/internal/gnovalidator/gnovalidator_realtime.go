@@ -372,7 +372,7 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 				case missed >= 30:
 					level = "CRITICAL"
 
-				case missed == 5:
+				case missed >= 5:
 					level = "WARNING"
 
 				default:
