@@ -38,13 +38,13 @@ WHERE chain_id = 'test12'
 UPDATE daily_participations
 SET participated = 0
 WHERE chain_id = 'test12'
-  AND addr = 'g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r'
+  AND addr = 'g15atj32de45nqgm68298aua8ayy4aujwyewegvd'
 
   AND block_height > (
-      SELECT MAX(block_height) - 31
+      SELECT MAX(block_height) - 30
       FROM daily_participations
       WHERE chain_id = 'test12'
-        AND addr = 'g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r'
+        AND addr = 'g15atj32de45nqgm68298aua8ayy4aujwyewegvd'
 
   );
 
