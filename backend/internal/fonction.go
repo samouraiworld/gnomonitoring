@@ -446,17 +446,17 @@ func MultiSendReportGovdao(chainID string, id int, title, urlgnoweb, urltx strin
 
 }
 
-func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook string) error {
+func SendReportGovdao(chainID string, id int, title, urlgnoweb, urltx, typew string, urlwebhook string) error {
 
 	switch typew {
 	case "discord":
 
 		msg := fmt.Sprintf("--- \n"+
-			"🗳️ ** New Proposal N° %d: %s ** -  \n"+
+			"🗳️ ** [%s] New Proposal N° %d: %s ** -  \n"+
 			"🔗source: %s \n"+
 			"🗒️Tx: %s"+
 			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d",
-			id, title, urlgnoweb, urltx, id)
+			chainID, id, title, urlgnoweb, urltx, id)
 		log.Println(msg)
 		sendErr := SendDiscordAlert(msg, urlwebhook)
 		if sendErr != nil {
@@ -466,11 +466,11 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 
 	case "slack":
 		msg := fmt.Sprintf("--- \n"+
-			"🗳️ * New Proposal N° %d: %s * -  \n"+
+			"🗳️ * [%s] New Proposal N° %d: %s * -  \n"+
 			"🔗source: %s \n"+
 			"🗒️Tx: %s"+
 			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d",
-			id, title, urlgnoweb, urltx, id)
+			chainID, id, title, urlgnoweb, urltx, id)
 
 		sendErr := SendSlackAlert(msg, urlwebhook)
 		if sendErr != nil {
@@ -484,7 +484,8 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 
 }
 
-func SendInfoGovdao(msg string, db *gorm.DB) error {
+func SendInfoGovdao(chainID string, msg string, db *gorm.DB) error {
+	msg = fmt.Sprintf("[%s] %s", chainID, msg)
 	type Webhook struct {
 		UserID        string
 		URL           string

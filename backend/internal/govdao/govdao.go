@@ -420,7 +420,7 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, gr
 						log.Printf("[govdao][%s] InsertGovdao error: %v", chainID, err)
 					}
 					if who == "socket" {
-						if err := internal.MultiSendReportGovdao(idInt, title, url, txurl, db); err != nil {
+						if err := internal.MultiSendReportGovdao(chainID, idInt, title, url, txurl, db); err != nil {
 							log.Printf("[govdao][%s] MultiSendReportGovdao error: %v", chainID, err)
 						}
 					}
@@ -489,6 +489,7 @@ func CheckProposalStatus(db *gorm.DB) {
 			continue
 		}
 
+		chainID := p.ChainID
 		if currentStatus == "ACCEPTED" && p.Status != "ACCEPTED" {
 			log.Printf("[govdao] proposal %d (%s) accepted", p.Id, p.Title)
 
@@ -498,15 +499,16 @@ func CheckProposalStatus(db *gorm.DB) {
 				" 🔗source: %s \n "+
 				" ACCEPTED",
 				p.Id, p.Title, p.Url)
-			if err := internal.SendInfoGovdao(msg, db); err != nil {
+			if err := internal.SendInfoGovdao(chainID, msg, db); err != nil {
 				log.Printf("[govdao] SendInfoGovdao error: %v", err)
 			}
 
 			// Send Telegram message
 			msgT := fmt.Sprintf(
-				"🗳️ <b>✅ Proposal Nº %d</b>: %s\n"+
+				"🗳️ [%s] <b>✅ Proposal Nº %d</b>: %s\n"+
 					"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
 					"<b>ACCEPTED</b>\n",
+				chainID,
 				p.Id,
 				p.Title,
 				p.Url,

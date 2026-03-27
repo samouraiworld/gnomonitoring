@@ -415,7 +415,7 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 						log.Printf("error get lastid govdao: %s", err)
 						return
 					}
-					if err := SendReportGovdaoTelegram(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, chatIDToInsert); err != nil {
+					if err := SendReportGovdaoTelegram(govdaolist.ChainID, govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, chatIDToInsert); err != nil {
 						log.Printf("❌ SendReportGovdaoTelegram failed for chat_id=%d: %v", chatIDToInsert, err)
 					}
 				}
