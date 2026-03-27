@@ -131,7 +131,7 @@ func formatStatusProposal(db *gorm.DB, chainID string, limit int) (msg string, e
 		return " <b>No GovDAO proposals available", nil
 	}
 	var builder strings.Builder
-	builder.WriteString("🗳️ <b>Gov Dao Proposal</b>")
+	fmt.Fprintf(&builder, "🗳️ [%s] <b>Gov Dao Proposal</b>", html.EscapeString(chainID))
 
 	// limit
 	if len(status) < limit {

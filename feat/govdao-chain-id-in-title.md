@@ -1,7 +1,8 @@
 # GovDAO Chain ID in Notification Titles
 
-**Status:** PENDING
+**Status:** DONE
 **Date:** 2026-03-26
+**Implemented:** 2026-03-27
 **Impact:** MINOR — Notification formatting only; no DB schema changes, no API changes
 **Category:** User-facing improvement
 
@@ -277,17 +278,76 @@ Verify end-to-end message delivery:
 
 ---
 
+## 12. FOLLOW-UP: Chain ID in Telegram Bot Command Responses
+
+**Status:** PENDING
+**Reported:** 2026-03-27
+
+### Problem
+
+The `/status` command in the GovDAO Telegram bot (`internal/telegram/govdao.go`) does not display the active chain ID in its response. A user monitoring multiple chains cannot tell which chain the proposals belong to.
+
+Currently `/executedproposals` and `/lastproposal` already show the chain ID via `FormatTelegramMsg()`, but `/status` uses a separate `formatStatusProposal()` function that has no chain ID awareness.
+
+### Goal
+
+Add `[chainID]` to the header of the `/status` response so users always know which chain they're looking at.
+
+**Before:**
+```
+🗳️ Proposals status:
+
+Nº 42 — Some Title
+...
+```
+
+**After:**
+```
+🗳️ [test12] Proposals status:
+
+Nº 42 — Some Title
+...
+```
+
+### File to Modify
+
+| File | Function | Change |
+|------|----------|--------|
+| `internal/telegram/govdao.go` | `formatStatusProposal()` | Add `chainID string` parameter; prepend `[chainID]` to the response header |
+| `internal/telegram/govdao.go` | `/status` handler | Pass active `chainID` (already in scope via `getActiveChain`) to `formatStatusProposal()` |
+
+### Implementation
+
+```go
+// formatStatusProposal signature change:
+func formatStatusProposal(chainID string, proposals []database.Govdao) string
+
+// Header line change (first line of the response):
+// Before:
+sb.WriteString("🗳️ Proposals status:\n\n")
+// After:
+fmt.Fprintf(&sb, "🗳️ [%s] Proposals status:\n\n", chainID)
+```
+
+The `chainID` is already available in the `/status` handler via `getActiveChain(chatID, defaultChainID)`.
+
+### Testing
+
+Update the corresponding test in `internal/telegram/govdao_test.go` (if a test for `formatStatusProposal` exists) to assert `[chainID]` appears in the output header.
+
+---
+
 ## 11. VERIFICATION CHECKLIST
 
 After implementation:
 
-- [ ] All functions updated with `chainID` parameter
-- [ ] All call sites pass `chainID` correctly
-- [ ] Telegram title includes `[chainID]`
-- [ ] Discord title includes `[chainID]`
-- [ ] Slack title includes `[chainID]`
-- [ ] Status-change messages include `[chainID]`
-- [ ] Unit tests updated and passing
-- [ ] No regressions in existing tests
+- [x] All functions updated with `chainID` parameter
+- [x] All call sites pass `chainID` correctly
+- [x] Telegram title includes `[chainID]`
+- [x] Discord title includes `[chainID]`
+- [x] Slack title includes `[chainID]`
+- [x] Status-change messages include `[chainID]`
+- [x] Unit tests updated and passing
+- [x] No regressions in existing tests
 - [ ] Manual test: send proposal on test12, verify notification shows `[test12]`
 - [ ] Manual test: send proposal on gnoland1, verify notification shows `[gnoland1]`
