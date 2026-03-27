@@ -418,7 +418,7 @@ func SendInfoValidator(chainID, msg string, level string, db *gorm.DB) error {
 	return nil
 }
 
-func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) error {
+func MultiSendReportGovdao(chainID string, id int, title, urlgnoweb, urltx string, db *gorm.DB) error {
 
 	type Webhook struct {
 		UserID        string
@@ -431,12 +431,12 @@ func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) 
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 	for _, wh := range webhooks {
-		if err := SendReportGovdao(id, title, urlgnoweb, urltx, wh.Type, wh.URL); err != nil {
+		if err := SendReportGovdao(chainID, id, title, urlgnoweb, urltx, wh.Type, wh.URL); err != nil {
 			log.Printf("❌ SendReportGovdao: %v", err)
 		}
 	}
-	// build msg for telegram and senb at all chatid
-	msg := telegram.FormatTelegramMsg(id, title, urlgnoweb, urltx)
+	// build msg for telegram and send to all chatids
+	msg := telegram.FormatTelegramMsg(chainID, id, title, urlgnoweb, urltx)
 	err := telegram.MsgTelegram(msg, Config.TokenTelegramGovdao, "govdao", db)
 	if err != nil {
 		log.Printf("error send govdao telegram  %s", err)
@@ -446,17 +446,17 @@ func MultiSendReportGovdao(id int, title, urlgnoweb, urltx string, db *gorm.DB) 
 
 }
 
-func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook string) error {
+func SendReportGovdao(chainID string, id int, title, urlgnoweb, urltx, typew string, urlwebhook string) error {
 
 	switch typew {
 	case "discord":
 
 		msg := fmt.Sprintf("--- \n"+
-			"🗳️ ** New Proposal N° %d: %s ** -  \n"+
+			"🗳️ ** [%s] New Proposal N° %d: %s ** -  \n"+
 			"🔗source: %s \n"+
 			"🗒️Tx: %s"+
 			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d",
-			id, title, urlgnoweb, urltx, id)
+			chainID, id, title, urlgnoweb, urltx, id)
 		log.Println(msg)
 		sendErr := SendDiscordAlert(msg, urlwebhook)
 		if sendErr != nil {
@@ -466,11 +466,11 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 
 	case "slack":
 		msg := fmt.Sprintf("--- \n"+
-			"🗳️ * New Proposal N° %d: %s * -  \n"+
+			"🗳️ * [%s] New Proposal N° %d: %s * -  \n"+
 			"🔗source: %s \n"+
 			"🗒️Tx: %s"+
 			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d",
-			id, title, urlgnoweb, urltx, id)
+			chainID, id, title, urlgnoweb, urltx, id)
 
 		sendErr := SendSlackAlert(msg, urlwebhook)
 		if sendErr != nil {
@@ -484,7 +484,8 @@ func SendReportGovdao(id int, title, urlgnoweb, urltx, typew string, urlwebhook 
 
 }
 
-func SendInfoGovdao(msg string, db *gorm.DB) error {
+func SendInfoGovdao(chainID string, msg string, db *gorm.DB) error {
+	msg = fmt.Sprintf("[%s] %s", chainID, msg)
 	type Webhook struct {
 		UserID        string
 		URL           string

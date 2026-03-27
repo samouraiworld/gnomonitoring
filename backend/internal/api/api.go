@@ -148,7 +148,7 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "error get lastID GovDao: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := internal.SendReportGovdao(govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, webhook.Type, webhook.URL); err != nil {
+	if err := internal.SendReportGovdao(chainIDForSample, govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, webhook.Type, webhook.URL); err != nil {
 		log.Printf("❌ SendReportGovdao: %v", err)
 	}
 

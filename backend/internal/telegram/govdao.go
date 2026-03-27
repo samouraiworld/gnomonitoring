@@ -131,7 +131,7 @@ func formatStatusProposal(db *gorm.DB, chainID string, limit int) (msg string, e
 		return " <b>No GovDAO proposals available", nil
 	}
 	var builder strings.Builder
-	builder.WriteString("🗳️ <b>Gov Dao Proposal</b>")
+	fmt.Fprintf(&builder, "🗳️ [%s] <b>Gov Dao Proposal</b>", html.EscapeString(chainID))
 
 	// limit
 	if len(status) < limit {
@@ -193,7 +193,7 @@ func FormatGetLastExecute(db *gorm.DB, chainID string, limit int) (msg string, e
 			break
 		}
 
-		format := FormatTelegramMsg(r.Id, r.Title, r.Url, r.Tx)
+		format := FormatTelegramMsg(chainID, r.Id, r.Title, r.Url, r.Tx)
 		builder.WriteString(format)
 		builder.WriteString("\n\n")
 
@@ -216,7 +216,7 @@ func FormatGetLastProposal(db *gorm.DB, chainID string) (msg string, err error) 
 
 	for _, r := range status {
 
-		format := FormatTelegramMsg(r.Id, r.Title, r.Url, r.Tx)
+		format := FormatTelegramMsg(chainID, r.Id, r.Title, r.Url, r.Tx)
 
 		builder.WriteString(format)
 
@@ -225,8 +225,8 @@ func FormatGetLastProposal(db *gorm.DB, chainID string) (msg string, err error) 
 	return builder.String(), err
 }
 
-func SendReportGovdaoTelegram(id int, title, urlgnoweb, urltx, botoken string, chatid int64) error {
-	msg := FormatTelegramMsg(id, title, urlgnoweb, urltx)
+func SendReportGovdaoTelegram(chainID string, id int, title, urlgnoweb, urltx, botoken string, chatid int64) error {
+	msg := FormatTelegramMsg(chainID, id, title, urlgnoweb, urltx)
 
 	err := SendMessageTelegram(botoken, chatid, msg)
 	if err != nil {
@@ -236,16 +236,17 @@ func SendReportGovdaoTelegram(id int, title, urlgnoweb, urltx, botoken string, c
 	return nil
 
 }
-func FormatTelegramMsg(id int, title, proposalURL, txURL string) string {
+func FormatTelegramMsg(chainID string, id int, title, proposalURL, txURL string) string {
 	esc := html.EscapeString
 	voteURL := fmt.Sprintf("https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d", id)
 
 	return fmt.Sprintf(
 
-		"🗳️ <b>New Proposal Nº %d</b>: %s\n"+
+		"🗳️ [%s] <b>New Proposal Nº %d</b>: %s\n"+
 			"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
 			"🗒️ Tx: <a href=\"%s\">Gnoscan</a>\n"+
 			"🖐️ Interact & Vote: <a href=\"%s\">Open proposal on Memba</a>",
+		esc(chainID),
 		id,
 		esc(title),
 		esc(proposalURL),
