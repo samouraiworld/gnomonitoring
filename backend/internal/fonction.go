@@ -454,8 +454,9 @@ func SendReportGovdao(chainID string, id int, title, urlgnoweb, urltx, typew str
 		msg := fmt.Sprintf("--- \n"+
 			"🗳️ ** [%s] New Proposal N° %d: %s ** -  \n"+
 			"🔗source: %s \n"+
-			"🗒️Tx: %s"+
-			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d",
+			"🗒️Tx: %s \n"+
+			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d \n"+
+			" ** Make sure you're using the appropriate network on Memba **",
 			chainID, id, title, urlgnoweb, urltx, id)
 		log.Println(msg)
 		sendErr := SendDiscordAlert(msg, urlwebhook)
@@ -468,8 +469,9 @@ func SendReportGovdao(chainID string, id int, title, urlgnoweb, urltx, typew str
 		msg := fmt.Sprintf("--- \n"+
 			"🗳️ * [%s] New Proposal N° %d: %s * -  \n"+
 			"🔗source: %s \n"+
-			"🗒️Tx: %s"+
-			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d",
+			"🗒️Tx: %s \n"+
+			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d \n"+
+			"* Make sure you're using the appropriate network on Memba *",
 			chainID, id, title, urlgnoweb, urltx, id)
 
 		sendErr := SendSlackAlert(msg, urlwebhook)

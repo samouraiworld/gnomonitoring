@@ -245,7 +245,8 @@ func FormatTelegramMsg(chainID string, id int, title, proposalURL, txURL string)
 		"🗳️ [%s] <b>New Proposal Nº %d</b>: %s\n"+
 			"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
 			"🗒️ Tx: <a href=\"%s\">Gnoscan</a>\n"+
-			"🖐️ Interact & Vote: <a href=\"%s\">Open proposal on Memba</a>",
+			"🖐️ Interact & Vote: <a href=\"%s\">Open proposal on Memba</a> \n"+
+			" <b> Make sure you're using the appropriate network on Memba </b>",
 		esc(chainID),
 		id,
 		esc(title),
