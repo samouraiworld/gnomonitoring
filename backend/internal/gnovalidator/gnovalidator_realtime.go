@@ -154,7 +154,8 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 					elapsed := time.Since(blockTime).Truncate(time.Second)
 
 					msg := fmt.Sprintf(
-						"🚨 CRITICAL : Blockchain stuck at height %d since %s (%s ago)",
+						"🚨 [%s] CRITICAL : Blockchain stuck at height %d since %s (%s ago)",
+						chainID,
 						latest,
 						blockTime.Format(time.RFC822),
 						elapsed,
