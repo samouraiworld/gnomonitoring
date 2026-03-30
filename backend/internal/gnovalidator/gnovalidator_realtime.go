@@ -57,11 +57,11 @@ func GetFirstActiveBlockMap(chainID string) map[string]int64 {
 	return snapshot
 }
 
-// timeMu protects lastRPCErrorAlert and lastProgressTime since time.Time is not
-// atomic-safe and must be guarded by a mutex.
+// timeMu protects the per-chain time maps below since time.Time is not atomic-safe.
 var timeMu sync.Mutex
-var lastRPCErrorAlert time.Time // anti spam for error RPC
-var lastProgressTime = time.Now()
+var lastRPCErrorAlert = make(map[string]time.Time)      // per-chain RPC error anti-spam
+var lastProgressTime = make(map[string]time.Time)       // per-chain last block progress time
+var lastStagnationAlertTime = make(map[string]time.Time) // per-chain last stagnation alert time
 
 // lastProgressHeight[chainID] = block height
 var lastProgressHeight = make(map[string]int64)
@@ -115,14 +115,14 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 				log.Printf("[monitor][%s] error fetching latest height: %v", chainID, err)
 
 				timeMu.Lock()
-				sinceRPCErr := time.Since(lastRPCErrorAlert)
+				sinceRPCErr := time.Since(lastRPCErrorAlert[chainID])
 				timeMu.Unlock()
 				if sinceRPCErr > 10*time.Minute {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
 					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
 					log.Println(msg)
 					timeMu.Lock()
-					lastRPCErrorAlert = time.Now()
+					lastRPCErrorAlert[chainID] = time.Now()
 					timeMu.Unlock()
 				}
 				time.Sleep(10 * time.Second)
@@ -131,15 +131,25 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 			// Stagnation detection
 			lph := GetLastHeight(chainID)
 			timeMu.Lock()
-			lpt := lastProgressTime
+			lpt, lptSet := lastProgressTime[chainID]
+			if !lptSet {
+				lpt = time.Now()
+				lastProgressTime[chainID] = lpt
+			}
+			lastAlert := lastStagnationAlertTime[chainID]
 			timeMu.Unlock()
-			if lph != 0 && latest == lph {
-				if !IsAlertSent(chainID, "all") && time.Since(lpt) > 2*time.Minute {
 
+			if lph != 0 && latest == lph {
+				stuckFor := time.Since(lpt)
+				firstAlert := lastAlert.IsZero()
+				shouldAlert := (firstAlert && stuckFor > 20*time.Second) ||
+					(!firstAlert && time.Since(lastAlert) > 30*time.Minute)
+
+				if shouldAlert {
 					blockTime, err := database.GetTimeOfBlock(db, chainID, latest)
 					if err != nil {
 						log.Printf("[monitor][%s] cannot get block time for height %d: %v", chainID, latest, err)
-						return
+						continue
 					}
 					elapsed := time.Since(blockTime).Truncate(time.Second)
 
@@ -149,34 +159,26 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 						blockTime.Format(time.RFC822),
 						elapsed,
 					)
-
 					log.Println(msg)
 
-					send_at, err := database.GetTimeOfAlert(db, chainID, latest)
-					if err != nil {
-						log.Printf("[monitor][%s] cannot get block time for height %d: %v", chainID, latest, err)
-						return
+					if err := internal.SendInfoValidator(chainID, msg, "CRITICAL", db); err != nil {
+						log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
 					}
-					if send_at.IsZero() {
-
-						if err := internal.SendInfoValidator(chainID, msg, "CRITICAL", db); err != nil {
-							log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
-						}
-						if err := database.InsertAlertlog(db, chainID, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg); err != nil {
-							log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
-						}
+					if err := database.InsertAlertlog(db, chainID, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg); err != nil {
+						log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
 					}
 
+					timeMu.Lock()
+					lastStagnationAlertTime[chainID] = time.Now()
+					timeMu.Unlock()
 					SetAlertSent(chainID, "all", true)
 					SetRestoredNotified(chainID, "all", false)
-					timeMu.Lock()
-					lastProgressTime = time.Now()
-					timeMu.Unlock()
 				}
 			} else {
 				SetLastHeight(chainID, latest)
 				timeMu.Lock()
-				lastProgressTime = time.Now()
+				lastProgressTime[chainID] = time.Now()
+				lastStagnationAlertTime[chainID] = time.Time{}
 				timeMu.Unlock()
 
 				if IsAlertSent(chainID, "all") && !IsRestoredNotified(chainID, "all") {
@@ -193,7 +195,7 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 			}
 
 			timeMu.Lock()
-			lastRPCErrorAlert = time.Time{}
+			lastRPCErrorAlert[chainID] = time.Time{}
 			timeMu.Unlock()
 
 			if latest <= currentHeight {
