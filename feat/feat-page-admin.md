@@ -79,15 +79,15 @@ Default keys and values:
 - [x] Replace constants in `gnovalidator_realtime.go` with reads from `GetThresholds()`
 - [x] Replace constants in `aggregator.go` with reads from `GetThresholds()`
 - [x] Call `LoadThresholds(db)` at startup in `main.go`
-- [ ] Refresh cache on admin write via `PUT /admin/config/thresholds` (Phase 2)
+- [x] Refresh cache on admin write via `PUT /admin/config/thresholds` (Phase 2)
 
 #### 1.4 — Goroutine lifecycle management
 - [x] Add `context.Context` to `StartValidatorMonitoring`, `CollectParticipation`, `WatchNewValidators`, `WatchValidatorAlerts`
 - [x] Add `context.Context` to `StartGovDAo` and `WebsocketGovdao` (with WebSocket close on cancel)
 - [x] Create `backend/internal/chainmanager/manager.go` with `Register`, `Cancel`, `ActiveChains`
 - [x] Use `chainmanager.Register` in `main.go` when starting each chain
-- [ ] `POST /admin/chains` starts new goroutine + registers cancel (Phase 2)
-- [ ] `DELETE /admin/chains/:id` calls cancel + purges DB (Phase 2)
+- [x] `POST /admin/chains` starts new goroutine + registers cancel (Phase 2)
+- [x] `DELETE /admin/chains/:id` calls cancel + purges DB (Phase 2)
 
 ---
 
@@ -96,53 +96,53 @@ Default keys and values:
 All routes are registered under `/admin` with `adminAuthMiddleware`.
 
 #### 2.1 — Live status
-- [ ] `GET /admin/status` — chain heights, active alert counts, total users/webhooks/chats
+- [x] `GET /admin/status` — chain heights, active alert counts, total users/webhooks/chats
 
 #### 2.2 — Chain management
-- [ ] `GET /admin/chains` — list all chains from config + live DB status
-- [ ] `POST /admin/chains` — add chain (write config.yaml + start goroutine)
-- [ ] `PUT /admin/chains/:id` — enable/disable/update RPC endpoints (write config.yaml + reload)
-- [ ] `DELETE /admin/chains/:id` — stop goroutine + remove from config + purge all DB data
-- [ ] `POST /admin/chains/:id/reinit` — purge `daily_participations`, `daily_participation_agregas`, `alert_logs`
-- [ ] `POST /admin/config/reload` — hot-reload `config.yaml` into `internal.Config`
+- [x] `GET /admin/chains` — list all chains from config + live DB status
+- [x] `POST /admin/chains` — add chain (write config.yaml + start goroutine)
+- [x] `PUT /admin/chains/:id` — enable/disable/update RPC endpoints (write config.yaml + reload)
+- [x] `DELETE /admin/chains/:id` — stop goroutine + remove from config + purge all DB data
+- [x] `POST /admin/chains/:id/reinit` — purge `daily_participations`, `daily_participation_agregas`, `alert_logs`
+- [x] `POST /admin/config/reload` — hot-reload `config.yaml` into `internal.Config`
 
 #### 2.3 — Alert configuration
-- [ ] `GET /admin/config/thresholds` — return all `admin_config` key/values
-- [ ] `PUT /admin/config/thresholds` — update one or more keys, refresh in-memory cache
+- [x] `GET /admin/config/thresholds` — return all `admin_config` key/values
+- [x] `PUT /admin/config/thresholds` — update one or more keys, refresh in-memory cache
 
 #### 2.4 — Alert management
-- [ ] `GET /admin/alerts` — list `alert_logs` with filters: `?chain=`, `?level=`, `?from=`, `?to=`
-- [ ] `DELETE /admin/alerts` — purge `alert_logs` for a given `?chain=`
+- [x] `GET /admin/alerts` — list `alert_logs` with filters: `?chain=`, `?level=`, `?from=`, `?to=`
+- [x] `DELETE /admin/alerts` — purge `alert_logs` for a given `?chain=`
 
 #### 2.5 — Moniker management
-- [ ] `GET /admin/monikers` — list all `addr_monikers` rows, optionally filtered by `?chain=`
-- [ ] `POST /admin/monikers` — insert override (chain, addr, moniker)
-- [ ] `PUT /admin/monikers/:chain/:addr` — update moniker name
-- [ ] `DELETE /admin/monikers/:chain/:addr` — delete override
+- [x] `GET /admin/monikers` — list all `addr_monikers` rows, optionally filtered by `?chain=`
+- [x] `POST /admin/monikers` — insert override (chain, addr, moniker)
+- [x] `PUT /admin/monikers/:chain/:addr` — update moniker name
+- [x] `DELETE /admin/monikers/:chain/:addr` — delete override
 
 #### 2.6 — User management
-- [ ] `GET /admin/users` — list all users (user_id, email, name, created_at)
-- [ ] `DELETE /admin/users/:id` — delete user + cascade webhooks, alert_contacts, hour_reports
+- [x] `GET /admin/users` — list all users (user_id, email, name, created_at)
+- [x] `DELETE /admin/users/:id` — delete user + cascade webhooks, alert_contacts, hour_reports
 
 #### 2.7 — Webhook management
-- [ ] `GET /admin/webhooks` — list all webhooks (validator + govdao) across all users and chains
-- [ ] `DELETE /admin/webhooks/:type/:id` — delete any webhook (`type` = `validator` or `govdao`)
-- [ ] `PUT /admin/webhooks/govdao/:id/reset` — reset `last_checked_id` to unblock stuck tracker
+- [x] `GET /admin/webhooks` — list all webhooks (validator + govdao) across all users and chains
+- [x] `DELETE /admin/webhooks/:type/:id` — delete any webhook (`type` = `validator` or `govdao`)
+- [x] `PUT /admin/webhooks/govdao/:id/reset` — reset `last_checked_id` to unblock stuck tracker
 
 #### 2.8 — Telegram management
-- [ ] `GET /admin/telegram/chats` — list all rows from `telegrams` table
-- [ ] `DELETE /admin/telegram/chats/:id` — deregister chat + cascade `telegram_hour_reports` + `telegram_validator_subs`
-- [ ] `GET /admin/telegram/subs` — list all `telegram_validator_subs`, filterable by `?chain=`, `?chat_id=`
-- [ ] `PUT /admin/telegram/subs/:id` — toggle `activate` field
-- [ ] `GET /admin/telegram/schedules` — list all `telegram_hour_reports`
-- [ ] `PUT /admin/telegram/schedules/:chat_id/:chain` — edit hour/minute/timezone/activate
+- [x] `GET /admin/telegram/chats` — list all rows from `telegrams` table
+- [x] `DELETE /admin/telegram/chats/:id` — deregister chat + cascade `telegram_hour_reports` + `telegram_validator_subs`
+- [x] `GET /admin/telegram/subs` — list all `telegram_validator_subs`, filterable by `?chain=`, `?chat_id=`
+- [x] `PUT /admin/telegram/subs/:id` — toggle `activate` field
+- [x] `GET /admin/telegram/schedules` — list all `telegram_hour_reports`
+- [x] `PUT /admin/telegram/schedules/:chat_id/:chain` — edit hour/minute/timezone/activate
 
 #### 2.9 — Web user report schedules
-- [ ] `GET /admin/schedules` — list all `hour_reports`
-- [ ] `PUT /admin/schedules/:user_id` — edit hour/minute/timezone
+- [x] `GET /admin/schedules` — list all `hour_reports`
+- [x] `PUT /admin/schedules/:user_id` — edit hour/minute/timezone
 
 #### 2.10 — GovDAO proposals
-- [ ] `GET /admin/govdao/proposals` — list `govdaos` table, filterable by `?chain=`
+- [x] `GET /admin/govdao/proposals` — list `govdaos` table, filterable by `?chain=`
 
 ---
 
