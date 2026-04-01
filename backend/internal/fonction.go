@@ -35,7 +35,6 @@ type config struct {
 	TokenTelegramGovdao    string                  `yaml:"token_telegram_govdao"`
 	Chains                 map[string]*ChainConfig `yaml:"chains"`
 	DefaultChain           string                  `yaml:"default_chain"`
-	AdminToken             string                  `yaml:"admin_token"`
 
 	// Parsed at load time from AllowOrigin (comma-separated).
 	AllowedOrigins []string `yaml:"-"`

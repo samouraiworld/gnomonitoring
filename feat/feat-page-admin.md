@@ -12,18 +12,28 @@ The interface must be simple, responsive, and entirely contained in a `panel/` d
 
 ## Authentication
 
-**Problem**: The existing API uses Clerk, scoped per `user_id`. The admin panel needs unscoped access
-(e.g., list all users, all webhooks, all alerts).
+**Context**: The admin panel will be served on the **same domain** as the existing app (added by the team
+to the existing Clerk-configured frontend). No satellite domain needed — Clerk free tier is sufficient.
 
-**Why not Clerk**: The admin panel will be on a different domain. Clerk satellite domains (cross-domain
-auth) cost $10/month per domain. Not worth it for an internal tool.
+**Chosen approach**: Clerk JWT + `publicMetadata.role = "admin"` on the user object.
 
-**Chosen approach**: Static admin token in `config.yaml` under `admin_token`, sent via `X-Admin-Token` header.
-No JWT, no session. The token must be generated with `openssl rand -hex 32`.
-In `dev_mode`, the token check is bypassed (same pattern as the existing Clerk bypass).
-Normal users (webhooks, subscriptions) continue to use Clerk unchanged.
+- The admin logs in via the existing Clerk flow (Google, email, etc.).
+- In the Clerk dashboard: User → **Metadata** → set `{ "role": "admin" }` on the admin account.
+- The backend `/admin` middleware validates the Clerk JWT (same as user routes), then calls
+  `user.Get(ctx, userID)` to read `publicMetadata` and checks `role == "admin"`.
+- Normal users without the role receive a 403 Forbidden.
+- In `dev_mode`, the check is bypassed (same pattern as the existing Clerk bypass).
 
-**CORS**: The admin panel domain must be added to `allow_origin` in `config.yaml`.
+**Why this over a static token**:
+- Login via Google — no shared secret to manage.
+- Revoke access instantly by removing the role in Clerk dashboard.
+- Free on Clerk free tier (`publicMetadata` on users has no cost limit).
+- Consistent with the existing auth stack.
+
+**Setup (one-time)**:
+1. Go to Clerk Dashboard → Users → select the admin user.
+2. In the **Public metadata** field, set: `{ "role": "admin" }`.
+3. No code change needed to add/remove admin access in the future.
 
 ---
 
@@ -36,11 +46,11 @@ Progress legend: `[ ]` todo — `[x]` done — `[~]` in progress
 ### Phase 1 — Backend foundation
 
 #### 1.1 — Admin auth middleware
-- [x] Add `AdminToken string` field to `config` struct in `backend/internal/fonction.go`
-- [x] Load `admin_token` from `config.yaml`
-- [x] Create `backend/internal/api/api-admin.go` with `adminAuthMiddleware` function
-- [x] Register `/admin` route group in `api.go` using this middleware
-- [x] Bypass token check in `dev_mode`
+- [x] Create `backend/internal/api/api-admin.go` with `adminRoleMiddleware`
+- [x] Middleware validates Clerk JWT + checks `publicMetadata.role == "admin"` via `user.Get()`
+- [x] Register `/admin` route group in `api.go` behind Clerk + role middleware
+- [x] Bypass check in `dev_mode`
+- ~~`AdminToken` in config~~ — not needed (replaced by Clerk role)
 
 #### 1.2 — `admin_config` DB table
 - [x] Create `AdminConfig` model in `backend/internal/database/db_init.go`
