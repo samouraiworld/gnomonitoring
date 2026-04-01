@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -86,7 +87,7 @@ type Participation struct {
 	TxContribution bool
 }
 
-func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) {
+func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client) {
 	// simulateCount := 0
 	// simulateMax := 4   // for test
 	go func() {
@@ -117,7 +118,8 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 				timeMu.Lock()
 				sinceRPCErr := time.Since(lastRPCErrorAlert[chainID])
 				timeMu.Unlock()
-				if sinceRPCErr > 10*time.Minute {
+				t := GetThresholds()
+				if sinceRPCErr > t.RPCErrorCooldown() {
 					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
 					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
 					log.Println(msg)
@@ -125,7 +127,11 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 					lastRPCErrorAlert[chainID] = time.Now()
 					timeMu.Unlock()
 				}
-				time.Sleep(10 * time.Second)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(10 * time.Second):
+				}
 				continue
 			}
 			// Stagnation detection
@@ -141,9 +147,10 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 
 			if lph != 0 && latest == lph {
 				stuckFor := time.Since(lpt)
+				t := GetThresholds()
 				firstAlert := lastAlert.IsZero()
-				shouldAlert := (firstAlert && stuckFor > 20*time.Second) ||
-					(!firstAlert && time.Since(lastAlert) > 30*time.Minute)
+				shouldAlert := (firstAlert && stuckFor > t.StagnationFirstAlert()) ||
+					(!firstAlert && time.Since(lastAlert) > t.StagnationRepeat())
 
 				if shouldAlert {
 					blockTime, err := database.GetTimeOfBlock(db, chainID, latest)
@@ -200,7 +207,11 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 			timeMu.Unlock()
 
 			if latest <= currentHeight {
-				time.Sleep(3 * time.Second)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(3 * time.Second):
+				}
 				continue
 			}
 			// *** BLOCKING BACKFILL IF LARGE GAP ***
@@ -278,26 +289,31 @@ func CollectParticipation(db *gorm.DB, chainID string, client gnoclient.Client) 
 	}()
 }
 
-func WatchNewValidators(db *gorm.DB, chainID string, client gnoclient.Client, rpcEndpoint string, refreshInterval time.Duration) {
+func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client, rpcEndpoint string, refreshInterval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(refreshInterval)
 		defer ticker.Stop()
 
-		for range ticker.C {
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("[monitor][%s] WatchNewValidators stopped", chainID)
+				return
+			case <-ticker.C:
+				// Copy old map
+				oldMap := GetMonikerMap(chainID)
 
-			// Copy old map
-			oldMap := GetMonikerMap(chainID)
+				// Refresh MonikerMap
+				InitMonikerMap(db, chainID, client, rpcEndpoint)
 
-			// Refresh MonikerMap
-			InitMonikerMap(db, chainID, client, rpcEndpoint)
-
-			// Compare with the old Monikermap
-			for addr, moniker := range GetMonikerMap(chainID) {
-				if _, exists := oldMap[addr]; !exists {
-					msg := fmt.Sprintf("[%s] ✅ **New Validator detected**: %s (%s)", chainID, moniker, addr)
-					log.Println(msg)
-					if err := internal.SendInfoValidator(chainID, msg, "info", db); err != nil {
-						log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
+				// Compare with the old Monikermap
+				for addr, moniker := range GetMonikerMap(chainID) {
+					if _, exists := oldMap[addr]; !exists {
+						msg := fmt.Sprintf("[%s] ✅ **New Validator detected**: %s (%s)", chainID, moniker, addr)
+						log.Println(msg)
+						if err := internal.SendInfoValidator(chainID, msg, "info", db); err != nil {
+							log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
+						}
 					}
 				}
 			}
@@ -305,7 +321,7 @@ func WatchNewValidators(db *gorm.DB, chainID string, client gnoclient.Client, rp
 	}()
 }
 
-func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Duration) {
+func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, checkInterval time.Duration) {
 	type missedWindow struct {
 		Addr        string
 		Moniker     string
@@ -370,12 +386,13 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 				end_height := w.EndHeight
 				missed := w.Missed
 
+				t := GetThresholds()
 				var level string
 				switch {
-				case missed >= 30:
+				case missed >= t.CriticalThreshold:
 					level = "CRITICAL"
 
-				case missed >= 5:
+				case missed >= t.WarningThreshold:
 					level = "WARNING"
 
 				default:
@@ -431,19 +448,21 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 				// 3 check if addr is mute
 
 				var mute int
+				th := GetThresholds()
+				muteDuration := fmt.Sprintf("-%d minutes", th.MuteDurationMinutes)
 				err = db.Raw(`
 					SELECT COUNT(*) FROM alert_logs
        				WHERE chain_id = ? AND addr = ? AND level = "MUTED"
-       				AND strftime('%s',sent_at) >= strftime('%s','now','-60 minutes');
+       				AND strftime('%s',sent_at) >= strftime('%s','now',?);
 
-						`, chainID, addr).Scan(&mute).Error
+						`, chainID, addr, muteDuration).Scan(&mute).Error
 
 				if err != nil {
 					log.Printf("[validator][%s] DB error checking alert_logs: %v", chainID, err)
 
 					continue
 				}
-				if mute >= 1 {
+				if mute >= th.MuteAfterNAlerts {
 					// Enable 1h mute
 					log.Printf("[validator][%s] muting %s for 1h — too many alerts", chainID, moniker)
 
@@ -464,7 +483,12 @@ func WatchValidatorAlerts(db *gorm.DB, chainID string, checkInterval time.Durati
 			}
 
 			SendResolveAlerts(db, chainID)
-			time.Sleep(checkInterval)
+			select {
+			case <-ctx.Done():
+				log.Printf("[monitor][%s] WatchValidatorAlerts stopped", chainID)
+				return
+			case <-time.After(checkInterval):
+			}
 		}
 	}()
 }
@@ -518,9 +542,9 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 		)
 		SELECT addr, moniker, max(end_height) AS end_height, max(start_height) AS start_height
 		FROM series
-		WHERE missed >= 5
+		WHERE missed >= ?
 		GROUP BY addr
-	`, chainID).Scan(&alerts).Error
+	`, chainID, GetThresholds().WarningThreshold).Scan(&alerts).Error
 	if err != nil {
 		log.Printf("[validator][%s] error fetching last alerts: %v", chainID, err)
 		return
@@ -544,16 +568,18 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 		}
 		// Backoff/mute mechanism for repeated resolves
 		var recentResolves int64
+		rth := GetThresholds()
+		resolveMuteDuration := fmt.Sprintf("-%d minutes", rth.MuteDurationMinutes)
 		err = db.Raw(`
         SELECT COUNT(*) FROM alert_logs
         WHERE chain_id = ? AND addr = ? AND level = "RESOLVED"
-       AND strftime('%s',sent_at) >= strftime('%s','now','-60 minutes');
-    `, chainID, a.Addr).Scan(&recentResolves).Error
+       AND strftime('%s',sent_at) >= strftime('%s','now',?);
+    `, chainID, a.Addr, resolveMuteDuration).Scan(&recentResolves).Error
 		if err != nil {
 			log.Printf("[validator][%s] DB error checking recent resolves: %v", chainID, err)
 			continue
 		}
-		if recentResolves >= 4 {
+		if recentResolves >= int64(rth.ResolveMuteAfterN) {
 			// Enable 1h mute
 			log.Printf("[validator][%s] muting %s for 1h — too many resolves", chainID, a.Moniker)
 			if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
@@ -639,18 +665,18 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 	return nil
 }
 
-func StartValidatorMonitoring(db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
+func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
 	rpcClient, err := rpcclient.NewHTTPClient(chainCfg.RPCEndpoint)
 	if err != nil {
 		log.Fatalf("Failed to connect to RPC: %v", err)
 	}
 	client := gnoclient.Client{RPCClient: rpcClient}
 
-	InitMonikerMap(db, chainID, client, chainCfg.RPCEndpoint) // init validator Map
-	WatchNewValidators(db, chainID, client, chainCfg.RPCEndpoint, 5*time.Minute)
-	CollectParticipation(db, chainID, client)         // collect participant
-	WatchValidatorAlerts(db, chainID, 20*time.Second) // DB-based of alerts
-
+	t := GetThresholds()
+	InitMonikerMap(db, chainID, client, chainCfg.RPCEndpoint)
+	WatchNewValidators(ctx, db, chainID, client, chainCfg.RPCEndpoint, t.NewValidatorScan())
+	CollectParticipation(ctx, db, chainID, client)
+	WatchValidatorAlerts(ctx, db, chainID, t.AlertCheckInterval())
 }
 
 // Moniker helpers

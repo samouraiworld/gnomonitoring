@@ -180,7 +180,7 @@ func ExtractGovDAOIDs(txs []Transaction) []string {
 	return ids
 }
 
-func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
+func WebsocketGovdao(ctx context.Context, db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
 	wsURL := strings.Replace(graphqlEndpoint, "http", "ws", 1)
 
 	const (
@@ -190,10 +190,22 @@ func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEnd
 	backoff := backoffMin
 
 	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[govdao][%s] WebsocketGovdao stopped", chainID)
+			return
+		default:
+		}
+
 		c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		if err != nil {
 			log.Printf("[govdao][%s] dial error: %v — retrying in %s", chainID, err, backoff)
-			time.Sleep(backoff)
+			select {
+			case <-ctx.Done():
+				log.Printf("[govdao][%s] WebsocketGovdao stopped during backoff", chainID)
+				return
+			case <-time.After(backoff):
+			}
 			if backoff < backoffMax {
 				backoff *= 2
 				if backoff > backoffMax {
@@ -202,6 +214,12 @@ func WebsocketGovdao(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEnd
 			}
 			continue
 		}
+
+		// Close the WebSocket connection when the context is cancelled.
+		go func(conn *websocket.Conn) {
+			<-ctx.Done()
+			conn.Close()
+		}(c)
 
 		// Successful connection — reset backoff.
 		backoff = backoffMin
@@ -539,7 +557,7 @@ func StartProposalWatcher(db *gorm.DB) {
 	}
 }
 
-func StartGovDAo(db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
+func StartGovDAo(ctx context.Context, db *gorm.DB, chainID string, graphqlEndpoint string, rpcEndpoint string, gnowebEndpoint string) {
 	InitGovdao(db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
-	WebsocketGovdao(db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
+	WebsocketGovdao(ctx, db, chainID, graphqlEndpoint, rpcEndpoint, gnowebEndpoint)
 }

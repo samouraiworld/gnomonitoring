@@ -36,16 +36,16 @@ Progress legend: `[ ]` todo — `[x]` done — `[~]` in progress
 ### Phase 1 — Backend foundation
 
 #### 1.1 — Admin auth middleware
-- [ ] Add `AdminToken string` field to `config` struct in `backend/internal/fonction.go`
-- [ ] Load `admin_token` from `config.yaml`
-- [ ] Create `backend/internal/api/api-admin.go` with `adminAuthMiddleware` function
-- [ ] Register `/admin` route group in `api.go` using this middleware
-- [ ] Bypass token check in `dev_mode`
+- [x] Add `AdminToken string` field to `config` struct in `backend/internal/fonction.go`
+- [x] Load `admin_token` from `config.yaml`
+- [x] Create `backend/internal/api/api-admin.go` with `adminAuthMiddleware` function
+- [x] Register `/admin` route group in `api.go` using this middleware
+- [x] Bypass token check in `dev_mode`
 
 #### 1.2 — `admin_config` DB table
-- [ ] Create `AdminConfig` model in `backend/internal/database/db_init.go`
-- [ ] Add migration to create the table with default values
-- [ ] Add `GetAdminConfig(key)` and `SetAdminConfig(key, value)` helpers in `db_metrics.go`
+- [x] Create `AdminConfig` model in `backend/internal/database/db_init.go`
+- [x] Add migration to create the table with default values (`SeedAdminConfig`)
+- [x] Add `GetAdminConfig(key)` and `SetAdminConfig(key, value)` helpers in `db_admin.go`
 
 Default keys and values:
 
@@ -65,14 +65,19 @@ Default keys and values:
 | `aggregator_period_minutes` | `60` |
 
 #### 1.3 — Replace hardcoded thresholds
-- [ ] Replace constants in `gnovalidator_realtime.go` with reads from `admin_config` table
-- [ ] Cache values in memory; refresh cache on each write via `PUT /admin/config/thresholds`
+- [x] Create `backend/internal/gnovalidator/thresholds.go` with in-memory `Thresholds` cache
+- [x] Replace constants in `gnovalidator_realtime.go` with reads from `GetThresholds()`
+- [x] Replace constants in `aggregator.go` with reads from `GetThresholds()`
+- [x] Call `LoadThresholds(db)` at startup in `main.go`
+- [ ] Refresh cache on admin write via `PUT /admin/config/thresholds` (Phase 2)
 
 #### 1.4 — Goroutine lifecycle management
-- [ ] Wrap each chain's monitoring goroutine with a `context.Context` + per-chain `cancelFunc`
-- [ ] Maintain a `chainRegistry map[string]context.CancelFunc` in memory (in `main.go` or a dedicated manager)
-- [ ] `POST /admin/chains` starts a new goroutine and registers its cancel
-- [ ] `DELETE /admin/chains/:id` calls its cancel, then purges DB
+- [x] Add `context.Context` to `StartValidatorMonitoring`, `CollectParticipation`, `WatchNewValidators`, `WatchValidatorAlerts`
+- [x] Add `context.Context` to `StartGovDAo` and `WebsocketGovdao` (with WebSocket close on cancel)
+- [x] Create `backend/internal/chainmanager/manager.go` with `Register`, `Cancel`, `ActiveChains`
+- [x] Use `chainmanager.Register` in `main.go` when starting each chain
+- [ ] `POST /admin/chains` starts new goroutine + registers cancel (Phase 2)
+- [ ] `DELETE /admin/chains/:id` calls cancel + purges DB (Phase 2)
 
 ---
 

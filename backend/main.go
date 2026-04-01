@@ -7,6 +7,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/api"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainmanager"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/govdao"
@@ -15,12 +16,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// startChainMonitoring launches monitoring goroutines for one chain and registers
+// their shared cancel function in the chainmanager registry.
 func startChainMonitoring(db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
 	log.Printf("[main] starting monitoring for chain %s", chainID)
-
-	go gnovalidator.StartValidatorMonitoring(db, chainID, chainCfg)
-	go govdao.StartGovDAo(db, chainID, chainCfg.GraphqlEndpoint, chainCfg.RPCEndpoint, chainCfg.GnowebEndpoint)
-
+	ctx, cancel := context.WithCancel(context.Background())
+	chainmanager.Register(chainID, cancel)
+	go gnovalidator.StartValidatorMonitoring(ctx, db, chainID, chainCfg)
+	go govdao.StartGovDAo(ctx, db, chainID, chainCfg.GraphqlEndpoint, chainCfg.RPCEndpoint, chainCfg.GnowebEndpoint)
 }
 
 func main() {
@@ -45,6 +48,9 @@ func main() {
 	}
 
 	log.Printf("[main] database ready")
+
+	// ==================== Load admin thresholds from DB ============ //
+	gnovalidator.LoadThresholds(db)
 
 	// ==================== Per-Chain Monitoring Loops =============== //
 	log.Printf("[main] enabled chains (%d): %v", len(internal.EnabledChains), internal.EnabledChains)
