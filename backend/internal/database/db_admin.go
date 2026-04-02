@@ -258,13 +258,30 @@ func UpdateTelegramScheduleAdmin(db *gorm.DB, chatID int64, chainID string, hour
 
 // ── hour_reports (web users) ──────────────────────────────────────────────────
 
-// GetAllHourReportsAdmin returns all web user hour_reports.
-func GetAllHourReportsAdmin(db *gorm.DB) ([]HourReport, error) {
+// HourReportAdmin is a panel-only projection of HourReport with snake_case JSON keys.
+type HourReportAdmin struct {
+	UserID            string `json:"user_id"`
+	DailyReportHour   int    `json:"daily_report_hour"`
+	DailyReportMinute int    `json:"daily_report_minute"`
+	Timezone          string `json:"timezone"`
+}
+
+// GetAllHourReportsAdmin returns all web user hour_reports as panel-safe DTOs.
+func GetAllHourReportsAdmin(db *gorm.DB) ([]HourReportAdmin, error) {
 	var reports []HourReport
 	if err := db.Order("user_id").Find(&reports).Error; err != nil {
 		return nil, err
 	}
-	return reports, nil
+	result := make([]HourReportAdmin, len(reports))
+	for i, r := range reports {
+		result[i] = HourReportAdmin{
+			UserID:            r.UserID,
+			DailyReportHour:   r.DailyReportHour,
+			DailyReportMinute: r.DailyReportMinute,
+			Timezone:          r.Timezone,
+		}
+	}
+	return result, nil
 }
 
 // UpdateHourReportAdmin updates a web user's hour_report.
