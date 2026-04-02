@@ -19,3 +19,6 @@ CODEX.md
 .claudeignore
 backend/db/backup**
 feat/feat-page-admin.md
+panel/node_modules
+panel/dist
+panel/.env
