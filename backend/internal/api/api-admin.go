@@ -90,7 +90,16 @@ func registerAdminRoutes(mux *http.ServeMux, db *gorm.DB) {
 		mux.Handle("/admin/", router)
 	} else {
 		protected := clerkhttp.RequireHeaderAuthorization()
-		mux.Handle("/admin/", protected(adminRoleMiddleware(router)))
+		authed := protected(adminRoleMiddleware(router))
+		corsFirst := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			EnableCORS(w, r)
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			authed.ServeHTTP(w, r)
+		})
+		mux.Handle("/admin/", corsFirst)
 	}
 }
 
