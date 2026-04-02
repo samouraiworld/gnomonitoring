@@ -169,6 +169,11 @@ type FirstSeenMetrics struct {
 	FirstSeen string `json:"firstSeen"`
 }
 
+type AdminConfig struct {
+	Key   string `gorm:"primaryKey;column:key"`
+	Value string `gorm:"column:value;not null"`
+}
+
 // ApplyMultiChainMigrations adds chain_id columns to existing tables when upgrading
 // from a single-chain schema. It is idempotent: it checks for column existence first.
 func ApplyMultiChainMigrations(db *gorm.DB) error {
@@ -364,6 +369,7 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&User{}, &AlertContact{}, &WebhookValidator{},
 		&WebhookGovDAO{}, &HourReport{},
 		&DailyParticipation{}, &DailyParticipationAgrega{}, &AlertLog{}, &AddrMoniker{}, &Govdao{}, &Telegram{}, &TelegramHourReport{}, &TelegramValidatorSub{},
+		&AdminConfig{},
 	)
 	if err != nil {
 		return nil, err
@@ -389,6 +395,10 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("CreateMissingBlocksView: %w", err)
 	}
 
+	if err := SeedAdminConfig(db); err != nil {
+		return nil, fmt.Errorf("SeedAdminConfig: %w", err)
+	}
+
 	if err := PopulateFirstActiveBlocks(db); err != nil {
 		return nil, fmt.Errorf("PopulateFirstActiveBlocks: %w", err)
 	}
@@ -398,6 +408,32 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+// SeedAdminConfig inserts default values for all admin_config keys if they do not exist yet.
+// Idempotent: uses FirstOrCreate so existing values are never overwritten.
+func SeedAdminConfig(db *gorm.DB) error {
+	defaults := map[string]string{
+		"warning_threshold":                "5",
+		"critical_threshold":               "30",
+		"mute_after_n_alerts":              "1",
+		"mute_duration_minutes":            "60",
+		"resolve_mute_after_n":             "4",
+		"stagnation_first_alert_seconds":   "20",
+		"stagnation_repeat_minutes":        "30",
+		"rpc_error_cooldown_minutes":       "10",
+		"new_validator_scan_minutes":       "5",
+		"alert_check_interval_seconds":     "20",
+		"raw_retention_days":               "7",
+		"aggregator_period_minutes":        "60",
+	}
+	for key, value := range defaults {
+		row := AdminConfig{Key: key, Value: value}
+		if err := db.Where(AdminConfig{Key: key}).FirstOrCreate(&row).Error; err != nil {
+			return fmt.Errorf("SeedAdminConfig: seed %q: %w", key, err)
+		}
+	}
+	return nil
 }
 
 // PopulateFirstActiveBlocks sets first_active_block for validators where it is still -1.

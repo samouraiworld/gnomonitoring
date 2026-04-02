@@ -1024,6 +1024,9 @@ func StartWebhookAPI(db *gorm.DB) {
 	clerk.SetKey(internal.Config.ClerkSecretKey)
 	mux := http.NewServeMux()
 
+	// ====================== Admin routes ===================================
+	registerAdminRoutes(mux, db)
+
 	// Create handler wrapper function
 	webhookGovDAOHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

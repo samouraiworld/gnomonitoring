@@ -9,10 +9,8 @@ import (
 	"gorm.io/gorm"
 )
 
-const (
-	rawRetentionDays = 7 // days of raw daily_participations to keep after aggregation
-	aggregatorPeriod = 1 * time.Hour
-)
+// rawRetentionDays and aggregatorPeriod are now read from the admin_config table
+// via GetThresholds(). Default values: 7 days retention, 60 minute aggregation period.
 
 // StartAggregator runs an immediate aggregation pass then repeats every hour.
 // It processes all enabled chains: aggregates complete past days from
@@ -30,7 +28,7 @@ func StartAggregator(db *gorm.DB) {
 
 				runAggregation(db)
 
-				ticker := time.NewTicker(aggregatorPeriod)
+				ticker := time.NewTicker(GetThresholds().AggregatorPeriod())
 				defer ticker.Stop()
 				for range ticker.C {
 					runAggregation(db)
@@ -134,7 +132,8 @@ const pruneBatchSize = 10_000
 // PruneRawData deletes rows from daily_participations older than rawRetentionDays
 // in batches of pruneBatchSize to avoid long write locks on SQLite.
 func PruneRawData(db *gorm.DB, chainID string) error {
-	cutoff := fmt.Sprintf("-%d days", rawRetentionDays)
+	retentionDays := GetThresholds().RawRetentionDays
+	cutoff := fmt.Sprintf("-%d days", retentionDays)
 	var totalPruned int64
 
 	for {
@@ -157,7 +156,7 @@ func PruneRawData(db *gorm.DB, chainID string) error {
 	}
 
 	if totalPruned > 0 {
-		log.Printf("[aggregator][%s] pruned %d raw rows (older than %d days)", chainID, totalPruned, rawRetentionDays)
+		log.Printf("[aggregator][%s] pruned %d raw rows (older than %d days)", chainID, totalPruned, retentionDays)
 	}
 	return nil
 }

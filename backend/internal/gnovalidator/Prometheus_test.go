@@ -88,9 +88,10 @@ func TestUpdatePrometheusMetricsFromDB_MultipleChains(t *testing.T) {
 	gnovalidator.Init()
 
 	// Insert data for multiple chains.
-	// Dates must be in the current month so GetCurrentPeriodParticipationRate finds them.
-	now2 := time.Now()
-	currentMonth := time.Date(now2.Year(), now2.Month(), 5, 0, 0, 0, 0, time.UTC)
+	// Use today's date so the "today" branch of GetCurrentPeriodParticipationRate matches.
+	// A fixed day like 5 would be in the future when tests run early in the month (days 1-4).
+	now2 := time.Now().UTC()
+	currentMonth := time.Date(now2.Year(), now2.Month(), now2.Day(), 0, 0, 0, 0, time.UTC)
 	multiChainData := []database.DailyParticipation{
 		// betanet data - already seeded with g1abc, add more
 		{

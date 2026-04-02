@@ -3,6 +3,7 @@ metrics_port: 8888
 dev_mode: false
 allow_origin: "http://localhost:3000"  # Comma-separated for multiple origins, e.g. "https://gnolove.world, https://memba.samourai.app"
 clerk_secret_key: "sk_test...."  # change me
+# Admin access: set { "role": "admin" } in Clerk dashboard → User → Public metadata
 token_telegram_validator: ""
 token_telegram_govdao: ""
 

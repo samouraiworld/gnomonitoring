@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
@@ -17,6 +18,11 @@ import (
 	"gopkg.in/yaml.v2"
 	"gorm.io/gorm"
 )
+
+// ConfigMu protects mutations to Config and EnabledChains from the admin API.
+// Existing readers (monitoring goroutines) do not hold this lock; mutations are
+// infrequent enough that eventual consistency is acceptable.
+var ConfigMu sync.Mutex
 
 type ChainConfig struct {
 	RPCEndpoint     string `yaml:"rpc_endpoint"`
@@ -115,6 +121,99 @@ func (c *config) ValidateChainID(chainID string) error {
 	if _, ok := c.Chains[chainID]; !ok {
 		return fmt.Errorf("invalid chain ID: %q", chainID)
 	}
+	return nil
+}
+
+// ReloadConfig re-reads config.yaml and replaces Config + EnabledChains in memory.
+func ReloadConfig() error {
+	data, err := os.ReadFile("config.yaml")
+	if err != nil {
+		return fmt.Errorf("ReloadConfig: %w", err)
+	}
+	var newCfg config
+	if err := yaml.Unmarshal(data, &newCfg); err != nil {
+		return fmt.Errorf("ReloadConfig: %w", err)
+	}
+	ConfigMu.Lock()
+	defer ConfigMu.Unlock()
+	Config = newCfg
+	EnabledChains = nil
+	for id, chain := range Config.Chains {
+		if chain.Enabled {
+			EnabledChains = append(EnabledChains, id)
+		}
+	}
+	sort.Strings(EnabledChains)
+	Config.AllowedOrigins = nil
+	for _, raw := range strings.Split(Config.AllowOrigin, ",") {
+		if origin := strings.TrimSpace(raw); origin != "" {
+			Config.AllowedOrigins = append(Config.AllowedOrigins, origin)
+		}
+	}
+	log.Printf("[config] reloaded: enabled chains=%v", EnabledChains)
+	return nil
+}
+
+// WriteConfig serializes the current in-memory Config to config.yaml.
+// Note: the written file will not preserve comments from the original template.
+func WriteConfig() error {
+	ConfigMu.Lock()
+	data, err := yaml.Marshal(Config)
+	ConfigMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("WriteConfig: %w", err)
+	}
+	return os.WriteFile("config.yaml", data, 0644)
+}
+
+// AddChain adds a new chain to Config and, if enabled, to EnabledChains.
+// Returns an error if the chain ID already exists.
+func AddChain(id string, cfg *ChainConfig) error {
+	ConfigMu.Lock()
+	defer ConfigMu.Unlock()
+	if _, exists := Config.Chains[id]; exists {
+		return fmt.Errorf("chain %q already exists", id)
+	}
+	if Config.Chains == nil {
+		Config.Chains = make(map[string]*ChainConfig)
+	}
+	Config.Chains[id] = cfg
+	if cfg.Enabled {
+		EnabledChains = append(EnabledChains, id)
+		sort.Strings(EnabledChains)
+	}
+	return nil
+}
+
+// RemoveChain removes a chain from Config and EnabledChains.
+func RemoveChain(id string) {
+	ConfigMu.Lock()
+	defer ConfigMu.Unlock()
+	delete(Config.Chains, id)
+	for i, c := range EnabledChains {
+		if c == id {
+			EnabledChains = append(EnabledChains[:i], EnabledChains[i+1:]...)
+			break
+		}
+	}
+}
+
+// SetChainEnabled updates the Enabled flag for a chain and rebuilds EnabledChains.
+func SetChainEnabled(id string, enabled bool) error {
+	ConfigMu.Lock()
+	defer ConfigMu.Unlock()
+	chain, ok := Config.Chains[id]
+	if !ok {
+		return fmt.Errorf("unknown chain %q", id)
+	}
+	chain.Enabled = enabled
+	EnabledChains = nil
+	for cid, c := range Config.Chains {
+		if c.Enabled {
+			EnabledChains = append(EnabledChains, cid)
+		}
+	}
+	sort.Strings(EnabledChains)
 	return nil
 }
 
