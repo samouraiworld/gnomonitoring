@@ -1,13 +1,10 @@
 package govdao
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -23,33 +20,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// doGraphQLRequest tries each endpoint in order, returning the response body
-// from the first endpoint that succeeds (HTTP 2xx).
-func doGraphQLRequest(endpoints []string, bodyBytes []byte) ([]byte, error) {
-	var lastErr error
-	for i, url := range endpoints {
-		resp, err := http.Post(url, "application/json", bytes.NewReader(bodyBytes))
-		if err != nil {
-			log.Printf("[graphql] endpoint #%d (%s) failed: %v", i, url, err)
-			lastErr = err
-			continue
-		}
-		if resp.StatusCode >= 500 {
-			resp.Body.Close()
-			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
-			log.Printf("[graphql] endpoint #%d (%s) returned %d", i, url, resp.StatusCode)
-			continue
-		}
-		data, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return data, nil
-	}
-	return nil, fmt.Errorf("all %d GraphQL endpoints failed, last error: %w", len(endpoints), lastErr)
-}
 
 type TxBlock struct {
 	Hash string `json:"hash"`
@@ -240,8 +210,11 @@ func WebsocketGovdao(ctx context.Context, db *gorm.DB, chainID string, graphqlEn
 		default:
 		}
 
-		c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		c, wsResp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		if err != nil {
+			if wsResp != nil {
+				wsResp.Body.Close()
+			}
 			log.Printf("[govdao][%s] dial error: %v — retrying in %s", chainID, err, backoff)
 			select {
 			case <-ctx.Done():
