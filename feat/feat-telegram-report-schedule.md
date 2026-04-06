@@ -74,7 +74,7 @@ In the `/report` handler, after extracting `params`, check for `hour` and/or `mi
 // and triggers a scheduler reload so the new time takes effect immediately.
 func reportSchedule(db *gorm.DB, sched *scheduler.Scheduler, chatID int64, chainID string, params map[string]string) string {
     // 1. Read current schedule (so unspecified params keep their current value).
-    current, err := database.GetTelegramSchedule(db, chatID, chainID)
+    current, err := database.GetHourTelegramReport(db, chatID, chainID)
     if err != nil {
         return "⚠️ No active report schedule found. Use <code>/report activate=true</code> first."
     }
@@ -123,27 +123,28 @@ func reportSchedule(db *gorm.DB, sched *scheduler.Scheduler, chatID int64, chain
 }
 ```
 
-### Step 3 — Add `database.GetTelegramSchedule`
+### Step 3 — Use existing `database.GetHourTelegramReport`
 
-**File:** `internal/database/db_admin.go`
+**No new function needed.**
 
-A simple getter to read the current row so `reportSchedule` can fill in unspecified params with the
-current values instead of silently zeroing them:
+`GetHourTelegramReport(db *gorm.DB, chatID int64, chainID string) (*TelegramHourReport, error)`
+already exists in `internal/database/db_telegram.go` (line 168) and returns exactly the row needed
+(`TelegramHourReport` with `DailyReportHour`, `DailyReportMinute`, `Timezone`, `Activate`).
 
+Replace all references to `database.GetTelegramSchedule` in `reportSchedule` with
+`database.GetHourTelegramReport`.
+
+`TelegramHourReport` model (defined in `db_init.go`):
 ```go
-// GetTelegramSchedule returns the current schedule row for a (chat_id, chain_id) pair.
-// Returns an error if no row exists.
-func GetTelegramSchedule(db *gorm.DB, chatID int64, chainID string) (*TelegramHourReport, error) {
-    var row TelegramHourReport
-    err := db.Where("chat_id = ? AND chain_id = ?", chatID, chainID).First(&row).Error
-    if err != nil {
-        return nil, err
-    }
-    return &row, nil
+type TelegramHourReport struct {
+    ChatID            int64  `gorm:"primaryKey;column:chat_id"`
+    ChainID           string `gorm:"primaryKey;column:chain_id;default:betanet"`
+    DailyReportHour   int    `gorm:"column:daily_report_hour;default:9"`
+    DailyReportMinute int    `gorm:"column:daily_report_minute;default:0"`
+    Activate          bool   `gorm:"column:activate;default:true"`
+    Timezone          string `gorm:"column:timezone;default:Europe/Paris"`
 }
 ```
-
-`TelegramHourReport` is the existing GORM model — no new type needed.
 
 ### Step 4 — Pass the scheduler instance to `BuildTelegramHandlers`
 
@@ -210,7 +211,7 @@ Configure the daily report.
 | File | Change |
 |---|---|
 | `internal/telegram/validator.go` | Extend `/report` handler routing; add `reportSchedule`; update `formatHelp`; add `SchedulerInstance` package var |
-| `internal/database/db_admin.go` | Add `GetTelegramSchedule` |
+| `internal/database/db_telegram.go` | No change — `GetHourTelegramReport` already exists and is reused |
 | `main.go` | Set `telegram.SchedulerInstance = scheduler.Schedulerinstance` |
 
 No DB migration. No new dependency.

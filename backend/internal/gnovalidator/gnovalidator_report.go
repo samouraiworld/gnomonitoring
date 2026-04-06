@@ -99,7 +99,7 @@ func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *
 
 	switch {
 	case userID != nil:
-		SendUserReportInChunks(*userID, msg, db, 1500)
+		SendUserReportInChunks(*userID, chainID, msg, db, 1500)
 	case chatID != nil:
 		if SendTelegramMessage != nil {
 			if err := SendTelegramMessage(internal.Config.TokenTelegramValidator, *chatID, msg); err != nil {
@@ -196,7 +196,7 @@ func GetLastStoredHeight(db *gorm.DB, chainID string) (int64, error) {
 
 	return height, nil
 }
-func SendUserReportInChunks(userID string, fullMsg string, db *gorm.DB, maxLen int) {
+func SendUserReportInChunks(userID, chainID string, fullMsg string, db *gorm.DB, maxLen int) {
 	lines := strings.Split(fullMsg, "\n")
 
 	var buffer strings.Builder
@@ -204,7 +204,7 @@ func SendUserReportInChunks(userID string, fullMsg string, db *gorm.DB, maxLen i
 		// +1
 		if buffer.Len()+len(line)+1 > maxLen {
 			// send chunk
-			err := internal.SendUserReportAlert(userID, buffer.String(), db)
+			err := internal.SendUserReportAlert(userID, chainID, buffer.String(), db)
 			if err != nil {
 				log.Printf("[SendUserReportInChunks] Send error for %s: %v", userID, err)
 			}
@@ -218,7 +218,7 @@ func SendUserReportInChunks(userID string, fullMsg string, db *gorm.DB, maxLen i
 
 	// send ultimate part
 	if buffer.Len() > 0 {
-		err := internal.SendUserReportAlert(userID, buffer.String(), db)
+		err := internal.SendUserReportAlert(userID, chainID, buffer.String(), db)
 		if err != nil {
 			log.Printf("[SendUserReportInChunks] Send error for %s: %v", userID, err)
 		}
