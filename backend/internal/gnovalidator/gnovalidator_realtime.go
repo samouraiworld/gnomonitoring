@@ -76,6 +76,9 @@ var alertMutex sync.RWMutex
 var restoredNotified = make(map[string]map[string]bool)
 var restoreMutex sync.RWMutex
 
+var reportsEnabled = make(map[string]bool)
+var reportsEnabledMu sync.RWMutex
+
 type BlockParticipation struct {
 	Height     int64
 	Validators map[string]bool
@@ -181,6 +184,7 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					timeMu.Unlock()
 					SetAlertSent(chainID, "all", true)
 					SetRestoredNotified(chainID, "all", false)
+					SetReportsEnabled(chainID, false)
 				}
 			} else {
 				SetLastHeight(chainID, latest)
@@ -199,6 +203,7 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					}
 					SetRestoredNotified(chainID, "all", true)
 					SetAlertSent(chainID, "all", false)
+					SetReportsEnabled(chainID, true)
 				}
 			}
 
@@ -751,4 +756,20 @@ func SetRestoredNotified(chainID, addr string, notified bool) {
 		restoredNotified[chainID] = make(map[string]bool)
 	}
 	restoredNotified[chainID][addr] = notified
+}
+
+func IsReportsEnabled(chainID string) bool {
+	reportsEnabledMu.RLock()
+	defer reportsEnabledMu.RUnlock()
+	v, ok := reportsEnabled[chainID]
+	if !ok {
+		return true // default: reports are enabled
+	}
+	return v
+}
+
+func SetReportsEnabled(chainID string, enabled bool) {
+	reportsEnabledMu.Lock()
+	defer reportsEnabledMu.Unlock()
+	reportsEnabled[chainID] = enabled
 }

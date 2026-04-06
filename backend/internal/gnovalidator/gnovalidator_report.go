@@ -38,6 +38,10 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 		select {
 		case <-timer.C:
 			log.Printf("[report] sending for user %s", userID)
+			if !IsReportsEnabled(internal.Config.DefaultChain) {
+				log.Printf("[report] chain %s reports suppressed (stuck or disabled), skipping user %s", internal.Config.DefaultChain, userID)
+				continue
+			}
 			SendDailyStatsForUser(db, internal.Config.DefaultChain, &userID, nil, loc)
 		case <-reload:
 			timer.Stop()
@@ -67,6 +71,10 @@ func SheduleTelegramReport(chatID int64, chainID string, hour, minute int, timez
 		select {
 		case <-timer.C:
 			log.Printf("[report][%s] sending for chat %d", chainID, chatID)
+			if !IsReportsEnabled(chainID) {
+				log.Printf("[report][%s] reports suppressed (stuck or disabled), skipping chat %d", chainID, chatID)
+				continue
+			}
 			SendDailyStatsForUser(db, chainID, nil, &chatID, loc)
 		case <-reload:
 			timer.Stop()
