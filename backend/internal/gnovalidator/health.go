@@ -72,6 +72,12 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 			mu.Lock()
 			snap.LatestBlockHeight = result.SyncInfo.LatestBlockHeight
 			snap.LatestBlockTime = result.SyncInfo.LatestBlockTime
+			// Derive IsStuck from block age as a reliable fallback independent of
+			// the in-memory alertSent flag (which resets on restart).
+			if !snap.IsStuck && !snap.LatestBlockTime.IsZero() &&
+				time.Since(snap.LatestBlockTime) > 30*time.Minute {
+				snap.IsStuck = true
+			}
 			mu.Unlock()
 		}()
 

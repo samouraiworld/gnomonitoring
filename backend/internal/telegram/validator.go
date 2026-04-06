@@ -344,10 +344,10 @@ func formatParticipationRAte(db *gorm.DB, chainID, period string, page, limit in
 	}
 	rates = filterParticipationRates(rates, filter)
 	if len(rates) == 0 {
-		return fmt.Sprintf("📊 <b>Participation rates — %s</b>\nNo data.", html.EscapeString(period)), 1, 1, nil
+		return fmt.Sprintf("📊 <b>Participation rates — %s</b> — <code>%s</code>\nNo data.", html.EscapeString(period), html.EscapeString(chainID)), 1, 1, nil
 	}
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("📊 <b>Participation rates for %s</b>\n\n", period))
+	builder.WriteString(fmt.Sprintf("📊 <b>Participation rates — %s</b> — <code>%s</code>\n\n", html.EscapeString(period), html.EscapeString(chainID)))
 
 	// Sort by participation rate
 	sort.Slice(rates, func(i, j int) bool {
@@ -399,14 +399,14 @@ func formatUptime(db *gorm.DB, chainID string, page, limit int, filter, sortOrde
 	}
 	results = filterUptimeMetrics(results, filter)
 	if len(results) == 0 {
-		return "🕘 <b>Uptime metrics</b>\nNo data.", 1, 1, nil
+		return fmt.Sprintf("🕘 <b>Uptime metrics</b> — <code>%s</code>\nNo data.", html.EscapeString(chainID)), 1, 1, nil
 	}
 
 	// Sort by uptime
 	sort.Slice(results, func(i, j int) bool { return compareFloat(results[i].Uptime, results[j].Uptime, sortOrder) })
 
 	var builder strings.Builder
-	builder.WriteString("🕘 <b>Uptime metrics </b>\n\n")
+	builder.WriteString(fmt.Sprintf("🕘 <b>Uptime metrics</b> — <code>%s</code>\n\n", html.EscapeString(chainID)))
 
 	pageOut, start, end, totalPages := paginate(len(results), page, limit)
 	builder.WriteString(pageInfoLine(pageOut, totalPages))
@@ -454,14 +454,14 @@ func formatOperationTime(db *gorm.DB, chainID string, page, limit int, filter st
 	}
 	results = filterOperationTimeMetrics(results, filter)
 	if len(results) == 0 {
-		return "🕘 <b>Operation time metrics</b>\nNo data.", 1, 1, nil
+		return fmt.Sprintf("🕘 <b>Operation time metrics</b> — <code>%s</code>\nNo data.", html.EscapeString(chainID)), 1, 1, nil
 	}
 
 	// Sort by  (desc)
 	sort.Slice(results, func(i, j int) bool { return results[i].DaysDiff > results[j].DaysDiff })
 
 	var builder strings.Builder
-	builder.WriteString("🕘 <b>Operation time metrics </b>\n\n")
+	builder.WriteString(fmt.Sprintf("🕘 <b>Operation time metrics</b> — <code>%s</code>\n\n", html.EscapeString(chainID)))
 
 	pageOut, start, end, totalPages := paginate(len(results), page, limit)
 	builder.WriteString(pageInfoLine(pageOut, totalPages))
@@ -495,14 +495,14 @@ func FormatTxcontrib(db *gorm.DB, chainID, period string, page, limit int, filte
 	}
 	txcontrib = filterTxContrib(txcontrib, filter)
 	if len(txcontrib) == 0 {
-		return fmt.Sprintf("⚙️ <b>Tx Contrib — %s</b>\nNo data.", html.EscapeString(period)), 1, 1, nil
+		return fmt.Sprintf("⚙️ <b>Tx Contrib — %s</b> — <code>%s</code>\nNo data.", html.EscapeString(period), html.EscapeString(chainID)), 1, 1, nil
 	}
 
 	// Sort by contribution
 	sort.Slice(txcontrib, func(i, j int) bool { return compareFloat(txcontrib[i].TxContrib, txcontrib[j].TxContrib, sortOrder) })
 
 	var builder strings.Builder
-	builder.WriteString(fmt.Sprintf("⚙️ <b>Tx Contrib metrics for %s</b>\n\n", period))
+	builder.WriteString(fmt.Sprintf("⚙️ <b>Tx Contrib — %s</b> — <code>%s</code>\n\n", html.EscapeString(period), html.EscapeString(chainID)))
 
 	pageOut, start, end, totalPages := paginate(len(txcontrib), page, limit)
 	builder.WriteString(pageInfoLine(pageOut, totalPages))
@@ -537,7 +537,7 @@ func formatMissing(db *gorm.DB, chainID, period string, page, limit int, filter 
 	}
 	rows = filterMissing(rows, filter)
 	if len(rows) == 0 {
-		return fmt.Sprintf("🕵️ <b>Missing blocks — %s</b>\nNo data.", html.EscapeString(period)), 1, 1, nil
+		return fmt.Sprintf("🕵️ <b>Missing blocks — %s</b> — <code>%s</code>\nNo data.", html.EscapeString(period), html.EscapeString(chainID)), 1, 1, nil
 	}
 
 	// Sort by missed blocks (desc)
@@ -545,7 +545,7 @@ func formatMissing(db *gorm.DB, chainID, period string, page, limit int, filter 
 
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("🕵️ <b>Missing Blocks — %s</b>\n\n", html.EscapeString(period)))
+	b.WriteString(fmt.Sprintf("🕵️ <b>Missing Blocks — %s</b> — <code>%s</code>\n\n", html.EscapeString(period), html.EscapeString(chainID)))
 
 	pageOut, start, end, totalPages := paginate(len(rows), page, limit)
 	b.WriteString(pageInfoLine(pageOut, totalPages))
