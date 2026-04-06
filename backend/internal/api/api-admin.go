@@ -241,6 +241,7 @@ func handleGetStatus(w http.ResponseWriter, _ *http.Request, db *gorm.DB) {
 		ActiveAlerts   int    `json:"active_alerts"`
 		CriticalAlerts int    `json:"critical_alerts"`
 		IsActive       bool   `json:"goroutine_active"`
+		ReportsEnabled bool   `json:"reports_enabled"`
 	}
 
 	chains := make([]chainStatus, 0)
@@ -254,6 +255,7 @@ func handleGetStatus(w http.ResponseWriter, _ *http.Request, db *gorm.DB) {
 			ActiveAlerts:   warn,
 			CriticalAlerts: crit,
 			IsActive:       chainmanager.IsActive(chainID),
+			ReportsEnabled: gnovalidator.IsReportsEnabled(chainID),
 		})
 	}
 
@@ -375,8 +377,10 @@ func handlePutChain(w http.ResponseWriter, r *http.Request, db *gorm.DB, chainID
 		}
 		if *body.Enabled && !chainmanager.IsActive(chainID) {
 			adminStartChain(db, chainID, chainCfg)
+			gnovalidator.SetReportsEnabled(chainID, true)
 		} else if !*body.Enabled {
 			chainmanager.Cancel(chainID)
+			gnovalidator.SetReportsEnabled(chainID, false)
 		}
 	}
 

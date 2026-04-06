@@ -61,6 +61,7 @@ func main() {
 			log.Printf("[main] skipping chain %s: %v", chainID, err)
 			continue
 		}
+		gnovalidator.SetReportsEnabled(chainID, true)
 		go startChainMonitoring(db, chainID, chainCfg)
 	}
 
