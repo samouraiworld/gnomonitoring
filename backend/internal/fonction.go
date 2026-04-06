@@ -25,10 +25,63 @@ import (
 var ConfigMu sync.Mutex
 
 type ChainConfig struct {
-	RPCEndpoint     string `yaml:"rpc_endpoint"`
-	GraphqlEndpoint string `yaml:"graphql"`
-	GnowebEndpoint  string `yaml:"gnoweb"`
-	Enabled         bool   `yaml:"enabled"`
+	RPCEndpoints     []string `yaml:"rpc_endpoints"`
+	GraphqlEndpoints []string `yaml:"graphqls"`
+	GnowebEndpoints  []string `yaml:"gnowebs"`
+	Enabled          bool     `yaml:"enabled"`
+}
+
+func (c *ChainConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var raw struct {
+		RPCEndpoint      string   `yaml:"rpc_endpoint"`
+		RPCEndpoints     []string `yaml:"rpc_endpoints"`
+		GraphqlEndpoint  string   `yaml:"graphql"`
+		GraphqlEndpoints []string `yaml:"graphqls"`
+		GnowebEndpoint   string   `yaml:"gnoweb"`
+		GnowebEndpoints  []string `yaml:"gnowebs"`
+		Enabled          bool     `yaml:"enabled"`
+	}
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	c.Enabled = raw.Enabled
+	if len(raw.RPCEndpoints) > 0 {
+		c.RPCEndpoints = raw.RPCEndpoints
+	} else if raw.RPCEndpoint != "" {
+		c.RPCEndpoints = []string{raw.RPCEndpoint}
+	}
+	if len(raw.GraphqlEndpoints) > 0 {
+		c.GraphqlEndpoints = raw.GraphqlEndpoints
+	} else if raw.GraphqlEndpoint != "" {
+		c.GraphqlEndpoints = []string{raw.GraphqlEndpoint}
+	}
+	if len(raw.GnowebEndpoints) > 0 {
+		c.GnowebEndpoints = raw.GnowebEndpoints
+	} else if raw.GnowebEndpoint != "" {
+		c.GnowebEndpoints = []string{raw.GnowebEndpoint}
+	}
+	return nil
+}
+
+func (c *ChainConfig) RPCEndpoint() string {
+	if len(c.RPCEndpoints) == 0 {
+		return ""
+	}
+	return c.RPCEndpoints[0]
+}
+
+func (c *ChainConfig) GraphqlEndpoint() string {
+	if len(c.GraphqlEndpoints) == 0 {
+		return ""
+	}
+	return c.GraphqlEndpoints[0]
+}
+
+func (c *ChainConfig) GnowebEndpoint() string {
+	if len(c.GnowebEndpoints) == 0 {
+		return ""
+	}
+	return c.GnowebEndpoints[0]
 }
 
 type config struct {

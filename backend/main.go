@@ -23,7 +23,7 @@ func startChainMonitoring(db *gorm.DB, chainID string, chainCfg *internal.ChainC
 	ctx, cancel := context.WithCancel(context.Background())
 	chainmanager.Register(chainID, cancel)
 	go gnovalidator.StartValidatorMonitoring(ctx, db, chainID, chainCfg)
-	go govdao.StartGovDAo(ctx, db, chainID, chainCfg.GraphqlEndpoint, chainCfg.RPCEndpoint, chainCfg.GnowebEndpoint)
+	go govdao.StartGovDAo(ctx, db, chainID, chainCfg)
 }
 
 func main() {
