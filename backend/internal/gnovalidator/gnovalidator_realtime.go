@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
-	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
@@ -671,15 +670,12 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 }
 
 func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
-	rpcClient, err := rpcclient.NewHTTPClient(chainCfg.RPCEndpoint)
-	if err != nil {
-		log.Fatalf("Failed to connect to RPC: %v", err)
-	}
+	rpcClient := NewFallbackRPCClient(chainCfg.RPCEndpoints)
 	client := gnoclient.Client{RPCClient: rpcClient}
 
 	t := GetThresholds()
-	InitMonikerMap(db, chainID, client, chainCfg.RPCEndpoint)
-	WatchNewValidators(ctx, db, chainID, client, chainCfg.RPCEndpoint, t.NewValidatorScan())
+	InitMonikerMap(db, chainID, client, chainCfg.RPCEndpoint())
+	WatchNewValidators(ctx, db, chainID, client, chainCfg.RPCEndpoint(), t.NewValidatorScan())
 	CollectParticipation(ctx, db, chainID, client)
 	WatchValidatorAlerts(ctx, db, chainID, t.AlertCheckInterval())
 }

@@ -74,14 +74,14 @@ func TestGetChainConfig(t *testing.T) {
 	testConfig := config{
 		Chains: map[string]*ChainConfig{
 			"test12": {
-				RPCEndpoint:     "https://rpc.test12.testnets.gno.land",
-				GraphqlEndpoint: "https://indexer.test12.testnets.gno.land/graphql/query",
-				GnowebEndpoint:  "https://test12.testnets.gno.land",
-				Enabled:         true,
+				RPCEndpoints:     []string{"https://rpc.test12.testnets.gno.land"},
+				GraphqlEndpoints: []string{"https://indexer.test12.testnets.gno.land/graphql/query"},
+				GnowebEndpoints:  []string{"https://test12.testnets.gno.land"},
+				Enabled:          true,
 			},
 			"disabled": {
-				RPCEndpoint: "https://rpc.disabled.testnets.gno.land",
-				Enabled:     false,
+				RPCEndpoints: []string{"https://rpc.disabled.testnets.gno.land"},
+				Enabled:      false,
 			},
 		},
 	}
@@ -90,7 +90,7 @@ func TestGetChainConfig(t *testing.T) {
 	cfg, err := testConfig.GetChainConfig("test12")
 	assert.NoError(t, err)
 	assert.NotNil(t, cfg)
-	assert.Equal(t, "https://rpc.test12.testnets.gno.land", cfg.RPCEndpoint)
+	assert.Equal(t, "https://rpc.test12.testnets.gno.land", cfg.RPCEndpoint())
 
 	// Test getting disabled chain (should return it)
 	cfg, err = testConfig.GetChainConfig("disabled")
@@ -175,7 +175,7 @@ chains:
 	assert.True(t, cfg.Chains["test12"].Enabled)
 }
 
-// TestChainConfigUnmarshal verifies ChainConfig YAML unmarshaling
+// TestChainConfigUnmarshal verifies ChainConfig YAML unmarshaling with singular keys.
 func TestChainConfigUnmarshal(t *testing.T) {
 	yamlData := `
 test12:
@@ -190,9 +190,39 @@ test12:
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(chains))
 	assert.NotNil(t, chains["test12"])
-	assert.Equal(t, "https://rpc.test12.testnets.gno.land", chains["test12"].RPCEndpoint)
-	assert.Equal(t, "https://indexer.test12.testnets.gno.land/graphql/query", chains["test12"].GraphqlEndpoint)
-	assert.Equal(t, "https://test12.testnets.gno.land", chains["test12"].GnowebEndpoint)
+	assert.Equal(t, "https://rpc.test12.testnets.gno.land", chains["test12"].RPCEndpoint())
+	assert.Equal(t, "https://indexer.test12.testnets.gno.land/graphql/query", chains["test12"].GraphqlEndpoint())
+	assert.Equal(t, "https://test12.testnets.gno.land", chains["test12"].GnowebEndpoint())
+	assert.True(t, chains["test12"].Enabled)
+}
+
+// TestChainConfigUnmarshalPlural verifies ChainConfig YAML unmarshaling with plural keys.
+func TestChainConfigUnmarshalPlural(t *testing.T) {
+	yamlData := `
+test12:
+  rpc_endpoints:
+    - "https://rpc1.test12.testnets.gno.land"
+    - "https://rpc2.test12.testnets.gno.land"
+  graphqls:
+    - "https://indexer1.test12.testnets.gno.land/graphql/query"
+    - "https://indexer2.test12.testnets.gno.land/graphql/query"
+  gnowebs:
+    - "https://test12.testnets.gno.land"
+  enabled: true
+`
+
+	var chains map[string]*ChainConfig
+	err := yaml.Unmarshal([]byte(yamlData), &chains)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(chains))
+	assert.NotNil(t, chains["test12"])
+	assert.Equal(t, []string{
+		"https://rpc1.test12.testnets.gno.land",
+		"https://rpc2.test12.testnets.gno.land",
+	}, chains["test12"].RPCEndpoints)
+	assert.Equal(t, "https://rpc1.test12.testnets.gno.land", chains["test12"].RPCEndpoint())
+	assert.Equal(t, 2, len(chains["test12"].GraphqlEndpoints))
+	assert.Equal(t, 1, len(chains["test12"].GnowebEndpoints))
 	assert.True(t, chains["test12"].Enabled)
 }
 

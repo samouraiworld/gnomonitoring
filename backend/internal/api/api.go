@@ -935,9 +935,9 @@ func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 	type ChainInfo struct {
-		RPCEndpoint     string `json:"rpc_endpoint"`
-		GraphqlEndpoint string `json:"graphql"`
-		GnowebEndpoint  string `json:"gnoweb"`
+		RPCEndpoints     []string `json:"rpc_endpoints"`
+		GraphqlEndpoints []string `json:"graphqls"`
+		GnowebEndpoints  []string `json:"gnowebs"`
 	}
 	type InfoResponse struct {
 		EnabledChains []string             `json:"enabled_chains"`
@@ -953,9 +953,9 @@ func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 			continue
 		}
 		info.Chains[chainID] = ChainInfo{
-			RPCEndpoint:     cfg.RPCEndpoint,
-			GraphqlEndpoint: cfg.GraphqlEndpoint,
-			GnowebEndpoint:  cfg.GnowebEndpoint,
+			RPCEndpoints:     cfg.RPCEndpoints,
+			GraphqlEndpoints: cfg.GraphqlEndpoints,
+			GnowebEndpoints:  cfg.GnowebEndpoints,
 		}
 	}
 	json.NewEncoder(w).Encode(info)

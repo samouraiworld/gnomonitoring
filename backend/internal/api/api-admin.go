@@ -70,7 +70,7 @@ func adminStartChain(db *gorm.DB, chainID string, chainCfg *internal.ChainConfig
 	ctx, cancel := context.WithCancel(context.Background())
 	chainmanager.Register(chainID, cancel)
 	go gnovalidator.StartValidatorMonitoring(ctx, db, chainID, chainCfg)
-	go govdao.StartGovDAo(ctx, db, chainID, chainCfg.GraphqlEndpoint, chainCfg.RPCEndpoint, chainCfg.GnowebEndpoint)
+	go govdao.StartGovDAo(ctx, db, chainID, chainCfg)
 }
 
 // registerAdminRoutes attaches all /admin/* handlers to mux.
@@ -280,26 +280,26 @@ func handleGetStatus(w http.ResponseWriter, _ *http.Request, db *gorm.DB) {
 
 func handleGetChains(w http.ResponseWriter, _ *http.Request, db *gorm.DB) {
 	type chainInfo struct {
-		ID          string `json:"id"`
-		RPCEndpoint string `json:"rpc_endpoint"`
-		GraphQL     string `json:"graphql"`
-		GnoWeb      string `json:"gnoweb"`
-		Enabled     bool   `json:"enabled"`
-		GoroutineOK bool   `json:"goroutine_active"`
-		Height      int64  `json:"height"`
+		ID               string   `json:"id"`
+		RPCEndpoints     []string `json:"rpc_endpoints"`
+		GraphqlEndpoints []string `json:"graphqls"`
+		GnowebEndpoints  []string `json:"gnowebs"`
+		Enabled          bool     `json:"enabled"`
+		GoroutineOK      bool     `json:"goroutine_active"`
+		Height           int64    `json:"height"`
 	}
 
 	result := make([]chainInfo, 0, len(internal.Config.Chains))
 	for id, cfg := range internal.Config.Chains {
 		height, _ := database.GetCurrentChainHeight(db, id)
 		result = append(result, chainInfo{
-			ID:          id,
-			RPCEndpoint: cfg.RPCEndpoint,
-			GraphQL:     cfg.GraphqlEndpoint,
-			GnoWeb:      cfg.GnowebEndpoint,
-			Enabled:     cfg.Enabled,
-			GoroutineOK: chainmanager.IsActive(id),
-			Height:      height,
+			ID:               id,
+			RPCEndpoints:     cfg.RPCEndpoints,
+			GraphqlEndpoints: cfg.GraphqlEndpoints,
+			GnowebEndpoints:  cfg.GnowebEndpoints,
+			Enabled:          cfg.Enabled,
+			GoroutineOK:      chainmanager.IsActive(id),
+			Height:           height,
 		})
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -307,26 +307,41 @@ func handleGetChains(w http.ResponseWriter, _ *http.Request, db *gorm.DB) {
 
 func handlePostChain(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	var body struct {
-		ID          string `json:"id"`
-		RPCEndpoint string `json:"rpc_endpoint"`
-		GraphQL     string `json:"graphql"`
-		GnoWeb      string `json:"gnoweb"`
-		Enabled     bool   `json:"enabled"`
+		ID               string   `json:"id"`
+		RPCEndpoint      string   `json:"rpc_endpoint"`
+		RPCEndpoints     []string `json:"rpc_endpoints"`
+		GraphQL          string   `json:"graphql"`
+		GraphqlEndpoints []string `json:"graphqls"`
+		GnoWeb           string   `json:"gnoweb"`
+		GnowebEndpoints  []string `json:"gnowebs"`
+		Enabled          bool     `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if body.ID == "" || body.RPCEndpoint == "" {
-		http.Error(w, "id and rpc_endpoint are required", http.StatusBadRequest)
+
+	// Normalize: if plural slice is empty, wrap the singular string.
+	if len(body.RPCEndpoints) == 0 && body.RPCEndpoint != "" {
+		body.RPCEndpoints = []string{body.RPCEndpoint}
+	}
+	if len(body.GraphqlEndpoints) == 0 && body.GraphQL != "" {
+		body.GraphqlEndpoints = []string{body.GraphQL}
+	}
+	if len(body.GnowebEndpoints) == 0 && body.GnoWeb != "" {
+		body.GnowebEndpoints = []string{body.GnoWeb}
+	}
+
+	if body.ID == "" || len(body.RPCEndpoints) == 0 {
+		http.Error(w, "id and rpc_endpoint (or rpc_endpoints) are required", http.StatusBadRequest)
 		return
 	}
 
 	cfg := &internal.ChainConfig{
-		RPCEndpoint:     body.RPCEndpoint,
-		GraphqlEndpoint: body.GraphQL,
-		GnowebEndpoint:  body.GnoWeb,
-		Enabled:         body.Enabled,
+		RPCEndpoints:     body.RPCEndpoints,
+		GraphqlEndpoints: body.GraphqlEndpoints,
+		GnowebEndpoints:  body.GnowebEndpoints,
+		Enabled:          body.Enabled,
 	}
 	if err := internal.AddChain(body.ID, cfg); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
@@ -345,10 +360,13 @@ func handlePostChain(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 func handlePutChain(w http.ResponseWriter, r *http.Request, db *gorm.DB, chainID string) {
 	var body struct {
-		RPCEndpoint *string `json:"rpc_endpoint"`
-		GraphQL     *string `json:"graphql"`
-		GnoWeb      *string `json:"gnoweb"`
-		Enabled     *bool   `json:"enabled"`
+		RPCEndpoint      *string  `json:"rpc_endpoint"`
+		RPCEndpoints     []string `json:"rpc_endpoints"`
+		GraphQL          *string  `json:"graphql"`
+		GraphqlEndpoints []string `json:"graphqls"`
+		GnoWeb           *string  `json:"gnoweb"`
+		GnowebEndpoints  []string `json:"gnowebs"`
+		Enabled          *bool    `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -361,14 +379,20 @@ func handlePutChain(w http.ResponseWriter, r *http.Request, db *gorm.DB, chainID
 		return
 	}
 
-	if body.RPCEndpoint != nil {
-		chainCfg.RPCEndpoint = *body.RPCEndpoint
+	if len(body.RPCEndpoints) > 0 {
+		chainCfg.RPCEndpoints = body.RPCEndpoints
+	} else if body.RPCEndpoint != nil {
+		chainCfg.RPCEndpoints = []string{*body.RPCEndpoint}
 	}
-	if body.GraphQL != nil {
-		chainCfg.GraphqlEndpoint = *body.GraphQL
+	if len(body.GraphqlEndpoints) > 0 {
+		chainCfg.GraphqlEndpoints = body.GraphqlEndpoints
+	} else if body.GraphQL != nil {
+		chainCfg.GraphqlEndpoints = []string{*body.GraphQL}
 	}
-	if body.GnoWeb != nil {
-		chainCfg.GnowebEndpoint = *body.GnoWeb
+	if len(body.GnowebEndpoints) > 0 {
+		chainCfg.GnowebEndpoints = body.GnowebEndpoints
+	} else if body.GnoWeb != nil {
+		chainCfg.GnowebEndpoints = []string{*body.GnoWeb}
 	}
 	if body.Enabled != nil {
 		if err := internal.SetChainEnabled(chainID, *body.Enabled); err != nil {

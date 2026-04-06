@@ -13,22 +13,50 @@ token_telegram_govdao: ""
 default_chain: "test12"
 
 # Multi-chain configuration
-# Each chain has its own RPC, GraphQL indexer, and gno.web endpoint
+# Each chain has its own RPC, GraphQL indexer, and gno.web endpoint.
+#
+# Fallback URLs are supported for rpc_endpoints, graphqls, and gnowebs.
+# The system tries each URL in order and moves to the next on failure.
+#
+# Two equivalent forms are accepted:
+#
+#   Single URL (backward compatible):
+#     rpc_endpoint: "https://rpc.primary.example.com"
+#
+#   Multiple URLs with automatic failover:
+#     rpc_endpoints:
+#       - "https://rpc.primary.example.com"
+#       - "https://rpc.fallback.example.com"
+#
+# The plural form (rpc_endpoints / graphqls / gnowebs) takes precedence
+# when both are present. Existing single-URL configs need no changes.
 chains:
   test12:
-    rpc_endpoint: "https://rpc.test12.testnets.gno.land"
-    graphql: "https://indexer.test12.testnets.gno.land/graphql/query"
-    gnoweb: "https://test12.testnets.gno.land"
+    rpc_endpoints:
+      - "https://rpc.test12.testnets.gno.land"
+      # - "https://rpc.test12-fallback.example.com"
+    graphqls:
+      - "https://indexer.test12.testnets.gno.land/graphql/query"
+      # - "https://indexer.test12-fallback.example.com/graphql/query"
+    gnowebs:
+      - "https://test12.testnets.gno.land"
+      # - "https://test12-fallback.testnets.gno.land"
     enabled: true
 
   gnoland1:
-    rpc_endpoint: "https://rpc.betanet.testnets.gno.land"
-    graphql: "https://indexer.betanet.testnets.gno.land/graphql/query"
-    gnoweb: "https://betanet.testnets.gno.land"
+    rpc_endpoints:
+      - "https://rpc.betanet.testnets.gno.land"
+    graphqls:
+      - "https://indexer.betanet.testnets.gno.land/graphql/query"
+    gnowebs:
+      - "https://betanet.testnets.gno.land"
     enabled: true
 
   test11:
-    rpc_endpoint: "https://rpc.test11.testnets.gno.land"
-    graphql: "https://indexer.test11.testnets.gno.land/graphql/query"
-    gnoweb: "https://test11.testnets.gno.land"
+    rpc_endpoints:
+      - "https://rpc.test11.testnets.gno.land"
+    graphqls:
+      - "https://indexer.test11.testnets.gno.land/graphql/query"
+    gnowebs:
+      - "https://test11.testnets.gno.land"
     enabled: true

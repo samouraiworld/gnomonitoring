@@ -48,9 +48,9 @@ func TestGetAlerts(t *testing.T) {
 	// Setup config with test chain
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"test12": {
-			RPCEndpoint:     "http://localhost:26657",
-			GraphqlEndpoint: "http://localhost:8080/graphql/query",
-			GnowebEndpoint:  "http://localhost:8080",
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
 			Enabled:         true,
 		},
 	}
@@ -116,9 +116,9 @@ func TestGetBlockHeight(t *testing.T) {
 	// Setup config with test chain
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"test12": {
-			RPCEndpoint:     "http://localhost:26657",
-			GraphqlEndpoint: "http://localhost:8080/graphql/query",
-			GnowebEndpoint:  "http://localhost:8080",
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
 			Enabled:         true,
 		},
 	}
@@ -153,9 +153,9 @@ func TestGetChainIDFromRequest_InvalidChain(t *testing.T) {
 	// Setup chains config
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"test12": {
-			RPCEndpoint:     "http://localhost:26657",
-			GraphqlEndpoint: "http://localhost:8080/graphql/query",
-			GnowebEndpoint:  "http://localhost:8080",
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
 			Enabled:         true,
 		},
 	}
@@ -186,15 +186,15 @@ func TestGetAlerts_CrossChainIsolation(t *testing.T) {
 	// Setup config with multiple chains
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"betanet": {
-			RPCEndpoint:     "http://localhost:26657",
-			GraphqlEndpoint: "http://localhost:8080/graphql/query",
-			GnowebEndpoint:  "http://localhost:8080",
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
 			Enabled:         true,
 		},
 		"gnoland1": {
-			RPCEndpoint:     "http://localhost:26658",
-			GraphqlEndpoint: "http://localhost:8080/graphql/query",
-			GnowebEndpoint:  "http://localhost:8080",
+			RPCEndpoints:     []string{"http://localhost:26658"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
 			Enabled:         true,
 		},
 	}
@@ -257,15 +257,15 @@ func TestGetUptime_ChainIsolation(t *testing.T) {
 
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"chainAlpha": {
-			RPCEndpoint:     "http://localhost:26657",
-			GraphqlEndpoint: "http://localhost:8080/graphql/query",
-			GnowebEndpoint:  "http://localhost:8080",
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
 			Enabled:         true,
 		},
 		"chainBeta": {
-			RPCEndpoint:     "http://localhost:26658",
-			GraphqlEndpoint: "http://localhost:8080/graphql/query",
-			GnowebEndpoint:  "http://localhost:8080",
+			RPCEndpoints:     []string{"http://localhost:26658"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
 			Enabled:         true,
 		},
 	}
@@ -354,15 +354,15 @@ func TestGetBlockHeight_ChainIsolation(t *testing.T) {
 
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"net1": {
-			RPCEndpoint:     "http://localhost:26657",
-			GraphqlEndpoint: "http://localhost:8080/graphql/query",
-			GnowebEndpoint:  "http://localhost:8080",
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
 			Enabled:         true,
 		},
 		"net2": {
-			RPCEndpoint:     "http://localhost:26658",
-			GraphqlEndpoint: "http://localhost:8080/graphql/query",
-			GnowebEndpoint:  "http://localhost:8080",
+			RPCEndpoints:     []string{"http://localhost:26658"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
 			Enabled:         true,
 		},
 	}
