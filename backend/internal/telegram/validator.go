@@ -24,6 +24,57 @@ const (
 
 const cacheTTL = 45 * time.Second
 
+// ChainHealthSnapshot mirrors gnovalidator.ChainHealthSnapshot. It is defined
+// here to avoid a circular import (gnovalidator imports the internal package
+// which imports telegram). The concurrent agent populates this via
+// SetChainHealthFetcher once health.go is ready.
+type ChainHealthSnapshot struct {
+	LatestBlockHeight int64
+	LatestBlockTime   time.Time
+	ConsensusRound    int
+	RPCReachable      bool
+	IsStuck           bool
+	IsDisabled        bool
+	// ValidatorLiveness holds liveness from the last committed block's precommits.
+	// true = validator signed; false = validator did not sign (MISSING).
+	// nil means the data was unavailable (RPC unreachable or block data missing).
+	ValidatorLiveness map[string]bool
+	// Monikers maps validator address to display name for liveness formatting.
+	Monikers       map[string]string
+	ValidatorRates map[string]ValidatorRate
+	MinBlock       int64
+	MaxBlock       int64
+}
+
+// ValidatorRate mirrors gnovalidator.ValidatorRate.
+type ValidatorRate struct {
+	Rate    float64
+	Moniker string
+}
+
+// ChainHealthFetcher is the function called by the /status handler to obtain a
+// live snapshot. It is nil until SetChainHealthFetcher is called (typically
+// from main.go after gnovalidator is initialised). When nil, /status falls
+// back to a "not available" message.
+var ChainHealthFetcher func(chainID string) ChainHealthSnapshot
+
+// ChainDisabledFormatter and ChainStuckFormatter are format helpers provided
+// by the gnovalidator package. They are set alongside ChainHealthFetcher.
+var ChainDisabledFormatter func(chainID string, snap ChainHealthSnapshot) string
+var ChainStuckFormatter func(chainID string, snap ChainHealthSnapshot) string
+
+// SetChainHealthFetcher registers the live-health fetch function and its
+// format helpers. Called once from main.go.
+func SetChainHealthFetcher(
+	fetcher func(chainID string) ChainHealthSnapshot,
+	disabledFmt func(chainID string, snap ChainHealthSnapshot) string,
+	stuckFmt func(chainID string, snap ChainHealthSnapshot) string,
+) {
+	ChainHealthFetcher = fetcher
+	ChainDisabledFormatter = disabledFmt
+	ChainStuckFormatter = stuckFmt
+}
+
 type cacheEntry struct {
 	data      any
 	expiresAt time.Time
@@ -130,19 +181,29 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 
 		"/status": func(chatID int64, args string) {
 			chainID := getActiveChain(chatID, defaultChainID)
+			if ChainHealthFetcher == nil {
+				_ = SendMessageTelegram(token, chatID, "⚠️ Chain health data is not available yet.")
+				return
+			}
+			snap := ChainHealthFetcher(chainID)
+			msg := formatChainHealthMessage(chainID, snap)
+			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+				log.Printf("[telegram] send /status failed: %v", err)
+			}
+		},
+
+		"/rate": func(chatID int64, args string) {
+			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 			period := params["period"]
 			if period == "" {
 				period = periodDefault
 			}
-
 			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
 			page := parseIntWithDefault(params["page"], 1, "page")
 			filter := params["filter"]
 			sortOrder := normalizeSort(params["sort"])
-
-			sendPaginatedMessage(token, chatID, db, chainID, "status", period, filter, page, limit, sortOrder)
-
+			sendPaginatedMessage(token, chatID, db, chainID, "rate", period, filter, page, limit, sortOrder)
 		},
 		"/subscribe": func(chatID int64, args string) {
 			chainID := getActiveChain(chatID, defaultChainID)
@@ -720,6 +781,16 @@ func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string,
 		}
 		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
 
+	case "rate":
+		if period == "" {
+			period = periodDefault
+		}
+		msg, pageOut, totalPages, err := formatParticipationRAte(db, chainID, period, page, limit, filter, sortOrder)
+		if err != nil {
+			return "", nil, err
+		}
+		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
+
 	case "uptime":
 		msg, pageOut, totalPages, err := formatUptime(db, chainID, page, limit, filter, sortOrder)
 		if err != nil {
@@ -877,7 +948,7 @@ func buildSecondaryButtons(cmdKey string, page, totalPages, limit int, period, f
 
 func supportsPercentSort(cmdKey string) bool {
 	switch cmdKey {
-	case "status", "uptime", "tx_contrib":
+	case "status", "rate", "uptime", "tx_contrib":
 		return true
 	default:
 		return false
@@ -886,7 +957,7 @@ func supportsPercentSort(cmdKey string) bool {
 
 func supportsSearch(cmdKey string) bool {
 	switch cmdKey {
-	case "status", "uptime", "operation_time", "tx_contrib", "missing":
+	case "status", "rate", "uptime", "operation_time", "tx_contrib", "missing":
 		return true
 	default:
 		return false
@@ -897,6 +968,8 @@ func cmdToCode(cmdKey string) string {
 	switch cmdKey {
 	case "status":
 		return "st"
+	case "rate":
+		return "rt"
 	case "uptime":
 		return "up"
 	case "operation_time":
@@ -914,6 +987,8 @@ func codeToCmd(code string) string {
 	switch code {
 	case "st", "status":
 		return "status"
+	case "rt", "rate":
+		return "rate"
 	case "up", "uptime":
 		return "uptime"
 	case "op", "operation_time":
@@ -1254,11 +1329,14 @@ func formatHelp() string {
 
 	b.WriteString("📡 <b>Commands</b>\n")
 
-	b.WriteString("<code>🚦 /status [period=...] [limit=N]</code>\n")
-	b.WriteString("Shows the participation rate of validators for a given period.\n")
+	b.WriteString("<code>🚦 /status</code>\n")
+	b.WriteString("Chain health: last block age, consensus round, validator vote count.\n\n")
+
+	b.WriteString("<code>📊 /rate [period=...] [limit=N]</code>\n")
+	b.WriteString("Shows the historical participation rate of validators for a given period.\n")
 	b.WriteString("Examples:\n")
-	b.WriteString("• <code>/status</code> (defaults: period=current_month, limit=10)\n")
-	b.WriteString("• <code>/status period=current_month limit=5</code>\n\n")
+	b.WriteString("• <code>/rate</code> (defaults: period=current_month, limit=10)\n")
+	b.WriteString("• <code>/rate period=current_month limit=5</code>\n\n")
 
 	b.WriteString("<code>🕒 /uptime [limit=N]</code>\n")
 	b.WriteString("Displays uptime statistics of validator.\n")
@@ -1313,5 +1391,192 @@ func formatHelp() string {
 
 	b.WriteString("ℹ️ Parameters must be written as <code>key=value</code> (e.g. <code>period=current_week</code>).\n")
 
+	return b.String()
+}
+
+// formatChainHealthMessage formats a ChainHealthSnapshot as an HTML Telegram message.
+func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
+	if snap.IsDisabled {
+		if ChainDisabledFormatter != nil {
+			return ChainDisabledFormatter(chainID, snap)
+		}
+		return fmt.Sprintf("⚫ <b>[%s] Chain status — MONITORING OFF</b>", html.EscapeString(chainID))
+	}
+	if snap.IsStuck {
+		if ChainStuckFormatter != nil {
+			return ChainStuckFormatter(chainID, snap)
+		}
+	}
+
+	var b strings.Builder
+
+	// Determine chain health indicator based on consensus round.
+	roundLabel := consensusRoundLabel(snap.ConsensusRound)
+	headerEmoji := chainHealthEmoji(snap.ConsensusRound, snap.RPCReachable)
+
+	b.WriteString(fmt.Sprintf("%s <b>[%s] Chain status</b>", headerEmoji, html.EscapeString(chainID)))
+
+	if !snap.RPCReachable {
+		b.WriteString("\n⚠️ RPC unreachable — showing last known DB data only\n")
+	} else {
+		age := formatDuration(time.Since(snap.LatestBlockTime))
+		b.WriteString(fmt.Sprintf(" — block <code>#%d</code> (%s ago)\n", snap.LatestBlockHeight, age))
+		b.WriteString(fmt.Sprintf("Consensus: round %d — %s\n", snap.ConsensusRound, roundLabel))
+	}
+
+	if snap.ValidatorLiveness != nil {
+		b.WriteString(fmt.Sprintf("\nValidator status at last block <code>#%d</code>:\n", snap.LatestBlockHeight))
+		b.WriteString(formatValidatorLivenessHTML(snap.ValidatorLiveness, snap.Monikers))
+	} else {
+		b.WriteString("\nParticipation (last 50 blocks — RPC unreachable):\n")
+		b.WriteString(formatValidatorRates(snap.ValidatorRates))
+	}
+
+	return b.String()
+}
+
+// consensusRoundLabel returns a human-readable label for a consensus round number.
+func consensusRoundLabel(round int) string {
+	switch {
+	case round <= 2:
+		return "Normal"
+	case round <= 10:
+		return "Slightly slow"
+	case round <= 50:
+		return "Degraded"
+	default:
+		return "STUCK"
+	}
+}
+
+// chainHealthEmoji returns the status emoji based on consensus round and RPC reachability.
+func chainHealthEmoji(round int, rpcReachable bool) string {
+	if !rpcReachable {
+		return "⚠️"
+	}
+	switch {
+	case round <= 2:
+		return "🟢"
+	case round <= 10:
+		return "🟡"
+	case round <= 50:
+		return "🟠"
+	default:
+		return "🚨"
+	}
+}
+
+// formatDuration formats a duration as "Xd Yh Zm" omitting zero components.
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+
+	var parts []string
+	if days > 0 {
+		parts = append(parts, fmt.Sprintf("%dd", days))
+	}
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours))
+	}
+	if minutes > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%dm", minutes))
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatValidatorRates formats the per-validator rate map sorted by rate descending.
+func formatValidatorRates(rates map[string]ValidatorRate) string {
+	if len(rates) == 0 {
+		return "  No data.\n"
+	}
+
+	type entry struct {
+		addr    string
+		moniker string
+		rate    float64
+	}
+	entries := make([]entry, 0, len(rates))
+	for addr, vr := range rates {
+		entries = append(entries, entry{addr: addr, moniker: vr.Moniker, rate: vr.Rate})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].rate > entries[j].rate })
+
+	var b strings.Builder
+	for _, e := range entries {
+		emoji := "🟢"
+		switch {
+		case e.rate < 50.0:
+			emoji = "🔴"
+		case e.rate < 70.0:
+			emoji = "🟠"
+		case e.rate < 95.0:
+			emoji = "🟡"
+		}
+		moniker := e.moniker
+		if moniker == "" {
+			moniker = e.addr
+		}
+		addrShort := e.addr
+		if len(addrShort) > 12 {
+			addrShort = addrShort[:10] + "..."
+		}
+		b.WriteString(fmt.Sprintf("  %s <b>%-12s</b> (<code>%s</code>) %.0f%%\n",
+			emoji, html.EscapeString(moniker), html.EscapeString(addrShort), e.rate))
+	}
+	return b.String()
+}
+
+// formatValidatorLivenessHTML formats the per-validator liveness from the last
+// committed block's precommits as an HTML Telegram message fragment.
+// monikers maps addr -> display name; it may be nil or empty.
+// Signed validators are listed first, then missing ones, each group sorted by display name.
+func formatValidatorLivenessHTML(liveness map[string]bool, monikers map[string]string) string {
+	if len(liveness) == 0 {
+		return "  No data.\n"
+	}
+
+	type entry struct {
+		addr   string
+		name   string // display name (moniker or truncated addr)
+		signed bool
+	}
+	entries := make([]entry, 0, len(liveness))
+	for addr, signed := range liveness {
+		name := monikers[addr]
+		if name == "" {
+			if len(addr) > 10 {
+				name = addr[:10] + "..."
+			} else {
+				name = addr
+			}
+		}
+		entries = append(entries, entry{addr: addr, name: name, signed: signed})
+	}
+	// Sort: signed validators first, then alphabetically by display name.
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].signed != entries[j].signed {
+			return entries[i].signed
+		}
+		return entries[i].name < entries[j].name
+	})
+
+	var b strings.Builder
+	for _, e := range entries {
+		addrShort := e.addr
+		if len(addrShort) > 10 {
+			addrShort = addrShort[:10] + "..."
+		}
+		if e.signed {
+			b.WriteString(fmt.Sprintf("  🟢 <b>%-12s</b> (<code>%s</code>)\n",
+				html.EscapeString(e.name), html.EscapeString(addrShort)))
+		} else {
+			b.WriteString(fmt.Sprintf("  🔴 <b>%-12s</b> (<code>%s</code>)  MISSING\n",
+				html.EscapeString(e.name), html.EscapeString(addrShort)))
+		}
+	}
 	return b.String()
 }

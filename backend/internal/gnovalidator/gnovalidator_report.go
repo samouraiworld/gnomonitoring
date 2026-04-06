@@ -1,16 +1,18 @@
 package gnovalidator
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
-	"github.com/samouraiworld/gnomonitoring/backend/internal/telegram"
 	"gorm.io/gorm"
 )
+
+// SendTelegramMessage is a function variable set by the telegram package at startup
+// to break the import cycle between gnovalidator and telegram.
+var SendTelegramMessage func(token string, chatID int64, text string) error
 
 type ValidatorRate struct {
 	Rate    float64
@@ -38,10 +40,6 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 		select {
 		case <-timer.C:
 			log.Printf("[report] sending for user %s", userID)
-			if !IsReportsEnabled(internal.Config.DefaultChain) {
-				log.Printf("[report] chain %s reports suppressed (stuck or disabled), skipping user %s", internal.Config.DefaultChain, userID)
-				continue
-			}
 			SendDailyStatsForUser(db, internal.Config.DefaultChain, &userID, nil, loc)
 		case <-reload:
 			timer.Stop()
@@ -71,10 +69,6 @@ func SheduleTelegramReport(chatID int64, chainID string, hour, minute int, timez
 		select {
 		case <-timer.C:
 			log.Printf("[report][%s] sending for chat %d", chainID, chatID)
-			if !IsReportsEnabled(chainID) {
-				log.Printf("[report][%s] reports suppressed (stuck or disabled), skipping chat %d", chainID, chatID)
-				continue
-			}
 			SendDailyStatsForUser(db, chainID, nil, &chatID, loc)
 		case <-reload:
 			timer.Stop()
@@ -85,58 +79,38 @@ func SheduleTelegramReport(chatID int64, chainID string, hour, minute int, timez
 }
 
 func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *int64, loc *time.Location) {
-	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
+	snap := FetchChainHealthSnapshot(db, chainID)
 
-	rates, minBlock, maxBlock := CalculateRate(db, chainID, yesterday)
-	if len(rates) == 0 {
-		log.Printf("[report][%s] no participation data for %s, skipping", chainID, yesterday)
-		return
+	var msg string
+	switch {
+	case snap.IsDisabled:
+		msg = FormatDisabledReport(chainID, snap)
+	case snap.IsStuck:
+		msg = FormatStuckReport(chainID, snap)
+	default:
+		yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
+		rates, minBlock, maxBlock := CalculateRate(db, chainID, yesterday)
+		if len(rates) == 0 {
+			log.Printf("[report][%s] no participation data for %s, skipping", chainID, yesterday)
+			return
+		}
+		msg = FormatHealthyReport(chainID, yesterday, rates, minBlock, maxBlock)
 	}
 
-	chainLabel := ""
-	if chainID != "" {
-		chainLabel = fmt.Sprintf("[%s] ", chainID)
-	}
-
-	var buffer bytes.Buffer
-	buffer.WriteString(fmt.Sprintf("📊 *Daily Summary* %sfor %s (Blocks %d → %d):\n\n", chainLabel, yesterday, minBlock, maxBlock))
-
-	for addr, data := range rates {
-		moniker := data.Moniker
-		if moniker == "" {
-			moniker = "unknown"
-		}
-		emoji := "🟢"
-		if data.Rate < 95.0 {
-			emoji = "🟡"
-		}
-		if data.Rate < 70.0 {
-			emoji = "🟠"
-
-		}
-		if data.Rate < 50.0 {
-			emoji = "🔴"
-
-		}
-		buffer.WriteString(fmt.Sprintf("  %s Validator: %s addr: (%s) rate: %.2f%%\n", emoji, moniker, addr, data.Rate))
-	}
-	msg := buffer.String()
 	switch {
 	case userID != nil:
-		// User internal report (chain-agnostic for now; the user report path is
-		// not yet multi-chain scoped at the webhook level).
 		SendUserReportInChunks(*userID, msg, db, 1500)
-
 	case chatID != nil:
-		// Telegram report
-		if err := telegram.SendMessageTelegram(internal.Config.TokenTelegramValidator, *chatID, msg); err != nil {
-			log.Printf("❌ Telegram send failed (chat %d): %v", *chatID, err)
+		if SendTelegramMessage != nil {
+			if err := SendTelegramMessage(internal.Config.TokenTelegramValidator, *chatID, msg); err != nil {
+				log.Printf("❌ Telegram send failed (chat %d): %v", *chatID, err)
+			}
+		} else {
+			log.Printf("❌ Telegram send skipped (chat %d): SendTelegramMessage not initialized", *chatID)
 		}
-
 	default:
 		log.Println("⚠️ Neither userID nor chatID provided — no target to send report.")
 	}
-
 }
 
 func CalculateRate(db *gorm.DB, chainID, date string) (map[string]ValidatorRate, int64, int64) {

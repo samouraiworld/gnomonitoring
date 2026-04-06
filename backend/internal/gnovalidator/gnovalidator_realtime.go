@@ -75,8 +75,28 @@ var alertMutex sync.RWMutex
 var restoredNotified = make(map[string]map[string]bool)
 var restoreMutex sync.RWMutex
 
-var reportsEnabled = make(map[string]bool)
-var reportsEnabledMu sync.RWMutex
+var chainRPCClients = make(map[string]*FallbackRPCClient)
+var chainRPCClientsMu sync.RWMutex
+
+func SetChainRPCClient(chainID string, client *FallbackRPCClient) {
+	chainRPCClientsMu.Lock()
+	defer chainRPCClientsMu.Unlock()
+	chainRPCClients[chainID] = client
+}
+
+func GetChainRPCClient(chainID string) (*FallbackRPCClient, bool) {
+	chainRPCClientsMu.RLock()
+	defer chainRPCClientsMu.RUnlock()
+	c, ok := chainRPCClients[chainID]
+	return c, ok
+}
+
+func GetLastProgressTime(chainID string) (time.Time, bool) {
+	timeMu.Lock()
+	defer timeMu.Unlock()
+	t, ok := lastProgressTime[chainID]
+	return t, ok
+}
 
 type BlockParticipation struct {
 	Height     int64
@@ -183,7 +203,6 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					timeMu.Unlock()
 					SetAlertSent(chainID, "all", true)
 					SetRestoredNotified(chainID, "all", false)
-					SetReportsEnabled(chainID, false)
 				}
 			} else {
 				SetLastHeight(chainID, latest)
@@ -202,7 +221,6 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					}
 					SetRestoredNotified(chainID, "all", true)
 					SetAlertSent(chainID, "all", false)
-					SetReportsEnabled(chainID, true)
 				}
 			}
 
@@ -671,6 +689,7 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 
 func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
 	rpcClient := NewFallbackRPCClient(chainCfg.RPCEndpoints)
+	SetChainRPCClient(chainID, rpcClient)
 	client := gnoclient.Client{RPCClient: rpcClient}
 
 	t := GetThresholds()
@@ -754,18 +773,3 @@ func SetRestoredNotified(chainID, addr string, notified bool) {
 	restoredNotified[chainID][addr] = notified
 }
 
-func IsReportsEnabled(chainID string) bool {
-	reportsEnabledMu.RLock()
-	defer reportsEnabledMu.RUnlock()
-	v, ok := reportsEnabled[chainID]
-	if !ok {
-		return true // default: reports are enabled
-	}
-	return v
-}
-
-func SetReportsEnabled(chainID string, enabled bool) {
-	reportsEnabledMu.Lock()
-	defer reportsEnabledMu.Unlock()
-	reportsEnabled[chainID] = enabled
-}

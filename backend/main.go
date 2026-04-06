@@ -16,6 +16,32 @@ import (
 	"gorm.io/gorm"
 )
 
+// convertValidatorRates converts gnovalidator.ValidatorRate map values to
+// their telegram mirror equivalents.
+func convertValidatorRates(src map[string]gnovalidator.ValidatorRate) map[string]telegram.ValidatorRate {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]telegram.ValidatorRate, len(src))
+	for k, v := range src {
+		dst[k] = telegram.ValidatorRate{Rate: v.Rate, Moniker: v.Moniker}
+	}
+	return dst
+}
+
+// convertBackValidatorRates converts telegram.ValidatorRate map values back to
+// their gnovalidator equivalents.
+func convertBackValidatorRates(src map[string]telegram.ValidatorRate) map[string]gnovalidator.ValidatorRate {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]gnovalidator.ValidatorRate, len(src))
+	for k, v := range src {
+		dst[k] = gnovalidator.ValidatorRate{Rate: v.Rate, Moniker: v.Moniker}
+	}
+	return dst
+}
+
 // startChainMonitoring launches monitoring goroutines for one chain and registers
 // their shared cancel function in the chainmanager registry.
 func startChainMonitoring(db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
@@ -49,6 +75,54 @@ func main() {
 
 	log.Printf("[main] database ready")
 
+	// Wire Telegram send function to break gnovalidator → telegram import cycle.
+	gnovalidator.SendTelegramMessage = telegram.SendMessageTelegram
+
+	// Wire chain-health fetch and format functions to break the gnovalidator →
+	// internal → telegram circular import. The two convert* helpers copy the
+	// mirrored ValidatorRate maps between the two packages' local types.
+	telegram.SetChainHealthFetcher(
+		func(chainID string) telegram.ChainHealthSnapshot {
+			snap := gnovalidator.FetchChainHealthSnapshot(db, chainID)
+			return telegram.ChainHealthSnapshot{
+				LatestBlockHeight: snap.LatestBlockHeight,
+				LatestBlockTime:   snap.LatestBlockTime,
+				ConsensusRound:    snap.ConsensusRound,
+				RPCReachable:      snap.RPCReachable,
+				IsStuck:           snap.IsStuck,
+				IsDisabled:        snap.IsDisabled,
+				ValidatorLiveness: snap.ValidatorLiveness,
+				Monikers:          snap.Monikers,
+				ValidatorRates:    convertValidatorRates(snap.ValidatorRates),
+				MinBlock:          snap.MinBlock,
+				MaxBlock:          snap.MaxBlock,
+			}
+		},
+		func(chainID string, snap telegram.ChainHealthSnapshot) string {
+			return gnovalidator.FormatDisabledReport(chainID, gnovalidator.ChainHealthSnapshot{
+				LatestBlockHeight: snap.LatestBlockHeight,
+				LatestBlockTime:   snap.LatestBlockTime,
+				IsDisabled:        snap.IsDisabled,
+				ValidatorLiveness: snap.ValidatorLiveness,
+				Monikers:          snap.Monikers,
+				ValidatorRates:    convertBackValidatorRates(snap.ValidatorRates),
+			})
+		},
+		func(chainID string, snap telegram.ChainHealthSnapshot) string {
+			return gnovalidator.FormatStuckReport(chainID, gnovalidator.ChainHealthSnapshot{
+				LatestBlockHeight: snap.LatestBlockHeight,
+				LatestBlockTime:   snap.LatestBlockTime,
+				ConsensusRound:    snap.ConsensusRound,
+				IsStuck:           snap.IsStuck,
+				ValidatorLiveness: snap.ValidatorLiveness,
+				Monikers:          snap.Monikers,
+				ValidatorRates:    convertBackValidatorRates(snap.ValidatorRates),
+				MinBlock:          snap.MinBlock,
+				MaxBlock:          snap.MaxBlock,
+			})
+		},
+	)
+
 	// ==================== Load admin thresholds from DB ============ //
 	gnovalidator.LoadThresholds(db)
 
@@ -61,7 +135,6 @@ func main() {
 			log.Printf("[main] skipping chain %s: %v", chainID, err)
 			continue
 		}
-		gnovalidator.SetReportsEnabled(chainID, true)
 		go startChainMonitoring(db, chainID, chainCfg)
 	}
 
