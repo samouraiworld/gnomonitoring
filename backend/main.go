@@ -123,7 +123,7 @@ func main() {
 			})
 		},
 	)
-	telegram.AlertsFormatter = gnovalidator.FormatAlertsLast24h
+	telegram.AlertsFormatter = gnovalidator.FormatAlertsLast24hHTML
 
 	// ==================== Load admin thresholds from DB ============ //
 	gnovalidator.LoadThresholds(db)

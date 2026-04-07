@@ -2,6 +2,7 @@ package gnovalidator
 
 import (
 	"fmt"
+	"html"
 	"log"
 	"sort"
 	"strconv"
@@ -470,6 +471,81 @@ func FormatAlertsLast24h(alerts []database.AlertSummary) string {
 		if e.Resolved {
 			b.WriteString(fmt.Sprintf("  ✅ RESOLVED  %-14s (%s) at block #%d\n",
 				e.Moniker, addrShort, e.ResolvedAt))
+		}
+	}
+	if extra > 0 {
+		b.WriteString(fmt.Sprintf("  ... and %d more.\n", extra))
+	}
+	return b.String()
+}
+
+// FormatAlertsLast24hHTML is the HTML-safe variant for Telegram (parse_mode: HTML).
+// Moniker and address fields are html.EscapeString'd to prevent markup injection.
+func FormatAlertsLast24hHTML(alerts []database.AlertSummary) string {
+	if len(alerts) == 0 {
+		return ""
+	}
+
+	byAddr := map[string]*validatorAlertSummary{}
+	var order []string
+	for _, a := range alerts {
+		entry, exists := byAddr[a.Addr]
+		if !exists {
+			entry = &validatorAlertSummary{Moniker: a.Moniker, Addr: a.Addr}
+			byAddr[a.Addr] = entry
+			order = append(order, a.Addr)
+		}
+		switch a.Level {
+		case "CRITICAL":
+			entry.Count++
+			entry.WorstLevel = "CRITICAL"
+			if a.SentAt.After(entry.LastSentAt) {
+				entry.LastSentAt = a.SentAt
+			}
+		case "WARNING":
+			entry.Count++
+			if entry.WorstLevel != "CRITICAL" {
+				entry.WorstLevel = "WARNING"
+			}
+			if a.SentAt.After(entry.LastSentAt) {
+				entry.LastSentAt = a.SentAt
+			}
+		case "RESOLVED":
+			entry.Resolved = true
+			entry.ResolvedAt = a.EndHeight
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n⚠️ Alerts last 24h (%d validator(s)):\n", len(order)))
+
+	limit := 10
+	extra := 0
+	if len(order) > limit {
+		extra = len(order) - limit
+		order = order[:limit]
+	}
+
+	for _, addr := range order {
+		e := byAddr[addr]
+		addrShort := addr
+		if len(addrShort) > 12 {
+			addrShort = addrShort[:12] + "..."
+		}
+		safeMoniker := html.EscapeString(e.Moniker)
+		safeAddr := html.EscapeString(addrShort)
+		var emoji string
+		if e.WorstLevel == "CRITICAL" {
+			emoji = "🚨"
+		} else {
+			emoji = "⚠️ "
+		}
+		b.WriteString(fmt.Sprintf("  %s %-8s  %-14s (%s) — %d alert(s) — last %s\n",
+			emoji, e.WorstLevel, safeMoniker, safeAddr,
+			e.Count, e.LastSentAt.UTC().Format("15:04 UTC")))
+		if e.Resolved {
+			b.WriteString(fmt.Sprintf("  ✅ RESOLVED  %-14s (%s) at block #%d\n",
+				safeMoniker, safeAddr, e.ResolvedAt))
 		}
 	}
 	if extra > 0 {

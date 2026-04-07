@@ -663,7 +663,8 @@ func reportSchedule(db *gorm.DB, sched schedulerReloader, chatID int64, chainID 
 	}
 
 	if err := database.UpdateTelegramScheduleAdmin(db, chatID, chainID, hour, minute, tz, current.Activate); err != nil {
-		return fmt.Sprintf("❌ Failed to update schedule: %v", err)
+		log.Printf("[telegram] UpdateTelegramScheduleAdmin chat=%d chain=%s: %v", chatID, chainID, err)
+		return "❌ Failed to update schedule. Please try again."
 	}
 
 	if sched != nil {
@@ -1751,6 +1752,14 @@ func handleCmdMenuCallback(
 			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⏱ Session expired — run /cmd again.", nil)
 			return
 		}
+		validPeriods := map[string]bool{
+			"current_week": true, "current_month": true,
+			"current_year": true, "all_time": true,
+		}
+		if !validPeriods[params["v"]] {
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ Invalid period. Run /cmd again.", nil)
+			return
+		}
 		state.Period = params["v"]
 		state.Step = "confirm"
 		state.ExpiresAt = time.Now().Add(cmdStateTTL)
@@ -2063,19 +2072,22 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 		case "enable":
 			msg, err := reportActivate(db, chatID, state.ChainID, "true")
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err), nil
+				log.Printf("[cmd] reportActivate enable chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				return "❌ An error occurred. Please try again.", nil
 			}
 			return msg, nil
 		case "disable":
 			msg, err := reportActivate(db, chatID, state.ChainID, "false")
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err), nil
+				log.Printf("[cmd] reportActivate disable chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				return "❌ An error occurred. Please try again.", nil
 			}
 			return msg, nil
 		case "status":
 			msg, err := reportActivate(db, chatID, state.ChainID, "")
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err), nil
+				log.Printf("[cmd] reportActivate status chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				return "❌ An error occurred. Please try again.", nil
 			}
 			return msg, nil
 		}
@@ -2095,25 +2107,29 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 		case "uptime":
 			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "uptime", "", "", 1, limitDefault, sortDefault)
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err), nil
+				log.Printf("[cmd] uptime chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				return "❌ An error occurred. Please try again.", nil
 			}
 			return msg, markup
 		case "rate":
 			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "rate", period, "", 1, limitDefault, sortDefault)
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err), nil
+				log.Printf("[cmd] rate chat=%d chain=%s period=%s: %v", chatID, state.ChainID, period, err)
+				return "❌ An error occurred. Please try again.", nil
 			}
 			return msg, markup
 		case "missing":
 			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "missing", period, "", 1, limitDefault, sortDefault)
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err), nil
+				log.Printf("[cmd] missing chat=%d chain=%s period=%s: %v", chatID, state.ChainID, period, err)
+				return "❌ An error occurred. Please try again.", nil
 			}
 			return msg, markup
 		case "operation_time":
 			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "operation_time", "", "", 1, limitDefault, sortDefault)
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err), nil
+				log.Printf("[cmd] operation_time chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				return "❌ An error occurred. Please try again.", nil
 			}
 			return msg, markup
 		}
