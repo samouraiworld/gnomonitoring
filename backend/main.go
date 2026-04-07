@@ -96,6 +96,7 @@ func main() {
 				ValidatorRates:    convertValidatorRates(snap.ValidatorRates),
 				MinBlock:          snap.MinBlock,
 				MaxBlock:          snap.MaxBlock,
+				AlertsLast24h:     snap.AlertsLast24h,
 			}
 		},
 		func(chainID string, snap telegram.ChainHealthSnapshot) string {
@@ -122,6 +123,7 @@ func main() {
 			})
 		},
 	)
+	telegram.AlertsFormatter = gnovalidator.FormatAlertsLast24hHTML
 
 	// ==================== Load admin thresholds from DB ============ //
 	gnovalidator.LoadThresholds(db)

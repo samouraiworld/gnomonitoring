@@ -46,6 +46,7 @@ export function formatThresholdLabel(key: string): string {
 export function getThresholdUnit(key: string): string {
   if (key.includes('minutes')) return 'min'
   if (key.includes('seconds')) return 'sec'
+  if (key.includes('hours')) return 'h'
   if (key.includes('days')) return 'days'
   if (key.includes('threshold')) return 'blocks'
   return ''

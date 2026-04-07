@@ -373,6 +373,11 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[validator][%s] WatchValidatorAlerts panic: %v", chainID, r)
+			}
+		}()
 		for {
 			// Sync gate: skip alert processing until backfill is complete.
 			if !isChainSynced(chainID) {
@@ -431,9 +436,17 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 			`, chainID, GetThresholds().WarningThreshold).Scan(&windows).Error
 			if err != nil {
 				log.Printf("[validator][%s] error executing missed blocks query: %v", chainID, err)
-				time.Sleep(checkInterval)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(checkInterval):
+				}
 				continue
 			}
+
+			// Snapshot thresholds once for the whole cycle to avoid TOCTOU
+			// between the SQL filter and the Go-level level classification.
+			t := GetThresholds()
 
 			for _, w := range windows {
 				addr := w.Addr
@@ -442,7 +455,6 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 				end_height := w.EndHeight
 				missed := w.Missed
 
-				t := GetThresholds()
 				var level string
 				switch {
 				case missed >= t.CriticalThreshold:

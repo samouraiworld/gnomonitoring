@@ -66,6 +66,31 @@ type InlineKeyboardMarkup struct {
 	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
 }
 
+// SendMessageTelegramChunked splits text at newline boundaries and sends
+// multiple messages if the content exceeds Telegram's 4096-char limit.
+func SendMessageTelegramChunked(botToken string, chatID int64, text string) error {
+	const maxLen = 4000 // leave headroom for HTML encoding overhead
+	lines := strings.Split(text, "\n")
+	var chunk strings.Builder
+	for _, line := range lines {
+		// +1 for the newline we'll re-add
+		if chunk.Len()+len(line)+1 > maxLen && chunk.Len() > 0 {
+			if err := SendMessageTelegram(botToken, chatID, chunk.String()); err != nil {
+				return err
+			}
+			chunk.Reset()
+		}
+		if chunk.Len() > 0 {
+			chunk.WriteByte('\n')
+		}
+		chunk.WriteString(line)
+	}
+	if chunk.Len() > 0 {
+		return SendMessageTelegram(botToken, chatID, chunk.String())
+	}
+	return nil
+}
+
 func SendMessageTelegram(botToken string, chatID int64, text string) error {
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 

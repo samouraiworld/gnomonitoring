@@ -2,6 +2,7 @@ package gnovalidator
 
 import (
 	"fmt"
+	"html"
 	"log"
 	"sort"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/chainmanager"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
 
@@ -39,6 +41,10 @@ type ChainHealthSnapshot struct {
 	ValidatorRates map[string]ValidatorRate
 	MinBlock       int64
 	MaxBlock       int64
+
+	// Alert events from the last 24 hours (WARNING, CRITICAL, RESOLVED).
+	// Populated by FetchChainHealthSnapshot for use in daily reports.
+	AlertsLast24h []database.AlertSummary
 }
 
 func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
@@ -167,6 +173,14 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 	snap.ValidatorRates = rates
 	snap.MinBlock = minBlock
 	snap.MaxBlock = maxBlock
+
+	alerts, err := database.GetAlertLogsLast24h(db, chainID)
+	if err != nil {
+		log.Printf("[health][%s] GetAlertLogsLast24h error: %v", chainID, err)
+		// non-fatal: leave AlertsLast24h nil
+	} else {
+		snap.AlertsLast24h = alerts
+	}
 
 	return snap
 }
@@ -383,6 +397,163 @@ func FormatDisabledReport(chainID string, snap ChainHealthSnapshot) string {
 	return sb.String()
 }
 
+type validatorAlertSummary struct {
+	Moniker    string
+	Addr       string
+	WorstLevel string // "CRITICAL" > "WARNING"
+	Count      int    // total WARNING+CRITICAL events
+	LastSentAt time.Time
+	Resolved   bool
+	ResolvedAt int64 // end_height of RESOLVED row
+}
+
+func FormatAlertsLast24h(alerts []database.AlertSummary) string {
+	if len(alerts) == 0 {
+		return ""
+	}
+
+	// Group by addr — alerts are ordered sent_at DESC so first seen = most recent.
+	byAddr := map[string]*validatorAlertSummary{}
+	var order []string
+	for _, a := range alerts {
+		entry, exists := byAddr[a.Addr]
+		if !exists {
+			entry = &validatorAlertSummary{Moniker: a.Moniker, Addr: a.Addr}
+			byAddr[a.Addr] = entry
+			order = append(order, a.Addr)
+		}
+		switch a.Level {
+		case "CRITICAL":
+			entry.Count++
+			entry.WorstLevel = "CRITICAL"
+			if a.SentAt.After(entry.LastSentAt) {
+				entry.LastSentAt = a.SentAt
+			}
+		case "WARNING":
+			entry.Count++
+			if entry.WorstLevel != "CRITICAL" {
+				entry.WorstLevel = "WARNING"
+			}
+			if a.SentAt.After(entry.LastSentAt) {
+				entry.LastSentAt = a.SentAt
+			}
+		case "RESOLVED":
+			entry.Resolved = true
+			entry.ResolvedAt = a.EndHeight
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n⚠️ Alerts last 24h (%d validator(s)):\n", len(order)))
+
+	limit := 10
+	extra := 0
+	if len(order) > limit {
+		extra = len(order) - limit
+		order = order[:limit]
+	}
+
+	for _, addr := range order {
+		e := byAddr[addr]
+		addrShort := addr
+		if len(addrShort) > 12 {
+			addrShort = addrShort[:12] + "..."
+		}
+		var emoji string
+		if e.WorstLevel == "CRITICAL" {
+			emoji = "🚨"
+		} else {
+			emoji = "⚠️ "
+		}
+		b.WriteString(fmt.Sprintf("  %s %-8s  %-14s (%s) — %d alert(s) — last %s\n",
+			emoji, e.WorstLevel, e.Moniker, addrShort,
+			e.Count, e.LastSentAt.UTC().Format("15:04 UTC")))
+		if e.Resolved {
+			b.WriteString(fmt.Sprintf("  ✅ RESOLVED  %-14s (%s) at block #%d\n",
+				e.Moniker, addrShort, e.ResolvedAt))
+		}
+	}
+	if extra > 0 {
+		b.WriteString(fmt.Sprintf("  ... and %d more.\n", extra))
+	}
+	return b.String()
+}
+
+// FormatAlertsLast24hHTML is the HTML-safe variant for Telegram (parse_mode: HTML).
+// Moniker and address fields are html.EscapeString'd to prevent markup injection.
+func FormatAlertsLast24hHTML(alerts []database.AlertSummary) string {
+	if len(alerts) == 0 {
+		return ""
+	}
+
+	byAddr := map[string]*validatorAlertSummary{}
+	var order []string
+	for _, a := range alerts {
+		entry, exists := byAddr[a.Addr]
+		if !exists {
+			entry = &validatorAlertSummary{Moniker: a.Moniker, Addr: a.Addr}
+			byAddr[a.Addr] = entry
+			order = append(order, a.Addr)
+		}
+		switch a.Level {
+		case "CRITICAL":
+			entry.Count++
+			entry.WorstLevel = "CRITICAL"
+			if a.SentAt.After(entry.LastSentAt) {
+				entry.LastSentAt = a.SentAt
+			}
+		case "WARNING":
+			entry.Count++
+			if entry.WorstLevel != "CRITICAL" {
+				entry.WorstLevel = "WARNING"
+			}
+			if a.SentAt.After(entry.LastSentAt) {
+				entry.LastSentAt = a.SentAt
+			}
+		case "RESOLVED":
+			entry.Resolved = true
+			entry.ResolvedAt = a.EndHeight
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("\n⚠️ Alerts last 24h (%d validator(s)):\n", len(order)))
+
+	limit := 10
+	extra := 0
+	if len(order) > limit {
+		extra = len(order) - limit
+		order = order[:limit]
+	}
+
+	for _, addr := range order {
+		e := byAddr[addr]
+		addrShort := addr
+		if len(addrShort) > 12 {
+			addrShort = addrShort[:12] + "..."
+		}
+		safeMoniker := html.EscapeString(e.Moniker)
+		safeAddr := html.EscapeString(addrShort)
+		var emoji string
+		if e.WorstLevel == "CRITICAL" {
+			emoji = "🚨"
+		} else {
+			emoji = "⚠️ "
+		}
+		b.WriteString(fmt.Sprintf("  %s %-8s  %-14s (%s) — %d alert(s) — last %s\n",
+			emoji, e.WorstLevel, safeMoniker, safeAddr,
+			e.Count, e.LastSentAt.UTC().Format("15:04 UTC")))
+		if e.Resolved {
+			b.WriteString(fmt.Sprintf("  ✅ RESOLVED  %-14s (%s) at block #%d\n",
+				safeMoniker, safeAddr, e.ResolvedAt))
+		}
+	}
+	if extra > 0 {
+		b.WriteString(fmt.Sprintf("  ... and %d more.\n", extra))
+	}
+	return b.String()
+}
+
 func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 	var sb strings.Builder
 	emoji := chainStatusEmoji(snap)
@@ -407,10 +578,11 @@ func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 	return sb.String()
 }
 
-func FormatHealthyReport(chainID, date string, rates map[string]ValidatorRate, minBlock, maxBlock int64) string {
+func FormatHealthyReport(chainID, date string, rates map[string]ValidatorRate, minBlock, maxBlock int64, alerts []database.AlertSummary) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n\n", chainID, date))
 	sb.WriteString(fmt.Sprintf("Participation yesterday (Blocks %d → %d):\n", minBlock, maxBlock))
 	sb.WriteString(formatValidatorRates(rates))
+	sb.WriteString(FormatAlertsLast24h(alerts))
 	return sb.String()
 }

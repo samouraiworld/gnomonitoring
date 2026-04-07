@@ -43,7 +43,7 @@ export default function AlertConfig() {
   // Group thresholds logically
   const groups = [
     { title: 'Alert Thresholds', keys: ['warning_threshold', 'critical_threshold'] },
-    { title: 'Mute Configuration', keys: ['mute_after_n_alerts', 'mute_duration_minutes', 'resolve_mute_after_n'] },
+    { title: 'Alert Resend & Silence', keys: ['alert_critical_resend_hours', 'alert_warning_resend_hours', 'dead_validator_silence_days'] },
     { title: 'Stagnation Detection', keys: ['stagnation_first_alert_seconds', 'stagnation_repeat_minutes'] },
     { title: 'Monitoring Intervals', keys: ['rpc_error_cooldown_minutes', 'new_validator_scan_minutes', 'alert_check_interval_seconds'] },
     { title: 'Data Retention', keys: ['raw_retention_days', 'aggregator_period_minutes'] },
