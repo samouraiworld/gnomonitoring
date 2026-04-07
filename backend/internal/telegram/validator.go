@@ -23,6 +23,11 @@ type schedulerReloader interface {
 // SchedulerInstance must be set by main.go before BuildTelegramHandlers is called.
 var SchedulerInstance schedulerReloader
 
+// enabledChainsSnapshot is populated by BuildTelegramHandlers and used by the
+// interactive /cmd menu to list and validate chain IDs without changing the
+// public API of BuildTelegramCallbackHandler.
+var enabledChainsSnapshot []string
+
 const (
 	periodDefault = "current_month"
 	limitDefault  = 10
@@ -53,6 +58,7 @@ type ChainHealthSnapshot struct {
 	ValidatorRates map[string]ValidatorRate
 	MinBlock       int64
 	MaxBlock       int64
+	AlertsLast24h  []database.AlertSummary
 }
 
 // ValidatorRate mirrors gnovalidator.ValidatorRate.
@@ -71,6 +77,10 @@ var ChainHealthFetcher func(chainID string) ChainHealthSnapshot
 // by the gnovalidator package. They are set alongside ChainHealthFetcher.
 var ChainDisabledFormatter func(chainID string, snap ChainHealthSnapshot) string
 var ChainStuckFormatter func(chainID string, snap ChainHealthSnapshot) string
+
+// AlertsFormatter formats the last-24h alert section. Set from main.go to
+// gnovalidator.FormatAlertsLast24h to avoid a circular import.
+var AlertsFormatter func(alerts []database.AlertSummary) string
 
 // SetChainHealthFetcher registers the live-health fetch function and its
 // format helpers. Called once from main.go.
@@ -186,6 +196,7 @@ func setCached(key string, data any, ttl time.Duration) {
 // /setchain).
 func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, enabledChains []string) map[string]func(int64, string) {
 	startSearchStateCleanup()
+	enabledChainsSnapshot = enabledChains
 	return map[string]func(int64, string){
 
 		"/status": func(chatID int64, args string) {
@@ -329,6 +340,11 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 
 			msg := formatHelp()
 			_ = SendMessageTelegram(token, chatID, msg)
+		},
+
+		"/cmd": func(chatID int64, _ string) {
+			markup := buildCmdRootMarkup()
+			_ = SendMessageTelegramWithMarkup(token, chatID, "🎛 What do you want to do?", markup)
 		},
 
 		"*": func(chatID int64, _ string) {
@@ -788,7 +804,18 @@ func subscribeUsage() string {
 func BuildTelegramCallbackHandler(token string, db *gorm.DB, defaultChainID string) func(int64, int, string) {
 	return func(chatID int64, messageID int, data string) {
 		chainID := getActiveChain(chatID, defaultChainID)
-		cmdKey, page, limit, period, filter, sortOrder, action, ok := parseCallbackData(data)
+
+		// Parse raw params first so menu callbacks can read them directly.
+		rawParams := parseCallbackParams(data)
+		cmdKey := codeToCmd(rawParams["c"])
+
+		// Dispatch interactive menu callbacks before touching paginated paths.
+		if cmdKey == "menu" {
+			handleCmdMenuCallback(token, db, chatID, messageID, chainID, defaultChainID, enabledChainsSnapshot, rawParams)
+			return
+		}
+
+		_, page, limit, period, filter, sortOrder, action, ok := parseCallbackData(data)
 		if !ok {
 			return
 		}
@@ -1041,6 +1068,22 @@ func cmdToCode(cmdKey string) string {
 		return "tx"
 	case "missing":
 		return "ms"
+	case "menu":
+		return "mn"
+	case "confirm":
+		return "cf"
+	case "cancel":
+		return "cx"
+	case "subscribe":
+		return "sb"
+	case "report":
+		return "rp"
+	case "validators":
+		return "vl"
+	case "chain":
+		return "ch"
+	case "vsel":
+		return "vs"
 	default:
 		return ""
 	}
@@ -1060,6 +1103,22 @@ func codeToCmd(code string) string {
 		return "tx_contrib"
 	case "ms", "missing":
 		return "missing"
+	case "mn", "menu":
+		return "menu"
+	case "cf", "confirm":
+		return "confirm"
+	case "cx", "cancel":
+		return "cancel"
+	case "sb", "subscribe":
+		return "subscribe"
+	case "rp", "report":
+		return "report"
+	case "vl", "validators":
+		return "validators"
+	case "ch", "chain":
+		return "chain"
+	case "vs", "vsel":
+		return "vsel"
 	default:
 		return ""
 	}
@@ -1148,8 +1207,52 @@ func startSearchStateCleanup() {
 				}
 			}
 			searchStateMu.Unlock()
+
+			cmdStateMu.Lock()
+			for chatID, s := range cmdState {
+				if time.Now().After(s.ExpiresAt) {
+					delete(cmdState, chatID)
+				}
+			}
+			cmdStateMu.Unlock()
 		}
 	}()
+}
+
+// CmdState holds the interactive menu session for a single chat.
+type CmdState struct {
+	Step          string    // "root", "action", "validators", "confirm"
+	Command       string    // "subscribe", "report", "validators", "chain"
+	Action        string    // "on", "off", "status", "schedule", etc.
+	ChainID       string
+	ValidatorPage []string  // addresses shown on current validator-select page
+	SelectedAddrs []string  // addresses confirmed by user
+	Period        string
+	ExpiresAt     time.Time
+}
+
+const cmdStateTTL = 5 * time.Minute
+
+var cmdState   = map[int64]CmdState{}
+var cmdStateMu sync.Mutex
+
+func setCmdState(chatID int64, state CmdState) {
+	cmdStateMu.Lock()
+	defer cmdStateMu.Unlock()
+	cmdState[chatID] = state
+}
+
+func getCmdState(chatID int64) (CmdState, bool) {
+	cmdStateMu.Lock()
+	defer cmdStateMu.Unlock()
+	s, ok := cmdState[chatID]
+	return s, ok
+}
+
+func deleteCmdState(chatID int64) {
+	cmdStateMu.Lock()
+	defer cmdStateMu.Unlock()
+	delete(cmdState, chatID)
 }
 
 func HandleSearchInput(token string, db *gorm.DB, botType string, chatID int64, text string) bool {
@@ -1380,6 +1483,643 @@ func filterMissing(in []database.MissingBlockMetrics, filter string) []database.
 	return out
 }
 
+// encodeCmdCallback builds a compact callback data string for menu actions.
+// It always sets c=mn so the callback dispatcher routes to handleCmdMenuCallback.
+// Extra key=value pairs are passed via extras (must not contain & or =).
+func encodeCmdCallback(extras ...string) string {
+	var b strings.Builder
+	b.WriteString("c=mn")
+	for i := 0; i+1 < len(extras); i += 2 {
+		b.WriteByte('&')
+		b.WriteString(extras[i])
+		b.WriteByte('=')
+		b.WriteString(extras[i+1])
+	}
+	return b.String()
+}
+
+// buildCmdRootMarkup returns the 4-button root menu.
+func buildCmdRootMarkup() *InlineKeyboardMarkup {
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "Subscribe", CallbackData: encodeCmdCallback("a", "sb")},
+				{Text: "Report", CallbackData: encodeCmdCallback("a", "rp")},
+			},
+			{
+				{Text: "Validators", CallbackData: encodeCmdCallback("a", "vl")},
+				{Text: "Chain", CallbackData: encodeCmdCallback("a", "ch")},
+			},
+		},
+	}
+}
+
+const cmdValidatorPageSize = 5
+
+// buildValidatorSelectMarkup builds an inline keyboard for validator selection.
+// Returns the markup and the slice of addresses for the current page (to store
+// in CmdState.ValidatorPage).
+func buildValidatorSelectMarkup(validators []database.AddrMoniker, page int, selectedAddrs []string) (*InlineKeyboardMarkup, []string) {
+	total := len(validators)
+	if total == 0 {
+		return nil, nil
+	}
+	totalPages := (total + cmdValidatorPageSize - 1) / cmdValidatorPageSize
+	if page < 1 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * cmdValidatorPageSize
+	end := start + cmdValidatorPageSize
+	if end > total {
+		end = total
+	}
+	pageSlice := validators[start:end]
+
+	pageAddrs := make([]string, len(pageSlice))
+	for i, v := range pageSlice {
+		pageAddrs[i] = v.Addr
+	}
+
+	selectedSet := map[string]bool{}
+	for _, a := range selectedAddrs {
+		selectedSet[a] = true
+	}
+
+	var rows [][]InlineKeyboardButton
+
+	// One button per validator on this page.
+	for i, v := range pageSlice {
+		prefix := ""
+		if selectedSet[v.Addr] {
+			prefix = "✅ "
+		}
+		label := v.Moniker
+		if label == "" {
+			label = v.Addr
+		}
+		rows = append(rows, []InlineKeyboardButton{
+			{
+				Text:         prefix + label,
+				CallbackData: encodeCmdCallback("a", "vs", "i", strconv.Itoa(i)),
+			},
+		})
+	}
+
+	// Navigation row.
+	var navRow []InlineKeyboardButton
+	if page > 1 {
+		navRow = append(navRow, InlineKeyboardButton{
+			Text:         "⬅️ Prev",
+			CallbackData: encodeCmdCallback("a", "vs", "i", "prev", "pg", strconv.Itoa(page-1)),
+		})
+	}
+	if page < totalPages {
+		navRow = append(navRow, InlineKeyboardButton{
+			Text:         "➡️ Next",
+			CallbackData: encodeCmdCallback("a", "vs", "i", "next", "pg", strconv.Itoa(page+1)),
+		})
+	}
+	if len(navRow) > 0 {
+		rows = append(rows, navRow)
+	}
+
+	// Control row: [All validators] and [Done].
+	rows = append(rows, []InlineKeyboardButton{
+		{Text: "[All validators]", CallbackData: encodeCmdCallback("a", "vs", "i", "-1")},
+		{Text: "✅ Done", CallbackData: encodeCmdCallback("a", "cf")},
+	})
+
+	return &InlineKeyboardMarkup{InlineKeyboard: rows}, pageAddrs
+}
+
+// handleCmdMenuCallback routes interactive menu callbacks.
+func handleCmdMenuCallback(
+	token string,
+	db *gorm.DB,
+	chatID int64,
+	messageID int,
+	chainID string,
+	defaultChainID string,
+	enabledChains []string,
+	params map[string]string,
+) {
+	action := params["a"]
+
+	// Cancel from any step.
+	if action == "cx" {
+		deleteCmdState(chatID)
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "❌ Cancelled.", nil)
+		return
+	}
+
+	// Confirm: execute the pending command.
+	if action == "cf" {
+		state, ok := getCmdState(chatID)
+		if !ok || time.Now().After(state.ExpiresAt) {
+			deleteCmdState(chatID)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⏱ Session expired — run /cmd again.", nil)
+			return
+		}
+		result := executeCmdMenuAction(token, db, chatID, chainID, state)
+		deleteCmdState(chatID)
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, result, nil)
+		return
+	}
+
+	// Root-level action selection: sb / rp / vl / ch.
+	if action == "sb" || action == "rp" || action == "vl" || action == "ch" {
+		cmdMap := map[string]string{
+			"sb": "subscribe",
+			"rp": "report",
+			"vl": "validators",
+			"ch": "chain",
+		}
+		command := cmdMap[action]
+		setCmdState(chatID, CmdState{
+			Step:    "action",
+			Command: command,
+			ChainID: chainID,
+			ExpiresAt: time.Now().Add(cmdStateTTL),
+		})
+		markup := buildActionMarkup(command, enabledChains)
+		msg := fmt.Sprintf("🎛 <b>%s</b> — choose an action:", html.EscapeString(command))
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, msg, markup)
+		return
+	}
+
+	// Validator selection step.
+	if action == "vs" {
+		state, ok := getCmdState(chatID)
+		if !ok || time.Now().After(state.ExpiresAt) {
+			deleteCmdState(chatID)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⏱ Session expired — run /cmd again.", nil)
+			return
+		}
+
+		indexStr := params["i"]
+
+		// Page navigation (Prev/Next buttons encode i=prev or i=next plus pg=N).
+		if indexStr == "prev" || indexStr == "next" {
+			newPage := parseIntWithDefault(params["pg"], 1, "pg")
+			validators, err := database.GetAllValidators(db, state.ChainID)
+			if err != nil || len(validators) == 0 {
+				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ No validators found.", nil)
+				return
+			}
+			markup, pageAddrs := buildValidatorSelectMarkup(validators, newPage, state.SelectedAddrs)
+			state.ValidatorPage = pageAddrs
+			state.ExpiresAt = time.Now().Add(cmdStateTTL)
+			setCmdState(chatID, state)
+			msg := buildValidatorSelectMsg(state)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, msg, markup)
+			return
+		}
+
+		idx := parseIntWithDefault(indexStr, -2, "i")
+
+		// Select all validators.
+		if idx == -1 {
+			state.SelectedAddrs = []string{"all"}
+			state.ExpiresAt = time.Now().Add(cmdStateTTL)
+			setCmdState(chatID, state)
+			markup := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+				{
+					{Text: "✅ Confirm", CallbackData: encodeCmdCallback("a", "cf")},
+					{Text: "❌ Cancel", CallbackData: encodeCmdCallback("a", "cx")},
+				},
+			}}
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "All validators selected. Confirm?", markup)
+			return
+		}
+
+		// Toggle selection for index idx.
+		if idx >= 0 && idx < len(state.ValidatorPage) {
+			addr := state.ValidatorPage[idx]
+			found := false
+			for i, a := range state.SelectedAddrs {
+				if a == addr {
+					// Deselect.
+					state.SelectedAddrs = append(state.SelectedAddrs[:i], state.SelectedAddrs[i+1:]...)
+					found = true
+					break
+				}
+			}
+			if !found {
+				state.SelectedAddrs = append(state.SelectedAddrs, addr)
+			}
+		}
+		state.ExpiresAt = time.Now().Add(cmdStateTTL)
+		setCmdState(chatID, state)
+
+		validators, err := database.GetAllValidators(db, state.ChainID)
+		if err != nil {
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ Unable to fetch validators.", nil)
+			return
+		}
+		// Determine current page from ValidatorPage.
+		currentPage := 1
+		if len(state.ValidatorPage) > 0 && len(validators) > 0 {
+			// Find the page that contains the first address of ValidatorPage.
+			for p := 1; p <= (len(validators)+cmdValidatorPageSize-1)/cmdValidatorPageSize; p++ {
+				s := (p - 1) * cmdValidatorPageSize
+				e := s + cmdValidatorPageSize
+				if e > len(validators) {
+					e = len(validators)
+				}
+				if len(validators[s:e]) > 0 && validators[s].Addr == state.ValidatorPage[0] {
+					currentPage = p
+					break
+				}
+			}
+		}
+		markup, pageAddrs := buildValidatorSelectMarkup(validators, currentPage, state.SelectedAddrs)
+		state.ValidatorPage = pageAddrs
+		setCmdState(chatID, state)
+		msg := buildValidatorSelectMsg(state)
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, msg, markup)
+		return
+	}
+
+	// Period selection: user picked a period for a period-aware validator command.
+	if action == "pd" {
+		state, ok := getCmdState(chatID)
+		if !ok || time.Now().After(state.ExpiresAt) {
+			deleteCmdState(chatID)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⏱ Session expired — run /cmd again.", nil)
+			return
+		}
+		state.Period = params["v"]
+		state.Step = "confirm"
+		state.ExpiresAt = time.Now().Add(cmdStateTTL)
+		setCmdState(chatID, state)
+		markup := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "✅ Confirm", CallbackData: encodeCmdCallback("a", "cf")},
+				{Text: "❌ Cancel", CallbackData: encodeCmdCallback("a", "cx")},
+			},
+		}}
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID,
+			fmt.Sprintf("Show <b>%s</b> — period: <b>%s</b> — chain: <code>%s</code>?",
+				html.EscapeString(state.Action), html.EscapeString(state.Period), html.EscapeString(state.ChainID)),
+			markup)
+		return
+	}
+
+	// Action-level sub-actions from buildActionMarkup buttons.
+	state, hasState := getCmdState(chatID)
+	if !hasState || time.Now().After(state.ExpiresAt) {
+		deleteCmdState(chatID)
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⏱ Session expired — run /cmd again.", nil)
+		return
+	}
+
+	switch state.Command {
+	case "subscribe":
+		switch action {
+		case "on", "off":
+			state.Action = action
+			if action == "off" {
+				// off all goes straight to confirm.
+				state.SelectedAddrs = []string{"all"}
+				state.ExpiresAt = time.Now().Add(cmdStateTTL)
+				setCmdState(chatID, state)
+				markup := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+					{
+						{Text: "✅ Confirm", CallbackData: encodeCmdCallback("a", "cf")},
+						{Text: "❌ Cancel", CallbackData: encodeCmdCallback("a", "cx")},
+					},
+				}}
+				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "Disable alerts for all subscribed validators?", markup)
+				return
+			}
+			// on → show validator selection.
+			validators, err := database.GetAllValidators(db, state.ChainID)
+			if err != nil || len(validators) == 0 {
+				deleteCmdState(chatID)
+				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ No validators found.", nil)
+				return
+			}
+			state.Step = "validators"
+			state.ExpiresAt = time.Now().Add(cmdStateTTL)
+			markup, pageAddrs := buildValidatorSelectMarkup(validators, 1, state.SelectedAddrs)
+			state.ValidatorPage = pageAddrs
+			setCmdState(chatID, state)
+			msg := buildValidatorSelectMsg(state)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, msg, markup)
+		case "list":
+			state.Action = "list"
+			state.ExpiresAt = time.Now().Add(cmdStateTTL)
+			setCmdState(chatID, state)
+			markup := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+				{
+					{Text: "✅ Confirm", CallbackData: encodeCmdCallback("a", "cf")},
+					{Text: "❌ Cancel", CallbackData: encodeCmdCallback("a", "cx")},
+				},
+			}}
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "Show your current subscriptions?", markup)
+		default:
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ Unknown action.", nil)
+		}
+
+	case "report":
+		switch action {
+		case "enable", "disable":
+			state.Action = action
+			state.ExpiresAt = time.Now().Add(cmdStateTTL)
+			setCmdState(chatID, state)
+			markup := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+				{
+					{Text: "✅ Confirm", CallbackData: encodeCmdCallback("a", "cf")},
+					{Text: "❌ Cancel", CallbackData: encodeCmdCallback("a", "cx")},
+				},
+			}}
+			verb := "Enable"
+			if action == "disable" {
+				verb = "Disable"
+			}
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID,
+				fmt.Sprintf("%s the daily report for chain <code>%s</code>?", verb, html.EscapeString(state.ChainID)), markup)
+		case "schedule":
+			deleteCmdState(chatID)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID,
+				"Use <code>/report hour=H minute=M timezone=TZ</code> directly to set the schedule.", nil)
+		case "status":
+			state.Action = "status"
+			state.ExpiresAt = time.Now().Add(cmdStateTTL)
+			setCmdState(chatID, state)
+			markup := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+				{
+					{Text: "✅ Confirm", CallbackData: encodeCmdCallback("a", "cf")},
+					{Text: "❌ Cancel", CallbackData: encodeCmdCallback("a", "cx")},
+				},
+			}}
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "Show report status?", markup)
+		default:
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ Unknown action.", nil)
+		}
+
+	case "validators":
+		switch action {
+		case "status":
+			// status is read-only and instant — execute directly, no confirm step needed.
+			deleteCmdState(chatID)
+			if ChainHealthFetcher == nil {
+				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ Chain health data is not available yet.", nil)
+				return
+			}
+			snap := ChainHealthFetcher(state.ChainID)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, formatChainHealthMessage(state.ChainID, snap), nil)
+		case "uptime", "rate", "missing", "operation_time":
+			// Period-aware commands: show period picker before confirm.
+			state.Action = action
+			state.Step = "period"
+			state.ExpiresAt = time.Now().Add(cmdStateTTL)
+			setCmdState(chatID, state)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID,
+				fmt.Sprintf("Choose period for <b>%s</b>:", html.EscapeString(action)),
+				buildPeriodMarkup())
+		default:
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ Unknown action.", nil)
+		}
+
+	case "chain":
+		// Tapping a chain button sets it directly and confirms.
+		requested := action
+		if !validateChainID(requested, enabledChains) {
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID,
+				fmt.Sprintf("⚠️ Unknown chain <code>%s</code>.", html.EscapeString(requested)), nil)
+			return
+		}
+		setActiveChain(chatID, requested)
+		if err := database.UpdateChatChain(db, chatID, requested); err != nil {
+			log.Printf("[telegram/cmd] UpdateChatChain chat=%d: %v", chatID, err)
+		}
+		deleteCmdState(chatID)
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID,
+			fmt.Sprintf("✅ Chain switched to <code>%s</code>.", html.EscapeString(requested)), nil)
+
+	default:
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ Unknown command.", nil)
+	}
+}
+
+// buildActionMarkup returns the action-level inline keyboard for the given command.
+func buildActionMarkup(command string, enabledChains []string) *InlineKeyboardMarkup {
+	cancelBtn := InlineKeyboardButton{Text: "❌ Cancel", CallbackData: encodeCmdCallback("a", "cx")}
+	switch command {
+	case "subscribe":
+		return &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "Enable (on)", CallbackData: encodeCmdCallback("a", "on")},
+				{Text: "Disable (off)", CallbackData: encodeCmdCallback("a", "off")},
+			},
+			{
+				{Text: "List subscriptions", CallbackData: encodeCmdCallback("a", "list")},
+				cancelBtn,
+			},
+		}}
+	case "report":
+		return &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "Enable", CallbackData: encodeCmdCallback("a", "enable")},
+				{Text: "Disable", CallbackData: encodeCmdCallback("a", "disable")},
+			},
+			{
+				{Text: "Status", CallbackData: encodeCmdCallback("a", "status")},
+				{Text: "Schedule…", CallbackData: encodeCmdCallback("a", "schedule")},
+			},
+			{cancelBtn},
+		}}
+	case "validators":
+		return &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "Status",         CallbackData: encodeCmdCallback("a", "status")},
+				{Text: "Uptime",         CallbackData: encodeCmdCallback("a", "uptime")},
+			},
+			{
+				{Text: "Rate",           CallbackData: encodeCmdCallback("a", "rate")},
+				{Text: "Missing blocks", CallbackData: encodeCmdCallback("a", "missing")},
+			},
+			{
+				{Text: "Operation time", CallbackData: encodeCmdCallback("a", "operation_time")},
+			},
+			{cancelBtn},
+		}}
+	case "chain":
+		var rows [][]InlineKeyboardButton
+		for _, id := range enabledChains {
+			rows = append(rows, []InlineKeyboardButton{
+				{Text: id, CallbackData: encodeCmdCallback("a", id)},
+			})
+		}
+		rows = append(rows, []InlineKeyboardButton{cancelBtn})
+		return &InlineKeyboardMarkup{InlineKeyboard: rows}
+	default:
+		return nil
+	}
+}
+
+// buildPeriodMarkup returns the period-selection inline keyboard used for
+// period-aware validator commands (rate, uptime, missing, operation_time).
+func buildPeriodMarkup() *InlineKeyboardMarkup {
+	return &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{
+		{
+			{Text: "Current week",  CallbackData: encodeCmdCallback("a", "pd", "v", "current_week")},
+			{Text: "Current month", CallbackData: encodeCmdCallback("a", "pd", "v", "current_month")},
+		},
+		{
+			{Text: "Current year", CallbackData: encodeCmdCallback("a", "pd", "v", "current_year")},
+			{Text: "All time",     CallbackData: encodeCmdCallback("a", "pd", "v", "all_time")},
+		},
+		{{Text: "❌ Cancel", CallbackData: encodeCmdCallback("a", "cx")}},
+	}}
+}
+
+// buildValidatorSelectMsg formats the header shown during the validator select step.
+func buildValidatorSelectMsg(state CmdState) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("🎛 <b>%s %s</b> — select validators:\n",
+		html.EscapeString(state.Command), html.EscapeString(state.Action)))
+	if len(state.SelectedAddrs) > 0 {
+		b.WriteString(fmt.Sprintf("Selected: <b>%d</b>\n", len(state.SelectedAddrs)))
+	}
+	b.WriteString("Tap to toggle. Press ✅ Done when finished.")
+	return b.String()
+}
+
+// executeCmdMenuAction carries out the confirmed menu action and returns the
+// result message to display to the user.
+func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID string, state CmdState) string {
+	switch state.Command {
+	case "subscribe":
+		switch state.Action {
+		case "list":
+			subs, err := database.GetValidatorStatusList(db, chatID, state.ChainID)
+			if err != nil {
+				return "⚠️ Unable to fetch subscriptions."
+			}
+			if len(subs) == 0 {
+				return fmt.Sprintf("🧾 No subscriptions (chain: <code>%s</code>).", html.EscapeString(state.ChainID))
+			}
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("🧾 <b>Your subscriptions</b> (chain: <code>%s</code>)\n", html.EscapeString(state.ChainID)))
+			for _, s := range subs {
+				b.WriteString(fmt.Sprintf("• %s\n  (%s) — <b>%s</b>\n", s.Moniker, s.Addr, s.Status))
+			}
+			return b.String()
+
+		case "on":
+			if len(state.SelectedAddrs) == 0 {
+				return "⚠️ No validators selected."
+			}
+			if len(state.SelectedAddrs) == 1 && state.SelectedAddrs[0] == "all" {
+				vals, err := database.GetAllValidators(db, state.ChainID)
+				if err != nil {
+					return "⚠️ Unable to fetch validators."
+				}
+				changed := 0
+				for _, v := range vals {
+					if err := database.UpdateTelegramValidatorSubStatus(db, chatID, state.ChainID, v.Addr, v.Moniker, "subscribe"); err == nil {
+						changed++
+					}
+				}
+				return fmt.Sprintf("✅ Enabled alerts for <b>%d</b> validators.", changed)
+			}
+			var ok, fail int
+			for _, addr := range state.SelectedAddrs {
+				resolved, err := database.ResolveAddrs(db, state.ChainID, []string{addr})
+				if err != nil || len(resolved) == 0 {
+					fail++
+					continue
+				}
+				if err := database.UpdateTelegramValidatorSubStatus(db, chatID, state.ChainID, resolved[0].Addr, resolved[0].Moniker, "subscribe"); err != nil {
+					fail++
+				} else {
+					ok++
+				}
+			}
+			return fmt.Sprintf("✅ Enabled: %d | ❌ Failed: %d", ok, fail)
+
+		case "off":
+			subs, err := database.GetTelegramValidatorSub(db, chatID, state.ChainID, true)
+			if err != nil {
+				return "⚠️ Unable to fetch active subscriptions."
+			}
+			var ok int
+			for _, s := range subs {
+				if err := database.UpdateTelegramValidatorSubStatus(db, chatID, state.ChainID, s.Addr, s.Moniker, "unsubscribe"); err == nil {
+					ok++
+				}
+			}
+			return fmt.Sprintf("🛑 Disabled alerts for <b>%d</b> validators.", ok)
+		}
+
+	case "report":
+		switch state.Action {
+		case "enable":
+			msg, err := reportActivate(db, chatID, state.ChainID, "true")
+			if err != nil {
+				return fmt.Sprintf("❌ %v", err)
+			}
+			return msg
+		case "disable":
+			msg, err := reportActivate(db, chatID, state.ChainID, "false")
+			if err != nil {
+				return fmt.Sprintf("❌ %v", err)
+			}
+			return msg
+		case "status":
+			msg, err := reportActivate(db, chatID, state.ChainID, "")
+			if err != nil {
+				return fmt.Sprintf("❌ %v", err)
+			}
+			return msg
+		}
+
+	case "validators":
+		period := state.Period
+		if period == "" {
+			period = periodDefault
+		}
+		switch state.Action {
+		case "status":
+			if ChainHealthFetcher == nil {
+				return "⚠️ Chain health data is not available yet."
+			}
+			snap := ChainHealthFetcher(state.ChainID)
+			return formatChainHealthMessage(state.ChainID, snap)
+		case "uptime":
+			msg, _, _, err := formatUptime(db, state.ChainID, 1, limitDefault, "", sortDefault)
+			if err != nil {
+				return fmt.Sprintf("❌ %v", err)
+			}
+			return msg
+		case "rate":
+			msg, _, _, err := formatParticipationRAte(db, state.ChainID, period, 1, limitDefault, "", sortDefault)
+			if err != nil {
+				return fmt.Sprintf("❌ %v", err)
+			}
+			return msg
+		case "missing":
+			msg, _, _, err := formatMissing(db, state.ChainID, period, 1, limitDefault, "")
+			if err != nil {
+				return fmt.Sprintf("❌ %v", err)
+			}
+			return msg
+		case "operation_time":
+			msg, _, _, err := formatOperationTime(db, state.ChainID, 1, limitDefault, "")
+			if err != nil {
+				return fmt.Sprintf("❌ %v", err)
+			}
+			return msg
+		}
+	}
+	return "⚠️ Nothing to execute."
+}
+
 func formatHelp() string {
 	var b strings.Builder
 	b.WriteString("🆘 <b>Help</b>\n\n")
@@ -1459,6 +2199,8 @@ func formatHelp() string {
 	b.WriteString("• <code>/chain</code> — show current chain and available chains\n")
 	b.WriteString("• <code>/setchain chain=&lt;id&gt;</code> — switch active chain for this chat\n\n")
 
+	b.WriteString("🎛 <code>/cmd</code> — Interactive command menu (guided step-by-step)\n\n")
+
 	b.WriteString("ℹ️ Parameters must be written as <code>key=value</code> (e.g. <code>period=current_week</code>).\n")
 
 	return b.String()
@@ -1500,6 +2242,10 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 	} else {
 		b.WriteString("\nParticipation (last 50 blocks — RPC unreachable):\n")
 		b.WriteString(formatValidatorRates(snap.ValidatorRates))
+	}
+
+	if AlertsFormatter != nil {
+		b.WriteString(AlertsFormatter(snap.AlertsLast24h))
 	}
 
 	return b.String()

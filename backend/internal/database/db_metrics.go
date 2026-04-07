@@ -92,6 +92,23 @@ func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 	return alerts, result.Error
 }
 
+// GetAlertLogsLast24h returns all alert_logs rows sent in the last 24 hours
+// for the given chain, ordered by sent_at DESC. Includes WARNING, CRITICAL,
+// and RESOLVED rows. Limits to 50 rows to cap message size.
+func GetAlertLogsLast24h(db *gorm.DB, chainID string) ([]AlertSummary, error) {
+	var results []AlertSummary
+	err := db.Raw(`
+		SELECT moniker, addr, level, start_height, end_height, msg, sent_at
+		FROM alert_logs
+		WHERE chain_id = ?
+		  AND sent_at >= datetime('now', '-24 hours')
+		  AND level IN ('WARNING', 'CRITICAL', 'RESOLVED')
+		ORDER BY sent_at DESC
+		LIMIT 50
+	`, chainID).Scan(&results).Error
+	return results, err
+}
+
 func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string) ([]ParticipationRate, error) {
 	var results []ParticipationRate
 	startStr, _, err := getPeriodParams(period)
