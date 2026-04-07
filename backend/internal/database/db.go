@@ -206,6 +206,17 @@ func GetWebhookByID(db *gorm.DB, userID, table string) (*WebhookValidator, error
 	return &wh, nil
 }
 
+// GetUserWebhookChains returns the distinct chain IDs configured in webhook_validators
+// for the given user. Returns nil (not an error) if the user has no webhooks.
+func GetUserWebhookChains(db *gorm.DB, userID string) ([]string, error) {
+	var chains []string
+	err := db.Model(&WebhookValidator{}).
+		Distinct("chain_id").
+		Where("user_id = ? AND chain_id IS NOT NULL AND chain_id != ''", userID).
+		Pluck("chain_id", &chains).Error
+	return chains, err
+}
+
 // ============================== USERS ===================================================
 
 func InsertUser(userID, email, name string, db *gorm.DB) error {

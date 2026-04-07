@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
 
@@ -40,7 +41,16 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 		select {
 		case <-timer.C:
 			log.Printf("[report] sending for user %s", userID)
-			SendDailyStatsForUser(db, internal.Config.DefaultChain, &userID, nil, loc)
+			chains, err := database.GetUserWebhookChains(db, userID)
+			if err != nil || len(chains) == 0 {
+				if err != nil {
+					log.Printf("[report] failed to get webhook chains for user %s: %v", userID, err)
+				}
+				chains = []string{internal.Config.DefaultChain}
+			}
+			for _, chainID := range chains {
+				SendDailyStatsForUser(db, chainID, &userID, nil, loc)
+			}
 		case <-reload:
 			timer.Stop()
 			log.Printf("[report] reloading schedule for user %s", userID)
