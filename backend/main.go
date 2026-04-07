@@ -82,7 +82,7 @@ func main() {
 				ValidatorRates:    convertValidatorRates(snap.ValidatorRates),
 				MinBlock:          snap.MinBlock,
 				MaxBlock:          snap.MaxBlock,
-				AlertsLast24h:     snap.AlertsLast24h,
+				MissedLast24h:     snap.MissedLast24h,
 			}
 		},
 		func(chainID string, snap telegram.ChainHealthSnapshot) string {
@@ -98,11 +98,11 @@ func main() {
 				LatestBlockTime:   snap.LatestBlockTime,
 				ConsensusRound:    snap.ConsensusRound,
 				IsStuck:           snap.IsStuck,
-				AlertsLast24h:     snap.AlertsLast24h,
+				MissedLast24h:     snap.MissedLast24h,
 			})
 		},
 	)
-	telegram.AlertsFormatter = gnovalidator.FormatAlertsLast24hHTML
+	telegram.MissedBlocksFormatter = gnovalidator.FormatMissedBlocksLast24hHTML
 
 	// ==================== Load admin thresholds from DB ============ //
 	gnovalidator.LoadThresholds(db)

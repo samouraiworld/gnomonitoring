@@ -590,6 +590,29 @@ func GetActiveAlertCount(db *gorm.DB, chainID, level string) (int, error) {
 	return count, nil
 }
 
+// MissedBlockCount holds the count of missed blocks per validator in a time window.
+type MissedBlockCount struct {
+	Addr    string
+	Moniker string
+	Missed  int
+}
+
+// GetMissedBlocksLast24h returns the count of missed blocks per validator in the
+// last 24 hours for the given chain, ordered by missed count descending.
+func GetMissedBlocksLast24h(db *gorm.DB, chainID string) ([]MissedBlockCount, error) {
+	var result []MissedBlockCount
+	err := db.Raw(`
+		SELECT addr, MAX(moniker) AS moniker, COUNT(*) AS missed
+		FROM daily_participations
+		WHERE chain_id = ?
+		  AND participated = 0
+		  AND date >= datetime('now', '-24 hours')
+		GROUP BY addr
+		ORDER BY missed DESC
+	`, chainID).Scan(&result).Error
+	return result, err
+}
+
 // GetTotalAlertCount returns the total count of alerts with the given level for the given chain.
 func GetTotalAlertCount(db *gorm.DB, chainID, level string) (int64, error) {
 	var count int64

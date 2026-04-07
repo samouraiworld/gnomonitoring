@@ -52,7 +52,7 @@ type ChainHealthSnapshot struct {
 	ValidatorRates map[string]ValidatorRate
 	MinBlock       int64
 	MaxBlock       int64
-	AlertsLast24h  []database.AlertSummary
+	MissedLast24h  []database.MissedBlockCount
 }
 
 
@@ -73,9 +73,9 @@ var ChainHealthFetcher func(chainID string) ChainHealthSnapshot
 var ChainDisabledFormatter func(chainID string, snap ChainHealthSnapshot) string
 var ChainStuckFormatter func(chainID string, snap ChainHealthSnapshot) string
 
-// AlertsFormatter formats the last-24h alert section. Set from main.go to
-// gnovalidator.FormatAlertsLast24h to avoid a circular import.
-var AlertsFormatter func(alerts []database.AlertSummary) string
+// MissedBlocksFormatter formats the missed-blocks-last-24h section. Set from main.go to
+// gnovalidator.FormatMissedBlocksLast24hHTML to avoid a circular import.
+var MissedBlocksFormatter func(missed []database.MissedBlockCount) string
 
 // SetChainHealthFetcher registers the live-health fetch function and its
 // format helpers. Called once from main.go.
@@ -2248,8 +2248,8 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 		b.WriteString(fmt.Sprintf("Consensus: round %d — %s\n", snap.ConsensusRound, roundLabel))
 	}
 
-	if AlertsFormatter != nil {
-		b.WriteString(AlertsFormatter(snap.AlertsLast24h))
+	if MissedBlocksFormatter != nil {
+		b.WriteString(MissedBlocksFormatter(snap.MissedLast24h))
 	}
 
 	return b.String()

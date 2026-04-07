@@ -104,7 +104,7 @@ func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *
 			log.Printf("[report][%s] no participation data for %s, skipping", chainID, yesterday)
 			return
 		}
-		msg = FormatHealthyReport(chainID, yesterday, rates, minBlock, maxBlock, snap.AlertsLast24h)
+		msg = FormatHealthyReport(chainID, yesterday, snap, rates, minBlock, maxBlock)
 	}
 
 	switch {
