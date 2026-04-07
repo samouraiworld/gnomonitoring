@@ -29,18 +29,6 @@ func convertValidatorRates(src map[string]gnovalidator.ValidatorRate) map[string
 	return dst
 }
 
-// convertBackValidatorRates converts telegram.ValidatorRate map values back to
-// their gnovalidator equivalents.
-func convertBackValidatorRates(src map[string]telegram.ValidatorRate) map[string]gnovalidator.ValidatorRate {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[string]gnovalidator.ValidatorRate, len(src))
-	for k, v := range src {
-		dst[k] = gnovalidator.ValidatorRate{Rate: v.Rate, Moniker: v.Moniker}
-	}
-	return dst
-}
 
 // startChainMonitoring launches monitoring goroutines for one chain and registers
 // their shared cancel function in the chainmanager registry.
@@ -91,8 +79,6 @@ func main() {
 				RPCReachable:      snap.RPCReachable,
 				IsStuck:           snap.IsStuck,
 				IsDisabled:        snap.IsDisabled,
-				ValidatorLiveness: snap.ValidatorLiveness,
-				Monikers:          snap.Monikers,
 				ValidatorRates:    convertValidatorRates(snap.ValidatorRates),
 				MinBlock:          snap.MinBlock,
 				MaxBlock:          snap.MaxBlock,
@@ -104,9 +90,6 @@ func main() {
 				LatestBlockHeight: snap.LatestBlockHeight,
 				LatestBlockTime:   snap.LatestBlockTime,
 				IsDisabled:        snap.IsDisabled,
-				ValidatorLiveness: snap.ValidatorLiveness,
-				Monikers:          snap.Monikers,
-				ValidatorRates:    convertBackValidatorRates(snap.ValidatorRates),
 			})
 		},
 		func(chainID string, snap telegram.ChainHealthSnapshot) string {
@@ -115,11 +98,7 @@ func main() {
 				LatestBlockTime:   snap.LatestBlockTime,
 				ConsensusRound:    snap.ConsensusRound,
 				IsStuck:           snap.IsStuck,
-				ValidatorLiveness: snap.ValidatorLiveness,
-				Monikers:          snap.Monikers,
-				ValidatorRates:    convertBackValidatorRates(snap.ValidatorRates),
-				MinBlock:          snap.MinBlock,
-				MaxBlock:          snap.MaxBlock,
+				AlertsLast24h:     snap.AlertsLast24h,
 			})
 		},
 	)

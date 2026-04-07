@@ -465,16 +465,27 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 					continue
 				}
 
-				// Time-based dedup: skip if an alert of this level was already sent recently.
+				// Time-based dedup: skip if an alert of this level was already sent recently,
+				// UNLESS a RESOLVED was dispatched after that alert AND the current missed
+				// sequence starts strictly after the resolved range (i.e. a genuinely new
+				// incident, not the same down-period being re-detected).
 				resendHours := t.ResendHoursForLevel(level)
 				window := fmt.Sprintf("-%d hours", resendHours)
 				var recentCount int64
 				err := db.Raw(`
-					SELECT COUNT(*) FROM alert_logs
-					WHERE chain_id = ? AND addr = ? AND level = ?
-					AND skipped = 1
-					AND sent_at >= datetime('now', ?)
-				`, chainID, addr, level, window).Scan(&recentCount).Error
+					SELECT COUNT(*) FROM alert_logs al
+					WHERE al.chain_id = ? AND al.addr = ? AND al.level = ?
+					AND al.skipped = 1
+					AND al.sent_at >= datetime('now', ?)
+					AND NOT EXISTS (
+						SELECT 1 FROM alert_logs r
+						WHERE r.chain_id = al.chain_id
+						  AND r.addr = al.addr
+						  AND r.level = 'RESOLVED'
+						  AND r.sent_at > al.sent_at
+						  AND ? > r.end_height
+					)
+				`, chainID, addr, level, window, start_height).Scan(&recentCount).Error
 				if err != nil {
 					log.Printf("[validator][%s] DB error checking alert_logs: %v", chainID, err)
 					continue
