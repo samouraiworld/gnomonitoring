@@ -28,6 +28,12 @@ condition `count >= MuteAfterNAlerts` is always false → mute never activates.
 query picks up those old missed blocks and fires alerts for events that happened days or weeks ago,
 all at the same timestamp.
 
+### Bug 4 — Permanently dead validators generate daily alert noise
+
+With time-based dedup (24 h window for CRITICAL), a validator that has been absent for weeks
+still triggers one CRITICAL alert every 24 h forever. This is noise: the operator already knows
+the validator is gone.
+
 ---
 
 ## Goal
@@ -39,12 +45,14 @@ all at the same timestamp.
 3. Remove the broken MUTED mechanism from the warning/critical path (replaced by time-based dedup).
 4. Fix `SendResolveAlerts` which shares the same `PARTITION BY DATE(date)` sliding-window problem.
 5. Reduce unnecessary DB queries per cycle: replace the per-row loop with a single last-row-per-sequence query.
+6. **Silence alerts for permanently dead validators**: stop sending alerts when a validator has had
+   no participation for more than a configurable number of days (default 7).
 
 ---
 
 ## Implementation plan
 
-### Step 1 — Per-chain sync gate
+### ✅ Step 1 — Per-chain sync gate
 
 **File:** `backend/internal/gnovalidator/gnovalidator_realtime.go`
 
@@ -105,13 +113,13 @@ if !isChainSynced(chainID) {
 }
 ```
 
-### Step 2 — Replace the missed-blocks query with a last-row-per-sequence query
+### ✅ Step 2 — Replace the missed-blocks query with a last-row-per-sequence query
 
 **File:** `backend/internal/gnovalidator/gnovalidator_realtime.go`
 
-The current query (lines 360–397) returns one row per block where `participated = 0`, causing
-N DB dedup queries per dead validator per cycle (Bug 6 from review). Replace with a query that
-returns only the **last row of each contiguous missed sequence**:
+The current query returns one row per block where `participated = 0`, causing N DB dedup queries
+per dead validator per cycle. Replace with a query that returns only the **last row of each
+contiguous missed sequence**:
 
 ```sql
 WITH ranked AS (
@@ -154,17 +162,15 @@ WHERE missed >= ?
 ORDER BY addr, start_height
 ```
 
-Bind parameters: `chainID`, `GetThresholds().WarningThreshold`.
+Note: `PARTITION BY DATE(date)` removed — sequences scoped by `(addr, moniker)` only,
+so a dead validator's sequence is no longer reset at midnight.
 
-Note: the `PARTITION BY DATE(date)` is removed deliberately — sequences are now scoped by
-`(addr, moniker)` only, so a dead validator does not get its sequence reset at midnight.
-
-### Step 3 — Time-based dedup (replace start_height logic)
+### ✅ Step 3 — Time-based dedup (replace start_height logic)
 
 **File:** `backend/internal/gnovalidator/gnovalidator_realtime.go`
 
-Remove the three old dedup checks (lines 423–496: `start_height` check, BETWEEN range check,
-mute check). Replace with a single time-based check:
+Remove the three old dedup checks (`start_height` check, BETWEEN range check, mute check).
+Replace with a single time-based check:
 
 ```go
 t := GetThresholds()
@@ -188,30 +194,13 @@ if recentCount > 0 {
 }
 ```
 
-Note on `skipped` semantics: in the current codebase `skipped = true` (= 1) means "the alert was
-actually dispatched" (confusingly named). The query above is correct.
+### ✅ Step 4 — Fix SendResolveAlerts (same sliding-window problem)
 
-The send + log path is unchanged:
-```go
-if err := internal.SendAllValidatorAlerts(chainID, missed, today, level, addr, moniker, start_height, end_height, db); err != nil {
-    log.Printf("[validator][%s] SendAllValidatorAlerts error: %v", chainID, err)
-}
-if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
-    log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
-}
-```
+**File:** `backend/internal/gnovalidator/gnovalidator_realtime.go`
 
-### Step 4 — Fix SendResolveAlerts (same sliding-window problem)
+Replace the CTE with the same sequence-based query from Step 2. Remove the
+`MuteDurationMinutes`/`ResolveMuteAfterN` backoff — replaced by the existing `end_height` dedup:
 
-**File:** `backend/internal/gnovalidator/gnovalidator_realtime.go` (lines 517–638)
-
-`SendResolveAlerts` uses the same `PARTITION BY DATE(date)` and `-2 hours` window as the alert
-query (lines 527–569). Replace its CTE with the same sequence-based query from Step 2 to avoid
-midnight resets. Also remove the `MuteDurationMinutes`/`ResolveMuteAfterN` backoff (lines 592–611)
-— it is replaced by the fact that `RESOLVED` rows are already logged with `end_height`, so the
-existing `count > 0` check at line 588 prevents duplicate resolves.
-
-The resolve path (`end_height` dedup) remains:
 ```go
 var count int64
 err := db.Raw(`
@@ -224,95 +213,156 @@ if count > 0 {
 }
 ```
 
-The `MuteDurationMinutes` and `ResolveMuteAfterN` fields in `Thresholds` are no longer used in
-`SendResolveAlerts` after this change (they were only used in the removed backoff block at
-lines 592–611). They must be removed from `Thresholds` in Step 5 simultaneously to avoid
-a compile error.
-
-### Step 5 — Add `ResendHoursForLevel` to Thresholds
+### ✅ Step 5 — Add `ResendHoursForLevel` to Thresholds
 
 **File:** `backend/internal/gnovalidator/thresholds.go`
 
-Add two new fields and remove the four fields that are now unused:
+Removed `MuteAfterNAlerts`, `MuteDurationMinutes`, `ResolveMuteAfterN`.
+Added `AlertCriticalResendHours` (24), `AlertWarningResendHours` (6), and `ResendHoursForLevel()`.
 
-```go
-type Thresholds struct {
-    WarningThreshold            int
-    CriticalThreshold           int
-    // MuteAfterNAlerts — REMOVED (replaced by time-based dedup)
-    // MuteDurationMinutes — REMOVED (replaced by time-based dedup)
-    // ResolveMuteAfterN — REMOVED (replaced by end_height dedup in SendResolveAlerts)
-    AlertCriticalResendHours    int   // NEW: default 24
-    AlertWarningResendHours     int   // NEW: default 6
-    StagnationFirstAlertSeconds int
-    StagnationRepeatMinutes     int
-    RPCErrorCooldownMinutes     int
-    NewValidatorScanMinutes     int
-    AlertCheckIntervalSeconds   int
-    RawRetentionDays            int
-    AggregatorPeriodMinutes     int
-    RecentBlocksWindow          int
-}
-```
-
-Defaults and `LoadThresholds`:
-
-```go
-activeThresholds = Thresholds{
-    AlertCriticalResendHours: 24,
-    AlertWarningResendHours:  6,
-    // other fields unchanged...
-}
-
-// In LoadThresholds:
-AlertCriticalResendHours: database.GetAdminConfigInt(db, "alert_critical_resend_hours", 24),
-AlertWarningResendHours:  database.GetAdminConfigInt(db, "alert_warning_resend_hours",  6),
-```
-
-Add helper:
-
-```go
-func (t Thresholds) ResendHoursForLevel(level string) int {
-    if level == "CRITICAL" {
-        return t.AlertCriticalResendHours
-    }
-    return t.AlertWarningResendHours
-}
-```
-
-### Step 6 — Register new admin_config defaults, remove old ones
+### ✅ Step 6 — Register new admin_config defaults, remove old ones
 
 **File:** `backend/internal/database/db_init.go`
 
-In `SeedAdminConfig` defaults map:
+Added `alert_critical_resend_hours = 24`, `alert_warning_resend_hours = 6`.
+Removed `mute_after_n_alerts`, `mute_duration_minutes`, `resolve_mute_after_n`.
 
-```go
-// Add:
-"alert_critical_resend_hours": "24",
-"alert_warning_resend_hours":  "6",
-// Remove:
-"mute_after_n_alerts":    "1",
-"mute_duration_minutes":  "60",
-"resolve_mute_after_n":   "4",
-```
-
-### Step 7 — Remove mute fields from admin API
+### ✅ Step 7 — Remove mute fields from admin API
 
 **File:** `backend/internal/api/api-admin.go`
 
-Remove `MuteAfterNAlerts`, `MuteDurationMinutes`, and `ResolveMuteAfterN` from the
-`handleGetThresholds` / `handlePutThresholds` request/response structs.
+Not needed — `handleGetThresholds`/`handlePutThresholds` pass the DB config map directly
+without referencing struct fields. No change required.
 
 ---
 
-## Behaviour after fix
+### Step 8 — Silence alerts for permanently dead validators
 
-| Situation | Before fix | After fix |
-|---|---|---|
+**File:** `backend/internal/gnovalidator/gnovalidator_realtime.go`
+**File:** `backend/internal/gnovalidator/thresholds.go`
+**File:** `backend/internal/database/db_init.go`
+
+#### Problem
+
+With time-based dedup (24 h for CRITICAL), a validator absent for weeks still triggers one
+CRITICAL alert per day forever. Once a validator has had no `participated = 1` row for more than
+N days, it is considered permanently gone and further alerts are pure noise.
+
+#### Approach
+
+Before sending an alert, check when the validator last participated. If the last participation
+date is older than `DeadValidatorSilenceDays` (default 7), skip the alert silently.
+
+The check is a single cheap query on `daily_participations`:
+
+```sql
+SELECT MAX(date) FROM daily_participations
+WHERE chain_id = ? AND addr = ? AND participated = 1
+```
+
+If the result is NULL (validator never participated in DB) or older than `now - N days`, skip.
+
+#### Implementation
+
+**`thresholds.go`** — add one field:
+
+```go
+type Thresholds struct {
+    // existing fields ...
+    DeadValidatorSilenceDays int  // default 7; 0 = feature disabled
+}
+
+// In activeThresholds defaults:
+DeadValidatorSilenceDays: 7,
+
+// In LoadThresholds:
+DeadValidatorSilenceDays: database.GetAdminConfigInt(db, "dead_validator_silence_days", 7),
+```
+
+**`db_init.go`** — seed the new key:
+
+```go
+"dead_validator_silence_days": "7",
+```
+
+**`gnovalidator_realtime.go`** — add the check inside the alert loop, after the time-based dedup
+check and before `SendAllValidatorAlerts`:
+
+```go
+// Silence permanently dead validators: skip if no participation in the last N days.
+if t.DeadValidatorSilenceDays > 0 {
+    silenceWindow := fmt.Sprintf("-%d days", t.DeadValidatorSilenceDays)
+    var lastParticipated string
+    err := db.Raw(`
+        SELECT COALESCE(MAX(date), '') FROM daily_participations
+        WHERE chain_id = ? AND addr = ? AND participated = 1
+    `, chainID, addr).Scan(&lastParticipated).Error
+    if err != nil {
+        log.Printf("[validator][%s] DB error checking last participation: %v", chainID, err)
+        continue
+    }
+    var isSilenced int64
+    err = db.Raw(`
+        SELECT CASE WHEN ? = '' OR ? < datetime('now', ?) THEN 1 ELSE 0 END
+    `, lastParticipated, lastParticipated, silenceWindow).Scan(&isSilenced).Error
+    if err != nil {
+        log.Printf("[validator][%s] DB error evaluating silence window: %v", chainID, err)
+        continue
+    }
+    if isSilenced == 1 {
+        continue
+    }
+}
+```
+
+Alternatively (simpler, single query):
+
+```go
+if t.DeadValidatorSilenceDays > 0 {
+    silenceWindow := fmt.Sprintf("-%d days", t.DeadValidatorSilenceDays)
+    var activeRecently int64
+    err := db.Raw(`
+        SELECT COUNT(*) FROM daily_participations
+        WHERE chain_id = ? AND addr = ? AND participated = 1
+        AND date >= datetime('now', ?)
+    `, chainID, addr, silenceWindow).Scan(&activeRecently).Error
+    if err != nil {
+        log.Printf("[validator][%s] DB error checking silence: %v", chainID, err)
+        continue
+    }
+    if activeRecently == 0 {
+        continue
+    }
+}
+```
+
+The second form is simpler and preferred. It returns 0 when the validator has not participated
+in the last N days (or never), which covers both the "dead forever" and "never seen" cases.
+
+#### Behaviour
+
+| Situation | Before Step 8 | After Step 8 |
+| --- | --- | --- |
+| Validator down for 6 days | 1 alert/day | 1 alert/day (still within window) |
+| Validator down for 7+ days | 1 alert/day forever | Silenced — no more alerts |
+| Validator comes back after 8 days | RESOLVED sent | RESOLVED sent (silence only blocks new alerts, not resolves) |
+| `dead_validator_silence_days = 0` | — | Feature disabled, behaves like before |
+
+Note: `SendResolveAlerts` is **not** gated by the silence check. If a validator that was silenced
+comes back online (`participated = 1` at `end_height + 1`), the RESOLVED alert still fires normally.
+The silence only prevents new WARNING/CRITICAL alerts from being sent.
+
+---
+
+## Behaviour summary (all steps)
+
+| Situation | Before | After |
+| --- | --- | --- |
 | Validator goes down | Alert sent | Alert sent |
 | Still down 20 s later | Re-alerted (new start_height) | Silenced (within resend window) |
 | Still down at midnight | Burst re-alert (date partition reset) | Silenced (within 24 h window) |
 | Still down after 24 h | Re-alerted (daily burst) | 1 reminder sent (then silenced 24 h) |
+| Still down after 7 days | 1 alert/day forever | Silenced permanently |
 | Chain doing backfill | Historical alerts fire | No alerts until synced |
 | Validator recovers | RESOLVED sent | RESOLVED sent (unchanged) |
 | Validator recovers at midnight | Possible phantom resolve | Correct (sequence no longer date-partitioned) |
@@ -321,16 +371,16 @@ Remove `MuteAfterNAlerts`, `MuteDurationMinutes`, and `ResolveMuteAfterN` from t
 
 ## Files changed
 
-| File | Change |
-|---|---|
-| `backend/internal/gnovalidator/gnovalidator_realtime.go` | Add `chainSynced` map + helpers; replace missed-blocks query (remove DATE partition); replace 3 dedup checks with single time-based check; add sync gate at top of alert loop; fix `SendResolveAlerts` query + remove mute backoff |
-| `backend/internal/gnovalidator/thresholds.go` | Add `AlertCriticalResendHours`, `AlertWarningResendHours`, `ResendHoursForLevel`; remove `MuteAfterNAlerts`, `MuteDurationMinutes`, `ResolveMuteAfterN` |
-| `backend/internal/database/db_init.go` | Add `alert_critical_resend_hours`, `alert_warning_resend_hours`; remove mute defaults |
-| `backend/internal/api/api-admin.go` | Remove mute fields from threshold GET/PUT handlers |
+| File | Status | Change |
+| --- | --- | --- |
+| `backend/internal/gnovalidator/gnovalidator_realtime.go` | ✅ done | Sync gate, sequence query, time-based dedup, SendResolveAlerts fix |
+| `backend/internal/gnovalidator/thresholds.go` | ✅ done + Step 8 | ResendHoursForLevel; add DeadValidatorSilenceDays |
+| `backend/internal/database/db_init.go` | ✅ done + Step 8 | New resend-hours keys; add dead_validator_silence_days |
+| `backend/internal/api/api-admin.go` | ✅ no change needed | Handlers pass DB map directly |
 
 No DB migration needed — `alert_logs` schema unchanged, new config keys auto-inserted by `db_init`.
 
-## Known limitations after fix
+## Known limitations
 
 - `skipped` column in `alert_logs` has inverted semantics (`true` = dispatched, not suppressed).
   No rename in this PR — too many read paths. Document it in a follow-up.

@@ -17,6 +17,7 @@ type Thresholds struct {
 	CriticalThreshold           int
 	AlertCriticalResendHours    int
 	AlertWarningResendHours     int
+	DeadValidatorSilenceDays    int
 	StagnationFirstAlertSeconds int
 	StagnationRepeatMinutes     int
 	RPCErrorCooldownMinutes     int
@@ -33,6 +34,7 @@ var (
 		CriticalThreshold:           30,
 		AlertCriticalResendHours:    24,
 		AlertWarningResendHours:     6,
+		DeadValidatorSilenceDays:    7,
 		StagnationFirstAlertSeconds: 20,
 		StagnationRepeatMinutes:     30,
 		RPCErrorCooldownMinutes:     10,
@@ -55,6 +57,7 @@ func LoadThresholds(db *gorm.DB) {
 		CriticalThreshold:           database.GetAdminConfigInt(db, "critical_threshold", 30),
 		AlertCriticalResendHours:    database.GetAdminConfigInt(db, "alert_critical_resend_hours", 24),
 		AlertWarningResendHours:     database.GetAdminConfigInt(db, "alert_warning_resend_hours", 6),
+		DeadValidatorSilenceDays:    database.GetAdminConfigInt(db, "dead_validator_silence_days", 7),
 		StagnationFirstAlertSeconds: database.GetAdminConfigInt(db, "stagnation_first_alert_seconds", 20),
 		StagnationRepeatMinutes:     database.GetAdminConfigInt(db, "stagnation_repeat_minutes", 30),
 		RPCErrorCooldownMinutes:     database.GetAdminConfigInt(db, "rpc_error_cooldown_minutes", 10),

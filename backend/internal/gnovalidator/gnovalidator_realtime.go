@@ -471,6 +471,24 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 					continue
 				}
 
+				// Silence permanently dead validators: skip if no participation in the last N days.
+				if t.DeadValidatorSilenceDays > 0 {
+					silenceWindow := fmt.Sprintf("-%d days", t.DeadValidatorSilenceDays)
+					var activeRecently int64
+					err = db.Raw(`
+						SELECT COUNT(*) FROM daily_participations
+						WHERE chain_id = ? AND addr = ? AND participated = 1
+						AND date >= datetime('now', ?)
+					`, chainID, addr, silenceWindow).Scan(&activeRecently).Error
+					if err != nil {
+						log.Printf("[validator][%s] DB error checking silence window: %v", chainID, err)
+						continue
+					}
+					if activeRecently == 0 {
+						continue
+					}
+				}
+
 				if err := internal.SendAllValidatorAlerts(chainID, missed, today, level, addr, moniker, start_height, end_height, db); err != nil {
 					log.Printf("[validator][%s] SendAllValidatorAlerts error: %v", chainID, err)
 				}
@@ -653,10 +671,15 @@ func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, 
 func GetMonikerMap(chainID string) map[string]string {
 	MonikerMutex.RLock()
 	defer MonikerMutex.RUnlock()
-	if m, ok := MonikerMap[chainID]; ok {
-		return m
+	m, ok := MonikerMap[chainID]
+	if !ok {
+		return make(map[string]string)
 	}
-	return make(map[string]string)
+	snapshot := make(map[string]string, len(m))
+	for k, v := range m {
+		snapshot[k] = v
+	}
+	return snapshot
 }
 
 func SetMoniker(chainID, addr, moniker string) {
