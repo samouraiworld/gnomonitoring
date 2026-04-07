@@ -207,7 +207,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 			}
 			snap := ChainHealthFetcher(chainID)
 			msg := formatChainHealthMessage(chainID, snap)
-			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+			if err := SendMessageTelegramChunked(token, chatID, msg); err != nil {
 				log.Printf("[telegram] send /status failed: %v", err)
 			}
 		},
@@ -1623,9 +1623,9 @@ func handleCmdMenuCallback(
 			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⏱ Session expired — run /cmd again.", nil)
 			return
 		}
-		result := executeCmdMenuAction(token, db, chatID, chainID, state)
+		result, markup := executeCmdMenuAction(token, db, chatID, chainID, state)
 		deleteCmdState(chatID)
-		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, result, nil)
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, result, markup)
 		return
 	}
 
@@ -1991,34 +1991,35 @@ func buildValidatorSelectMsg(state CmdState) string {
 }
 
 // executeCmdMenuAction carries out the confirmed menu action and returns the
-// result message to display to the user.
-func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID string, state CmdState) string {
+// message and optional inline keyboard markup to display.
+// It is called from the "confirm" callback branch.
+func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID string, state CmdState) (string, *InlineKeyboardMarkup) {
 	switch state.Command {
 	case "subscribe":
 		switch state.Action {
 		case "list":
 			subs, err := database.GetValidatorStatusList(db, chatID, state.ChainID)
 			if err != nil {
-				return "⚠️ Unable to fetch subscriptions."
+				return "⚠️ Unable to fetch subscriptions.", nil
 			}
 			if len(subs) == 0 {
-				return fmt.Sprintf("🧾 No subscriptions (chain: <code>%s</code>).", html.EscapeString(state.ChainID))
+				return fmt.Sprintf("🧾 No subscriptions (chain: <code>%s</code>).", html.EscapeString(state.ChainID)), nil
 			}
 			var b strings.Builder
 			b.WriteString(fmt.Sprintf("🧾 <b>Your subscriptions</b> (chain: <code>%s</code>)\n", html.EscapeString(state.ChainID)))
 			for _, s := range subs {
 				b.WriteString(fmt.Sprintf("• %s\n  (%s) — <b>%s</b>\n", s.Moniker, s.Addr, s.Status))
 			}
-			return b.String()
+			return b.String(), nil
 
 		case "on":
 			if len(state.SelectedAddrs) == 0 {
-				return "⚠️ No validators selected."
+				return "⚠️ No validators selected.", nil
 			}
 			if len(state.SelectedAddrs) == 1 && state.SelectedAddrs[0] == "all" {
 				vals, err := database.GetAllValidators(db, state.ChainID)
 				if err != nil {
-					return "⚠️ Unable to fetch validators."
+					return "⚠️ Unable to fetch validators.", nil
 				}
 				changed := 0
 				for _, v := range vals {
@@ -2026,7 +2027,7 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 						changed++
 					}
 				}
-				return fmt.Sprintf("✅ Enabled alerts for <b>%d</b> validators.", changed)
+				return fmt.Sprintf("✅ Enabled alerts for <b>%d</b> validators.", changed), nil
 			}
 			var ok, fail int
 			for _, addr := range state.SelectedAddrs {
@@ -2041,12 +2042,12 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 					ok++
 				}
 			}
-			return fmt.Sprintf("✅ Enabled: %d | ❌ Failed: %d", ok, fail)
+			return fmt.Sprintf("✅ Enabled: %d | ❌ Failed: %d", ok, fail), nil
 
 		case "off":
 			subs, err := database.GetTelegramValidatorSub(db, chatID, state.ChainID, true)
 			if err != nil {
-				return "⚠️ Unable to fetch active subscriptions."
+				return "⚠️ Unable to fetch active subscriptions.", nil
 			}
 			var ok int
 			for _, s := range subs {
@@ -2054,7 +2055,7 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 					ok++
 				}
 			}
-			return fmt.Sprintf("🛑 Disabled alerts for <b>%d</b> validators.", ok)
+			return fmt.Sprintf("🛑 Disabled alerts for <b>%d</b> validators.", ok), nil
 		}
 
 	case "report":
@@ -2062,21 +2063,21 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 		case "enable":
 			msg, err := reportActivate(db, chatID, state.ChainID, "true")
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err)
+				return fmt.Sprintf("❌ %v", err), nil
 			}
-			return msg
+			return msg, nil
 		case "disable":
 			msg, err := reportActivate(db, chatID, state.ChainID, "false")
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err)
+				return fmt.Sprintf("❌ %v", err), nil
 			}
-			return msg
+			return msg, nil
 		case "status":
 			msg, err := reportActivate(db, chatID, state.ChainID, "")
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err)
+				return fmt.Sprintf("❌ %v", err), nil
 			}
-			return msg
+			return msg, nil
 		}
 
 	case "validators":
@@ -2087,37 +2088,37 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 		switch state.Action {
 		case "status":
 			if ChainHealthFetcher == nil {
-				return "⚠️ Chain health data is not available yet."
+				return "⚠️ Chain health data is not available yet.", nil
 			}
 			snap := ChainHealthFetcher(state.ChainID)
-			return formatChainHealthMessage(state.ChainID, snap)
+			return formatChainHealthMessage(state.ChainID, snap), nil
 		case "uptime":
-			msg, _, _, err := formatUptime(db, state.ChainID, 1, limitDefault, "", sortDefault)
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "uptime", "", "", 1, limitDefault, sortDefault)
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err)
+				return fmt.Sprintf("❌ %v", err), nil
 			}
-			return msg
+			return msg, markup
 		case "rate":
-			msg, _, _, err := formatParticipationRAte(db, state.ChainID, period, 1, limitDefault, "", sortDefault)
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "rate", period, "", 1, limitDefault, sortDefault)
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err)
+				return fmt.Sprintf("❌ %v", err), nil
 			}
-			return msg
+			return msg, markup
 		case "missing":
-			msg, _, _, err := formatMissing(db, state.ChainID, period, 1, limitDefault, "")
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "missing", period, "", 1, limitDefault, sortDefault)
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err)
+				return fmt.Sprintf("❌ %v", err), nil
 			}
-			return msg
+			return msg, markup
 		case "operation_time":
-			msg, _, _, err := formatOperationTime(db, state.ChainID, 1, limitDefault, "")
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "operation_time", "", "", 1, limitDefault, sortDefault)
 			if err != nil {
-				return fmt.Sprintf("❌ %v", err)
+				return fmt.Sprintf("❌ %v", err), nil
 			}
-			return msg
+			return msg, markup
 		}
 	}
-	return "⚠️ Nothing to execute."
+	return "⚠️ Nothing to execute.", nil
 }
 
 func formatHelp() string {
