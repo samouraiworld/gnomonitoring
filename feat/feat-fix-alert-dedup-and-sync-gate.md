@@ -2,7 +2,7 @@
 
 ## Problem
 
-Two independent bugs cause alert spam on chains with long-dead validators:
+Three independent bugs cause alert spam on chains with long-dead validators:
 
 ### Bug 1 — Sliding `start_height` breaks dedup
 
@@ -36,7 +36,9 @@ all at the same timestamp.
    `(chain_id, addr, level)` per configurable window (default 24 h for CRITICAL, 6 h for WARNING).
 2. Add a **per-chain sync gate**: `WatchValidatorAlerts` skips alert processing until the chain
    is caught up (gap ≤ sync threshold).
-3. Remove the broken MUTED mechanism (replaced by time-based dedup).
+3. Remove the broken MUTED mechanism from the warning/critical path (replaced by time-based dedup).
+4. Fix `SendResolveAlerts` which shares the same `PARTITION BY DATE(date)` sliding-window problem.
+5. Reduce unnecessary DB queries per cycle: replace the per-row loop with a single last-row-per-sequence query.
 
 ---
 
@@ -44,9 +46,10 @@ all at the same timestamp.
 
 ### Step 1 — Per-chain sync gate
 
-**File:** `internal/gnovalidator/gnovalidator_realtime.go`
+**File:** `backend/internal/gnovalidator/gnovalidator_realtime.go`
 
-Add a package-level sync state map (one entry per chainID):
+Add a package-level sync state map (one entry per chainID). The Go zero value (`false`) is already
+correct for "not yet synced", so no explicit initialization is needed at startup.
 
 ```go
 var (
@@ -67,21 +70,29 @@ func isChainSynced(chainID string) bool {
 }
 ```
 
-In `CollectParticipation`, set the flag to `true` once the gap drops below the backfill threshold:
+In `CollectParticipation` around line 240, set the flag based on gap size:
 
 ```go
-// existing backfill block (gap > 500) — chain not yet synced
 if latest-currentHeight > 500 {
-    setChainSynced(chainID, false)
-    // ... existing BackfillParallel logic ...
+    setChainSynced(chainID, false)   // mark unsynced while backfilling
+    stop := latest - 200
+    if stop < currentHeight {
+        stop = latest
+    }
+    log.Printf("[monitor][%s] backfill [%d..%d] (gap=%d)", chainID, currentHeight, stop, latest-currentHeight)
+    if err := BackfillParallel(db, client, chainID, currentHeight, stop, GetMonikerMap(chainID)); err != nil {
+        log.Printf("[monitor][%s] backfill error: %v", chainID, err)
+    } else {
+        currentHeight = stop + 1
+        log.Printf("[monitor][%s] backfill complete up to %d, switching to realtime", chainID, stop)
+    }
     continue
 }
-
 // gap is small → chain is considered synced
 setChainSynced(chainID, true)
 ```
 
-In `WatchValidatorAlerts`, add an early return at the top of the check loop:
+In `WatchValidatorAlerts`, add an early return at the top of the loop body (before the query):
 
 ```go
 if !isChainSynced(chainID) {
@@ -94,20 +105,70 @@ if !isChainSynced(chainID) {
 }
 ```
 
-### Step 2 — Time-based dedup (replace start_height logic)
+### Step 2 — Replace the missed-blocks query with a last-row-per-sequence query
 
-**File:** `internal/gnovalidator/gnovalidator_realtime.go`
+**File:** `backend/internal/gnovalidator/gnovalidator_realtime.go`
 
-Add two new `admin_config` keys (see Step 4):
-- `alert_critical_resend_hours` — default `24`
-- `alert_warning_resend_hours` — default `6`
+The current query (lines 360–397) returns one row per block where `participated = 0`, causing
+N DB dedup queries per dead validator per cycle (Bug 6 from review). Replace with a query that
+returns only the **last row of each contiguous missed sequence**:
 
-Replace the three dedup checks (check 1 by `start_height`, check 2 by BETWEEN range, mute check)
-with a single time-based check:
+```sql
+WITH ranked AS (
+    SELECT
+        addr,
+        moniker,
+        block_height,
+        participated,
+        CASE
+            WHEN participated = 0
+             AND LAG(participated) OVER (PARTITION BY addr, moniker ORDER BY block_height) IS NOT DISTINCT FROM 0
+            THEN 0 ELSE 1
+        END AS new_seq
+    FROM daily_participations
+    WHERE chain_id = ? AND date >= datetime('now', '-2 hours')
+),
+grouped AS (
+    SELECT
+        addr,
+        moniker,
+        block_height,
+        participated,
+        SUM(new_seq) OVER (PARTITION BY addr, moniker ORDER BY block_height) AS seq_id
+    FROM ranked
+),
+sequences AS (
+    SELECT
+        addr,
+        moniker,
+        MIN(block_height) AS start_height,
+        MAX(block_height) AS end_height,
+        COUNT(*)          AS missed
+    FROM grouped
+    WHERE participated = 0
+    GROUP BY addr, moniker, seq_id
+)
+SELECT addr, moniker, start_height, end_height, missed
+FROM sequences
+WHERE missed >= ?
+ORDER BY addr, start_height
+```
+
+Bind parameters: `chainID`, `GetThresholds().WarningThreshold`.
+
+Note: the `PARTITION BY DATE(date)` is removed deliberately — sequences are now scoped by
+`(addr, moniker)` only, so a dead validator does not get its sequence reset at midnight.
+
+### Step 3 — Time-based dedup (replace start_height logic)
+
+**File:** `backend/internal/gnovalidator/gnovalidator_realtime.go`
+
+Remove the three old dedup checks (lines 423–496: `start_height` check, BETWEEN range check,
+mute check). Replace with a single time-based check:
 
 ```go
-// Was an alert of this level already sent for this validator recently?
-resendHours := th.ResendHoursForLevel(level)  // 24 for CRITICAL, 6 for WARNING
+t := GetThresholds()
+resendHours := t.ResendHoursForLevel(level)
 window := fmt.Sprintf("-%d hours", resendHours)
 
 var recentCount int64
@@ -123,39 +184,94 @@ if err != nil {
     continue
 }
 if recentCount > 0 {
-    continue  // already notified within the resend window — skip silently
+    continue
 }
 ```
 
-Remove the three old checks (lines 424–496 in current code).
+Note on `skipped` semantics: in the current codebase `skipped = true` (= 1) means "the alert was
+actually dispatched" (confusingly named). The query above is correct.
 
-The send + log path stays the same:
+The send + log path is unchanged:
 ```go
-if err := internal.SendAllValidatorAlerts(...); err != nil { ... }
-if err := database.InsertAlertlog(db, chainID, addr, moniker, level,
-    start_height, end_height, true, time.Now(), ""); err != nil { ... }
+if err := internal.SendAllValidatorAlerts(chainID, missed, today, level, addr, moniker, start_height, end_height, db); err != nil {
+    log.Printf("[validator][%s] SendAllValidatorAlerts error: %v", chainID, err)
+}
+if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
+    log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
+}
 ```
 
-### Step 3 — Add `ResendHoursForLevel` to Thresholds
+### Step 4 — Fix SendResolveAlerts (same sliding-window problem)
 
-**File:** `internal/gnovalidator/thresholds.go`
+**File:** `backend/internal/gnovalidator/gnovalidator_realtime.go` (lines 517–638)
 
-Add two new fields:
+`SendResolveAlerts` uses the same `PARTITION BY DATE(date)` and `-2 hours` window as the alert
+query (lines 527–569). Replace its CTE with the same sequence-based query from Step 2 to avoid
+midnight resets. Also remove the `MuteDurationMinutes`/`ResolveMuteAfterN` backoff (lines 592–611)
+— it is replaced by the fact that `RESOLVED` rows are already logged with `end_height`, so the
+existing `count > 0` check at line 588 prevents duplicate resolves.
+
+The resolve path (`end_height` dedup) remains:
+```go
+var count int64
+err := db.Raw(`
+    SELECT COUNT(*) FROM alert_logs
+    WHERE chain_id = ? AND addr = ? AND level = "RESOLVED"
+    AND end_height = ?
+`, chainID, a.Addr, a.EndHeight).Scan(&count).Error
+if count > 0 {
+    continue
+}
+```
+
+The `MuteDurationMinutes` and `ResolveMuteAfterN` fields in `Thresholds` are no longer used in
+`SendResolveAlerts` after this change (they were only used in the removed backoff block at
+lines 592–611). They must be removed from `Thresholds` in Step 5 simultaneously to avoid
+a compile error.
+
+### Step 5 — Add `ResendHoursForLevel` to Thresholds
+
+**File:** `backend/internal/gnovalidator/thresholds.go`
+
+Add two new fields and remove the four fields that are now unused:
 
 ```go
 type Thresholds struct {
-    // existing fields ...
-    AlertCriticalResendHours int
-    AlertWarningResendHours  int
+    WarningThreshold            int
+    CriticalThreshold           int
+    // MuteAfterNAlerts — REMOVED (replaced by time-based dedup)
+    // MuteDurationMinutes — REMOVED (replaced by time-based dedup)
+    // ResolveMuteAfterN — REMOVED (replaced by end_height dedup in SendResolveAlerts)
+    AlertCriticalResendHours    int   // NEW: default 24
+    AlertWarningResendHours     int   // NEW: default 6
+    StagnationFirstAlertSeconds int
+    StagnationRepeatMinutes     int
+    RPCErrorCooldownMinutes     int
+    NewValidatorScanMinutes     int
+    AlertCheckIntervalSeconds   int
+    RawRetentionDays            int
+    AggregatorPeriodMinutes     int
+    RecentBlocksWindow          int
 }
+```
 
-// defaults
+Defaults and `LoadThresholds`:
+
+```go
 activeThresholds = Thresholds{
-    // existing ...
     AlertCriticalResendHours: 24,
     AlertWarningResendHours:  6,
+    // other fields unchanged...
 }
 
+// In LoadThresholds:
+AlertCriticalResendHours: database.GetAdminConfigInt(db, "alert_critical_resend_hours", 24),
+AlertWarningResendHours:  database.GetAdminConfigInt(db, "alert_warning_resend_hours",  6),
+```
+
+Add helper:
+
+```go
 func (t Thresholds) ResendHoursForLevel(level string) int {
     if level == "CRITICAL" {
         return t.AlertCriticalResendHours
@@ -164,33 +280,28 @@ func (t Thresholds) ResendHoursForLevel(level string) int {
 }
 ```
 
-Load from DB in `LoadThresholds`:
+### Step 6 — Register new admin_config defaults, remove old ones
+
+**File:** `backend/internal/database/db_init.go`
+
+In `SeedAdminConfig` defaults map:
 
 ```go
-AlertCriticalResendHours: database.GetAdminConfigInt(db, "alert_critical_resend_hours", 24),
-AlertWarningResendHours:  database.GetAdminConfigInt(db, "alert_warning_resend_hours",  6),
-```
-
-### Step 4 — Register new admin_config defaults
-
-**File:** `internal/database/db_init.go`
-
-Add to the `defaultConfigs` map:
-
-```go
+// Add:
 "alert_critical_resend_hours": "24",
 "alert_warning_resend_hours":  "6",
+// Remove:
+"mute_after_n_alerts":    "1",
+"mute_duration_minutes":  "60",
+"resolve_mute_after_n":   "4",
 ```
 
-### Step 5 — Remove MuteAfterNAlerts and MuteDurationMinutes
+### Step 7 — Remove mute fields from admin API
 
-**File:** `internal/gnovalidator/thresholds.go` + `internal/database/db_init.go`
+**File:** `backend/internal/api/api-admin.go`
 
-The `MuteAfterNAlerts` and `MuteDurationMinutes` fields are replaced by the time-based dedup.
-Remove them from `Thresholds`, `LoadThresholds`, and `admin_config` defaults.
-
-Also remove the corresponding admin API fields from `handleGetThresholds` /
-`handlePutThresholds` in `internal/api/api-admin.go`.
+Remove `MuteAfterNAlerts`, `MuteDurationMinutes`, and `ResolveMuteAfterN` from the
+`handleGetThresholds` / `handlePutThresholds` request/response structs.
 
 ---
 
@@ -204,6 +315,7 @@ Also remove the corresponding admin API fields from `handleGetThresholds` /
 | Still down after 24 h | Re-alerted (daily burst) | 1 reminder sent (then silenced 24 h) |
 | Chain doing backfill | Historical alerts fire | No alerts until synced |
 | Validator recovers | RESOLVED sent | RESOLVED sent (unchanged) |
+| Validator recovers at midnight | Possible phantom resolve | Correct (sequence no longer date-partitioned) |
 
 ---
 
@@ -211,9 +323,18 @@ Also remove the corresponding admin API fields from `handleGetThresholds` /
 
 | File | Change |
 |---|---|
-| `internal/gnovalidator/gnovalidator_realtime.go` | Add `chainSynced` map + helpers; replace 3 dedup checks with single time-based check; add sync gate at top of alert loop |
-| `internal/gnovalidator/thresholds.go` | Add `AlertCriticalResendHours`, `AlertWarningResendHours`, `ResendHoursForLevel`; remove `MuteAfterNAlerts`, `MuteDurationMinutes` |
-| `internal/database/db_init.go` | Add `alert_critical_resend_hours`, `alert_warning_resend_hours` to defaults; remove mute defaults |
-| `internal/api/api-admin.go` | Remove mute fields from threshold GET/PUT handlers |
+| `backend/internal/gnovalidator/gnovalidator_realtime.go` | Add `chainSynced` map + helpers; replace missed-blocks query (remove DATE partition); replace 3 dedup checks with single time-based check; add sync gate at top of alert loop; fix `SendResolveAlerts` query + remove mute backoff |
+| `backend/internal/gnovalidator/thresholds.go` | Add `AlertCriticalResendHours`, `AlertWarningResendHours`, `ResendHoursForLevel`; remove `MuteAfterNAlerts`, `MuteDurationMinutes`, `ResolveMuteAfterN` |
+| `backend/internal/database/db_init.go` | Add `alert_critical_resend_hours`, `alert_warning_resend_hours`; remove mute defaults |
+| `backend/internal/api/api-admin.go` | Remove mute fields from threshold GET/PUT handlers |
 
 No DB migration needed — `alert_logs` schema unchanged, new config keys auto-inserted by `db_init`.
+
+## Known limitations after fix
+
+- `skipped` column in `alert_logs` has inverted semantics (`true` = dispatched, not suppressed).
+  No rename in this PR — too many read paths. Document it in a follow-up.
+- `InsertAlertlog` uses `OnConflict{DoNothing: true}` on an auto-increment PK, so DB-level dedup
+  never fires. Acceptable since Go-level dedup is the primary guard after this fix.
+- Metrics updater retains `recent_blocks_window` in `Thresholds` but `db_init.go` does not seed
+  its default. Pre-existing issue, not introduced here.

@@ -78,6 +78,23 @@ var restoreMutex sync.RWMutex
 var chainRPCClients = make(map[string]*FallbackRPCClient)
 var chainRPCClientsMu sync.RWMutex
 
+// chainSynced[chainID] = true once the backfill gap drops below the threshold.
+// WatchValidatorAlerts skips processing while false to avoid historical alert spam.
+var chainSynced = make(map[string]bool)
+var chainSyncedMu sync.RWMutex
+
+func setChainSynced(chainID string, v bool) {
+	chainSyncedMu.Lock()
+	chainSynced[chainID] = v
+	chainSyncedMu.Unlock()
+}
+
+func isChainSynced(chainID string) bool {
+	chainSyncedMu.RLock()
+	defer chainSyncedMu.RUnlock()
+	return chainSynced[chainID]
+}
+
 func SetChainRPCClient(chainID string, client *FallbackRPCClient) {
 	chainRPCClientsMu.Lock()
 	defer chainRPCClientsMu.Unlock()
@@ -238,6 +255,7 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 			}
 			// *** BLOCKING BACKFILL IF LARGE GAP ***
 			if latest-currentHeight > 500 {
+				setChainSynced(chainID, false)
 				// catch up to latest-200 to leave a buffer
 				// (avoids race with realtime stream afterwards)
 				stop := latest - 200
@@ -253,9 +271,11 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					currentHeight = stop + 1
 					log.Printf("[monitor][%s] backfill complete up to %d, switching to realtime", chainID, stop)
 				}
-				// do not switch to “realtime” while the gap is still large
+				// do not switch to "realtime" while the gap is still large
 				continue
 			}
+			// gap is small — chain is considered synced, alerts may now fire
+			setChainSynced(chainID, true)
 			// log.Println("last block ", latest)
 
 			for h := currentHeight; h <= latest; h++ {
@@ -354,47 +374,61 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 
 	go func() {
 		for {
+			// Sync gate: skip alert processing until backfill is complete.
+			if !isChainSynced(chainID) {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(checkInterval):
+				}
+				continue
+			}
+
 			today := time.Now().Format("2006-01-02")
 
+			// Query returns one row per contiguous missed sequence (last state only),
+			// avoiding N per-block rows for long-dead validators.
 			var windows []missedWindow
 			err := db.Raw(`
 				WITH ranked AS (
 					SELECT
 						addr,
 						moniker,
-						date,
 						block_height,
 						participated,
 						CASE
-							WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) = 1
-							THEN 1
-							WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) IS NULL
-							THEN 1
-							ELSE 0
+							WHEN participated = 0
+							 AND LAG(participated) OVER (PARTITION BY addr, moniker ORDER BY block_height) IS NOT DISTINCT FROM 0
+							THEN 0 ELSE 1
 						END AS new_seq
 					FROM daily_participations
 					WHERE chain_id = ? AND date >= datetime('now', '-2 hours')
 				),
 				grouped AS (
 					SELECT
-						*,
-						SUM(new_seq) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) AS seq_id
+						addr,
+						moniker,
+						block_height,
+						participated,
+						SUM(new_seq) OVER (PARTITION BY addr, moniker ORDER BY block_height) AS seq_id
 					FROM ranked
+				),
+				sequences AS (
+					SELECT
+						addr,
+						moniker,
+						MIN(block_height) AS start_height,
+						MAX(block_height) AS end_height,
+						COUNT(*)          AS missed
+					FROM grouped
+					WHERE participated = 0
+					GROUP BY addr, moniker, seq_id
 				)
-				SELECT
-					addr,
-					moniker,
-					MIN(block_height) OVER (PARTITION BY addr, moniker, DATE(date), seq_id) AS start_height,
-					block_height AS end_height,
-					SUM(1) OVER (
-						PARTITION BY addr, moniker, DATE(date), seq_id
-						ORDER BY block_height
-						ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-					) AS missed
-				FROM grouped
-				WHERE participated = 0
-				ORDER BY addr, moniker, date, seq_id, block_height
-			`, chainID).Scan(&windows).Error
+				SELECT addr, moniker, start_height, end_height, missed
+				FROM sequences
+				WHERE missed >= ?
+				ORDER BY addr, start_height
+			`, chainID, GetThresholds().WarningThreshold).Scan(&windows).Error
 			if err != nil {
 				log.Printf("[validator][%s] error executing missed blocks query: %v", chainID, err)
 				time.Sleep(checkInterval)
@@ -413,85 +447,27 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 				switch {
 				case missed >= t.CriticalThreshold:
 					level = "CRITICAL"
-
 				case missed >= t.WarningThreshold:
 					level = "WARNING"
-
 				default:
 					continue
 				}
-				// 2. Check if alert was recently sent
-				var count int64
+
+				// Time-based dedup: skip if an alert of this level was already sent recently.
+				resendHours := t.ResendHoursForLevel(level)
+				window := fmt.Sprintf("-%d hours", resendHours)
+				var recentCount int64
 				err := db.Raw(`
-						SELECT COUNT(*) FROM alert_logs
-						WHERE chain_id = ? AND addr = ? AND level = ?
-						AND start_height= ?
-						AND skipped = 1
-						`, chainID, addr, level, start_height).Scan(&count).Error
-
-				if err != nil {
-					log.Printf("[validator][%s] DB error checking alert_logs: %v", chainID, err)
-
-					continue
-				}
-
-				if count > 0 {
-					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
-					if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, false, time.Now(), ""); err != nil {
-						log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
-					}
-
-					continue
-				}
-
-				// 2. Check if this start_height is already covered by another alert range
-				var countint int64
-				err = db.Raw(`
-						SELECT COUNT(*)
-						FROM alert_logs
-						WHERE chain_id = ? AND addr = ?
-						AND level IN ('CRITICAL')
-						AND ? BETWEEN start_height AND end_height
-						`, chainID, addr, start_height).Scan(&countint).Error
-				if err != nil {
-					log.Printf("[validator][%s] DB error checking alert_logs: %v", chainID, err)
-
-					continue
-				}
-				if countint > 0 {
-					// log.Printf("⏱️ Skipping alert for %s (%s, %s): already sent", moniker)
-					if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, false, time.Now(), ""); err != nil {
-						log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
-					}
-
-					continue
-				}
-
-				// 3 check if addr is mute
-
-				var mute int
-				th := GetThresholds()
-				muteDuration := fmt.Sprintf("-%d minutes", th.MuteDurationMinutes)
-				err = db.Raw(`
 					SELECT COUNT(*) FROM alert_logs
-       				WHERE chain_id = ? AND addr = ? AND level = "MUTED"
-       				AND strftime('%s',sent_at) >= strftime('%s','now',?);
-
-						`, chainID, addr, muteDuration).Scan(&mute).Error
-
+					WHERE chain_id = ? AND addr = ? AND level = ?
+					AND skipped = 1
+					AND sent_at >= datetime('now', ?)
+				`, chainID, addr, level, window).Scan(&recentCount).Error
 				if err != nil {
 					log.Printf("[validator][%s] DB error checking alert_logs: %v", chainID, err)
-
 					continue
 				}
-				if mute >= th.MuteAfterNAlerts {
-					// Enable 1h mute
-					log.Printf("[validator][%s] muting %s for 1h — too many alerts", chainID, moniker)
-
-					if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
-						log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
-					}
-
+				if recentCount > 0 {
 					continue
 				}
 
@@ -501,7 +477,6 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 				if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
 					log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
 				}
-
 			}
 
 			SendResolveAlerts(db, chainID)
@@ -529,88 +504,62 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 			SELECT
 				addr,
 				moniker,
-				date,
 				block_height,
 				participated,
 				CASE
-					WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) = 1
-					THEN 1
-					WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) IS NULL
-					THEN 1
-					ELSE 0
+					WHEN participated = 0
+					 AND LAG(participated) OVER (PARTITION BY addr, moniker ORDER BY block_height) IS NOT DISTINCT FROM 0
+					THEN 0 ELSE 1
 				END AS new_seq
 			FROM daily_participations
 			WHERE chain_id = ? AND date >= datetime('now', '-2 hours')
 		),
 		grouped AS (
 			SELECT
-				*,
-				SUM(new_seq) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) AS seq_id
+				addr,
+				moniker,
+				block_height,
+				participated,
+				SUM(new_seq) OVER (PARTITION BY addr, moniker ORDER BY block_height) AS seq_id
 			FROM ranked
 		),
-		series AS (
+		sequences AS (
 			SELECT
 				addr,
 				moniker,
-				MIN(block_height) OVER (PARTITION BY addr, moniker, DATE(date), seq_id) AS start_height,
-				block_height AS end_height,
-				SUM(1) OVER (
-					PARTITION BY addr, moniker, DATE(date), seq_id
-					ORDER BY block_height
-					ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-				) AS missed
+				MIN(block_height) AS start_height,
+				MAX(block_height) AS end_height,
+				COUNT(*)          AS missed
 			FROM grouped
 			WHERE participated = 0
+			GROUP BY addr, moniker, seq_id
 		)
-		SELECT addr, moniker, max(end_height) AS end_height, max(start_height) AS start_height
-		FROM series
+		SELECT addr, moniker, start_height, end_height
+		FROM sequences
 		WHERE missed >= ?
-		GROUP BY addr
+		ORDER BY addr, start_height
 	`, chainID, GetThresholds().WarningThreshold).Scan(&alerts).Error
 	if err != nil {
 		log.Printf("[validator][%s] error fetching last alerts: %v", chainID, err)
 		return
 	}
 	for _, a := range alerts {
-		// Check if alert send
+		// Skip if a RESOLVED alert was already logged for this exact end_height.
 		var count int64
 		err := db.Raw(`
-		SELECT COUNT(*) FROM alert_logs
-		WHERE chain_id = ? AND addr = ? and level = "RESOLVED"
-		AND  end_height = ?
+			SELECT COUNT(*) FROM alert_logs
+			WHERE chain_id = ? AND addr = ? AND level = "RESOLVED"
+			AND end_height = ?
 		`, chainID, a.Addr, a.EndHeight).Scan(&count).Error
-
 		if err != nil {
 			log.Printf("[validator][%s] DB error checking alert_logs: %v", chainID, err)
 			continue
 		}
-
 		if count > 0 {
 			continue
 		}
-		// Backoff/mute mechanism for repeated resolves
-		var recentResolves int64
-		rth := GetThresholds()
-		resolveMuteDuration := fmt.Sprintf("-%d minutes", rth.MuteDurationMinutes)
-		err = db.Raw(`
-        SELECT COUNT(*) FROM alert_logs
-        WHERE chain_id = ? AND addr = ? AND level = "RESOLVED"
-       AND strftime('%s',sent_at) >= strftime('%s','now',?);
-    `, chainID, a.Addr, resolveMuteDuration).Scan(&recentResolves).Error
-		if err != nil {
-			log.Printf("[validator][%s] DB error checking recent resolves: %v", chainID, err)
-			continue
-		}
-		if recentResolves >= int64(rth.ResolveMuteAfterN) {
-			// Enable 1h mute
-			log.Printf("[validator][%s] muting %s for 1h — too many resolves", chainID, a.Moniker)
-			if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "MUTED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
-				log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
-			}
-			continue
-		}
 
-		// check if participation is true after end_heigt+1
+		// check if participation is true after end_height+1
 		var countparticipated int
 		err = db.Raw(`
 			SELECT participated FROM daily_participations

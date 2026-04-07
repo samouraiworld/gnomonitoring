@@ -15,9 +15,8 @@ import (
 type Thresholds struct {
 	WarningThreshold            int
 	CriticalThreshold           int
-	MuteAfterNAlerts            int
-	MuteDurationMinutes         int
-	ResolveMuteAfterN           int
+	AlertCriticalResendHours    int
+	AlertWarningResendHours     int
 	StagnationFirstAlertSeconds int
 	StagnationRepeatMinutes     int
 	RPCErrorCooldownMinutes     int
@@ -32,9 +31,8 @@ var (
 	activeThresholds = Thresholds{
 		WarningThreshold:            5,
 		CriticalThreshold:           30,
-		MuteAfterNAlerts:            1,
-		MuteDurationMinutes:         60,
-		ResolveMuteAfterN:           4,
+		AlertCriticalResendHours:    24,
+		AlertWarningResendHours:     6,
 		StagnationFirstAlertSeconds: 20,
 		StagnationRepeatMinutes:     30,
 		RPCErrorCooldownMinutes:     10,
@@ -55,9 +53,8 @@ func LoadThresholds(db *gorm.DB) {
 	activeThresholds = Thresholds{
 		WarningThreshold:            database.GetAdminConfigInt(db, "warning_threshold", 5),
 		CriticalThreshold:           database.GetAdminConfigInt(db, "critical_threshold", 30),
-		MuteAfterNAlerts:            database.GetAdminConfigInt(db, "mute_after_n_alerts", 1),
-		MuteDurationMinutes:         database.GetAdminConfigInt(db, "mute_duration_minutes", 60),
-		ResolveMuteAfterN:           database.GetAdminConfigInt(db, "resolve_mute_after_n", 4),
+		AlertCriticalResendHours:    database.GetAdminConfigInt(db, "alert_critical_resend_hours", 24),
+		AlertWarningResendHours:     database.GetAdminConfigInt(db, "alert_warning_resend_hours", 6),
 		StagnationFirstAlertSeconds: database.GetAdminConfigInt(db, "stagnation_first_alert_seconds", 20),
 		StagnationRepeatMinutes:     database.GetAdminConfigInt(db, "stagnation_repeat_minutes", 30),
 		RPCErrorCooldownMinutes:     database.GetAdminConfigInt(db, "rpc_error_cooldown_minutes", 10),
@@ -67,10 +64,11 @@ func LoadThresholds(db *gorm.DB) {
 		AggregatorPeriodMinutes:     database.GetAdminConfigInt(db, "aggregator_period_minutes", 60),
 		RecentBlocksWindow:          database.GetAdminConfigInt(db, "recent_blocks_window", 50),
 	}
-	log.Printf("[thresholds] loaded: warning=%d critical=%d mute=%dmin stagnation_first=%ds stagnation_repeat=%dmin",
+	log.Printf("[thresholds] loaded: warning=%d critical=%d resend_critical=%dh resend_warning=%dh stagnation_first=%ds stagnation_repeat=%dmin",
 		activeThresholds.WarningThreshold,
 		activeThresholds.CriticalThreshold,
-		activeThresholds.MuteDurationMinutes,
+		activeThresholds.AlertCriticalResendHours,
+		activeThresholds.AlertWarningResendHours,
 		activeThresholds.StagnationFirstAlertSeconds,
 		activeThresholds.StagnationRepeatMinutes,
 	)
@@ -112,4 +110,13 @@ func (t Thresholds) NewValidatorScan() time.Duration {
 
 func (t Thresholds) AggregatorPeriod() time.Duration {
 	return time.Duration(t.AggregatorPeriodMinutes) * time.Minute
+}
+
+// ResendHoursForLevel returns the minimum hours between two alerts of the same level
+// for the same validator. CRITICAL: 24h, WARNING: 6h (configurable via admin_config).
+func (t Thresholds) ResendHoursForLevel(level string) int {
+	if level == "CRITICAL" {
+		return t.AlertCriticalResendHours
+	}
+	return t.AlertWarningResendHours
 }
