@@ -520,100 +520,62 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 	}()
 }
 func SendResolveAlerts(db *gorm.DB, chainID string) {
-	type LastAlert struct {
+	// Source of truth: dispatched WARNING/CRITICAL alert_logs entries that have
+	// no corresponding RESOLVED yet. Avoids the rolling-window race where a
+	// recomputed sequence end_height never matches a previously stored RESOLVED.
+	type pendingAlert struct {
 		Addr        string
 		Moniker     string
 		StartHeight int64
 		EndHeight   int64
 	}
 
-	var alerts []LastAlert
-
+	var pending []pendingAlert
 	err := db.Raw(`
-		WITH ranked AS (
-			SELECT
-				addr,
-				moniker,
-				block_height,
-				participated,
-				CASE
-					WHEN participated = 0
-					 AND LAG(participated) OVER (PARTITION BY addr, moniker ORDER BY block_height) IS NOT DISTINCT FROM 0
-					THEN 0 ELSE 1
-				END AS new_seq
-			FROM daily_participations
-			WHERE chain_id = ? AND date >= datetime('now', '-2 hours')
-		),
-		grouped AS (
-			SELECT
-				addr,
-				moniker,
-				block_height,
-				participated,
-				SUM(new_seq) OVER (PARTITION BY addr, moniker ORDER BY block_height) AS seq_id
-			FROM ranked
-		),
-		sequences AS (
-			SELECT
-				addr,
-				moniker,
-				MIN(block_height) AS start_height,
-				MAX(block_height) AS end_height,
-				COUNT(*)          AS missed
-			FROM grouped
-			WHERE participated = 0
-			GROUP BY addr, moniker, seq_id
-		)
-		SELECT addr, moniker, start_height, end_height
-		FROM sequences
-		WHERE missed >= ?
-		ORDER BY addr, start_height
-	`, chainID, GetThresholds().WarningThreshold).Scan(&alerts).Error
+		SELECT al.addr, al.moniker, al.start_height, al.end_height
+		FROM alert_logs al
+		WHERE al.chain_id = ?
+		  AND al.level IN ('WARNING', 'CRITICAL')
+		  AND al.skipped = 1
+		  AND NOT EXISTS (
+		      SELECT 1 FROM alert_logs r
+		      WHERE r.chain_id = al.chain_id
+		        AND r.addr     = al.addr
+		        AND r.level    = 'RESOLVED'
+		        AND r.end_height = al.end_height
+		  )
+		ORDER BY al.addr, al.end_height
+		LIMIT 50
+	`, chainID).Scan(&pending).Error
 	if err != nil {
-		log.Printf("[validator][%s] error fetching last alerts: %v", chainID, err)
+		log.Printf("[validator][%s] SendResolveAlerts query error: %v", chainID, err)
 		return
 	}
-	for _, a := range alerts {
-		// Skip if a RESOLVED alert was already logged for this exact end_height.
-		var count int64
+
+	for _, a := range pending {
+		// Validator back online only if end_height+1 exists AND participated=1.
+		var participated int
 		err := db.Raw(`
-			SELECT COUNT(*) FROM alert_logs
-			WHERE chain_id = ? AND addr = ? AND level = "RESOLVED"
-			AND end_height = ?
-		`, chainID, a.Addr, a.EndHeight).Scan(&count).Error
+			SELECT COUNT(*) FROM daily_participations
+			WHERE chain_id = ? AND addr = ? AND block_height = ? AND participated = 1
+		`, chainID, a.Addr, a.EndHeight+1).Scan(&participated).Error
 		if err != nil {
-			log.Printf("[validator][%s] DB error checking alert_logs: %v", chainID, err)
+			log.Printf("[validator][%s] DB error checking participation: %v", chainID, err)
 			continue
 		}
-		if count > 0 {
+		if participated == 0 {
 			continue
 		}
 
-		// check if participation is true after end_height+1
-		var countparticipated int
-		err = db.Raw(`
-			SELECT participated FROM daily_participations
-			WHERE chain_id = ? AND addr = ? AND block_height= (?+1)
-			`, chainID, a.Addr, a.EndHeight).Scan(&countparticipated).Error
-		if err != nil {
-			log.Printf("[validator][%s] DB error checking participated: %v", chainID, err)
-			continue
-		}
-		if countparticipated == 0 {
-			// log.Printf("Not resolve error")
-			continue
-		}
-		resolveMsg := fmt.Sprintf("[%s] ✅ RESOLVED: No more missed blocks for %s (%s) at Block %d", chainID, a.Moniker, a.Addr, a.EndHeight+1)
+		resolveMsg := fmt.Sprintf("[%s] ✅ RESOLVED: No more missed blocks for %s (%s) at Block %d",
+			chainID, a.Moniker, a.Addr, a.EndHeight+1)
 		if err := internal.SendResolveValidator(chainID, resolveMsg, a.Addr, db); err != nil {
 			log.Printf("[validator][%s] SendResolveValidator error: %v", chainID, err)
 		}
-
 		if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
-			log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
+			log.Printf("[monitor][%s] InsertAlertlog RESOLVED error: %v", chainID, err)
 		}
-
 	}
-
 }
 
 func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participating map[string]Participation, monikerMap map[string]string, timeStp time.Time) error {
