@@ -25,6 +25,7 @@ type Thresholds struct {
 	AlertCheckIntervalSeconds   int
 	RawRetentionDays            int
 	AggregatorPeriodMinutes     int
+	RecentBlocksWindow          int
 }
 
 var (
@@ -41,6 +42,7 @@ var (
 		AlertCheckIntervalSeconds:   20,
 		RawRetentionDays:            7,
 		AggregatorPeriodMinutes:     60,
+		RecentBlocksWindow:          50,
 	}
 	thresholdsMu sync.RWMutex
 )
@@ -63,6 +65,7 @@ func LoadThresholds(db *gorm.DB) {
 		AlertCheckIntervalSeconds:   database.GetAdminConfigInt(db, "alert_check_interval_seconds", 20),
 		RawRetentionDays:            database.GetAdminConfigInt(db, "raw_retention_days", 7),
 		AggregatorPeriodMinutes:     database.GetAdminConfigInt(db, "aggregator_period_minutes", 60),
+		RecentBlocksWindow:          database.GetAdminConfigInt(db, "recent_blocks_window", 50),
 	}
 	log.Printf("[thresholds] loaded: warning=%d critical=%d mute=%dmin stagnation_first=%ds stagnation_repeat=%dmin",
 		activeThresholds.WarningThreshold,

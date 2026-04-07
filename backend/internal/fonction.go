@@ -460,7 +460,7 @@ func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moni
 	return nil
 }
 
-func SendUserReportAlert(userID, msg string, db *gorm.DB) error {
+func SendUserReportAlert(userID, chainID, msg string, db *gorm.DB) error {
 	type Webhook struct {
 		URL  string
 		Type string
@@ -469,7 +469,7 @@ func SendUserReportAlert(userID, msg string, db *gorm.DB) error {
 	var webhooks []Webhook
 	if err := db.Model(&database.WebhookValidator{}).
 		Select("url", "type").
-		Where("user_id = ?", userID).
+		Where("user_id = ? AND chain_id = ?", userID, chainID).
 		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks for user %s: %w", userID, err)
 	}
