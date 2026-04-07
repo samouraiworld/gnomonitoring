@@ -370,13 +370,14 @@ func FormatDisabledReport(chainID string, snap ChainHealthSnapshot) string {
 	} else if snap.MaxBlock > 0 {
 		sb.WriteString(fmt.Sprintf("Last known block in DB: #%d\n", snap.MaxBlock))
 	}
-	if snap.ValidatorLiveness != nil {
+	switch {
+	case snap.ValidatorLiveness != nil:
 		sb.WriteString(fmt.Sprintf("\nValidator status at last block #%d:\n", snap.LatestBlockHeight))
 		sb.WriteString(formatValidatorLiveness(snap.ValidatorLiveness, snap.Monikers))
-	} else if len(snap.ValidatorRates) > 0 {
+	case len(snap.ValidatorRates) > 0:
 		sb.WriteString(fmt.Sprintf("\nValidator participation (last %d blocks — RPC unreachable):\n", GetThresholds().RecentBlocksWindow))
 		sb.WriteString(formatValidatorRates(snap.ValidatorRates))
-	} else {
+	default:
 		sb.WriteString("\n(RPC unreachable — no validator data available)\n")
 	}
 	return sb.String()
