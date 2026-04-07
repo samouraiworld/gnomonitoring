@@ -14,6 +14,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// schedulerReloader is a narrow interface so telegram does not need to import
+// the scheduler package (which would create an import cycle).
+type schedulerReloader interface {
+	ReloadForTelegram(chatID int64, chainID string, db *gorm.DB) error
+}
+
+// SchedulerInstance must be set by main.go before BuildTelegramHandlers is called.
+var SchedulerInstance schedulerReloader
+
 const (
 	periodDefault = "current_month"
 	limitDefault  = 10
@@ -265,17 +274,21 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
 
-			activate := params["activate"]
+			// Schedule change: hour= or minute= or timezone= present → route to reportSchedule.
+			if params["hour"] != "" || params["minute"] != "" || params["timezone"] != "" {
+				msg := reportSchedule(db, SchedulerInstance, chatID, chainID, params)
+				_ = SendMessageTelegram(token, chatID, msg)
+				return
+			}
 
-			msg, err := reportActivate(db, chatID, chainID, activate)
+			// Existing activate/deactivate/status path.
+			msg, err := reportActivate(db, chatID, chainID, params["activate"])
 			if err != nil {
 				log.Printf("[telegram] report activate error: %v", err)
 			}
-
 			if err := SendMessageTelegram(token, chatID, msg); err != nil {
 				log.Printf("[telegram] send /report failed: %v", err)
 			}
-
 		},
 
 		"/chain": func(chatID int64, _ string) {
@@ -599,6 +612,56 @@ func reportActivate(db *gorm.DB, chatID int64, chainID, isActivate string) (stri
 		return "⚠️ Invalid argument. Use `/report activate=true` or `/report activate=false`.", nil
 	}
 }
+// reportSchedule updates the daily report schedule (hour, minute, timezone) for a chat.
+// Unspecified params keep their current DB values. The scheduler goroutine is reloaded
+// immediately so the new time takes effect without a process restart.
+func reportSchedule(db *gorm.DB, sched schedulerReloader, chatID int64, chainID string, params map[string]string) string {
+	current, err := database.GetHourTelegramReport(db, chatID, chainID)
+	if err != nil {
+		return "⚠️ No active report schedule found. Run <code>/report activate=true</code> first, then set the schedule."
+	}
+
+	hour := current.DailyReportHour
+	minute := current.DailyReportMinute
+	tz := current.Timezone
+
+	if v := params["hour"]; v != "" {
+		h, err := strconv.Atoi(v)
+		if err != nil || h < 0 || h > 23 {
+			return "⚠️ Invalid hour. Must be an integer between 0 and 23."
+		}
+		hour = h
+	}
+	if v := params["minute"]; v != "" {
+		m, err := strconv.Atoi(v)
+		if err != nil || m < 0 || m > 59 {
+			return "⚠️ Invalid minute. Must be an integer between 0 and 59."
+		}
+		minute = m
+	}
+	if v := params["timezone"]; v != "" {
+		if _, err := time.LoadLocation(v); err != nil {
+			return fmt.Sprintf("⚠️ Unknown timezone <code>%s</code>. Use IANA format, e.g. <code>Europe/Paris</code>.", html.EscapeString(v))
+		}
+		tz = v
+	}
+
+	if err := database.UpdateTelegramScheduleAdmin(db, chatID, chainID, hour, minute, tz, current.Activate); err != nil {
+		return fmt.Sprintf("❌ Failed to update schedule: %v", err)
+	}
+
+	if sched != nil {
+		if err := sched.ReloadForTelegram(chatID, chainID, db); err != nil {
+			log.Printf("[telegram] scheduler reload failed (chat %d chain %s): %v", chatID, chainID, err)
+		}
+	}
+
+	return fmt.Sprintf(
+		"✅ Report schedule updated (chain: <code>%s</code>)\nTime: <b>%02d:%02d</b> — Timezone: <code>%s</code>",
+		html.EscapeString(chainID), hour, minute, html.EscapeString(tz),
+	)
+}
+
 func handleSubscribe(token string, db *gorm.DB, chatID int64, chainID, args string) {
 	fields := strings.Fields(args)
 	if len(fields) == 0 || fields[0] == "help" {
@@ -1384,6 +1447,13 @@ func formatHelp() string {
 
 	b.WriteString("Disable alerts for all validators\n")
 	b.WriteString("• <code>/subscribe off all </code>\n")
+
+	b.WriteString("\n📬 <b>Daily report</b>\n")
+	b.WriteString("• <code>/report</code> — show current status\n")
+	b.WriteString("• <code>/report activate=true</code> — enable daily report\n")
+	b.WriteString("• <code>/report activate=false</code> — disable daily report\n")
+	b.WriteString("• <code>/report hour=8 minute=30</code> — set report time (keeps current timezone)\n")
+	b.WriteString("• <code>/report hour=8 minute=0 timezone=Europe/Paris</code> — set time and timezone\n\n")
 
 	b.WriteString("\n⛓️ <b>Multi-chain</b>\n")
 	b.WriteString("• <code>/chain</code> — show current chain and available chains\n")
