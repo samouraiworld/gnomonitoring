@@ -2308,45 +2308,4 @@ func formatDuration(d time.Duration) string {
 	return strings.Join(parts, " ")
 }
 
-// formatValidatorRates formats the per-validator rate map sorted by rate descending.
-func formatValidatorRates(rates map[string]ValidatorRate) string {
-	if len(rates) == 0 {
-		return "  No data.\n"
-	}
-
-	type entry struct {
-		addr    string
-		moniker string
-		rate    float64
-	}
-	entries := make([]entry, 0, len(rates))
-	for addr, vr := range rates {
-		entries = append(entries, entry{addr: addr, moniker: vr.Moniker, rate: vr.Rate})
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].rate > entries[j].rate })
-
-	var b strings.Builder
-	for _, e := range entries {
-		emoji := "🟢"
-		switch {
-		case e.rate < 50.0:
-			emoji = "🔴"
-		case e.rate < 70.0:
-			emoji = "🟠"
-		case e.rate < 95.0:
-			emoji = "🟡"
-		}
-		moniker := e.moniker
-		if moniker == "" {
-			moniker = e.addr
-		}
-		addrShort := e.addr
-		if len(addrShort) > 12 {
-			addrShort = addrShort[:10] + "..."
-		}
-		b.WriteString(fmt.Sprintf("  %s <b>%-12s</b> (<code>%s</code>) %.0f%%\n",
-			emoji, html.EscapeString(moniker), html.EscapeString(addrShort), e.rate))
-	}
-	return b.String()
-}
 
