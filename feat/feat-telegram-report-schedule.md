@@ -131,9 +131,6 @@ func reportSchedule(db *gorm.DB, sched *scheduler.Scheduler, chatID int64, chain
 already exists in `internal/database/db_telegram.go` (line 168) and returns exactly the row needed
 (`TelegramHourReport` with `DailyReportHour`, `DailyReportMinute`, `Timezone`, `Activate`).
 
-Replace all references to `database.GetTelegramSchedule` in `reportSchedule` with
-`database.GetHourTelegramReport`.
-
 `TelegramHourReport` model (defined in `db_init.go`):
 ```go
 type TelegramHourReport struct {
@@ -199,10 +196,10 @@ Configure the daily report.
 
 ## Edge cases
 
-- **No existing row**: `GetTelegramSchedule` returns an error → prompt user to run `/report activate=true` first (which creates the row via `ActivateTelegramReport`).
+- **No existing row**: `GetHourTelegramReport` returns an error → prompt user to run `/report activate=true` first (which creates the row via `ActivateTelegramReport`). The error message must say explicitly: "No active report schedule found. Run `/report activate=true` first, then set the schedule."
 - **Scheduler reload fails**: non-fatal — schedule is persisted in DB, goroutine will pick it up on next process restart. Log the error and return a success message (the update worked even if reload failed).
 - **Partial update**: only specified params are overridden; unspecified ones keep their current DB values. E.g. `/report hour=9` changes only the hour, minute and timezone stay the same.
-- **`activate` and schedule in the same command**: both paths are independent. Running `/report activate=true hour=8` triggers the schedule path (schedule params take priority). If both activate and schedule need to change, the user runs two commands. Alternatively, the handler can check for both and call both helpers — up to implementer preference.
+- **`activate` and schedule in the same command**: `/report activate=true hour=8` triggers the schedule path only (schedule params take priority). If the row does not exist yet, `GetHourTelegramReport` returns an error and the user is told to activate first — activation does not happen silently. The user must run `/report activate=true` then `/report hour=8` as two separate commands.
 
 ---
 

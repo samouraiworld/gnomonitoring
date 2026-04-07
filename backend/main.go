@@ -154,6 +154,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	telegram.SchedulerInstance = scheduler.Schedulerinstance
 	handlers := telegram.BuildTelegramHandlers(internal.Config.TokenTelegramValidator, db, internal.Config.DefaultChain, internal.EnabledChains)
 	callbackHandler := telegram.BuildTelegramCallbackHandler(internal.Config.TokenTelegramValidator, db, internal.Config.DefaultChain)
 
