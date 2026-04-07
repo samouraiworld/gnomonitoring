@@ -47,19 +47,14 @@ type ChainHealthSnapshot struct {
 	LatestBlockTime   time.Time
 	ConsensusRound    int
 	RPCReachable      bool
-	IsStuck           bool
-	IsDisabled        bool
-	// ValidatorLiveness holds liveness from the last committed block's precommits.
-	// true = validator signed; false = validator did not sign (MISSING).
-	// nil means the data was unavailable (RPC unreachable or block data missing).
-	ValidatorLiveness map[string]bool
-	// Monikers maps validator address to display name for liveness formatting.
-	Monikers       map[string]string
+	IsStuck        bool
+	IsDisabled     bool
 	ValidatorRates map[string]ValidatorRate
 	MinBlock       int64
 	MaxBlock       int64
 	AlertsLast24h  []database.AlertSummary
 }
+
 
 // ValidatorRate mirrors gnovalidator.ValidatorRate.
 type ValidatorRate struct {
@@ -2253,14 +2248,6 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 		b.WriteString(fmt.Sprintf("Consensus: round %d — %s\n", snap.ConsensusRound, roundLabel))
 	}
 
-	if snap.ValidatorLiveness != nil {
-		b.WriteString(fmt.Sprintf("\nValidator status at last block <code>#%d</code>:\n", snap.LatestBlockHeight))
-		b.WriteString(formatValidatorLivenessHTML(snap.ValidatorLiveness, snap.Monikers))
-	} else {
-		b.WriteString("\nParticipation (last 50 blocks — RPC unreachable):\n")
-		b.WriteString(formatValidatorRates(snap.ValidatorRates))
-	}
-
 	if AlertsFormatter != nil {
 		b.WriteString(AlertsFormatter(snap.AlertsLast24h))
 	}
@@ -2363,53 +2350,3 @@ func formatValidatorRates(rates map[string]ValidatorRate) string {
 	return b.String()
 }
 
-// formatValidatorLivenessHTML formats the per-validator liveness from the last
-// committed block's precommits as an HTML Telegram message fragment.
-// monikers maps addr -> display name; it may be nil or empty.
-// Signed validators are listed first, then missing ones, each group sorted by display name.
-func formatValidatorLivenessHTML(liveness map[string]bool, monikers map[string]string) string {
-	if len(liveness) == 0 {
-		return "  No data.\n"
-	}
-
-	type entry struct {
-		addr   string
-		name   string // display name (moniker or truncated addr)
-		signed bool
-	}
-	entries := make([]entry, 0, len(liveness))
-	for addr, signed := range liveness {
-		name := monikers[addr]
-		if name == "" {
-			if len(addr) > 10 {
-				name = addr[:10] + "..."
-			} else {
-				name = addr
-			}
-		}
-		entries = append(entries, entry{addr: addr, name: name, signed: signed})
-	}
-	// Sort: signed validators first, then alphabetically by display name.
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].signed != entries[j].signed {
-			return entries[i].signed
-		}
-		return entries[i].name < entries[j].name
-	})
-
-	var b strings.Builder
-	for _, e := range entries {
-		addrShort := e.addr
-		if len(addrShort) > 10 {
-			addrShort = addrShort[:10] + "..."
-		}
-		if e.signed {
-			b.WriteString(fmt.Sprintf("  🟢 <b>%-12s</b> (<code>%s</code>)\n",
-				html.EscapeString(e.name), html.EscapeString(addrShort)))
-		} else {
-			b.WriteString(fmt.Sprintf("  🔴 <b>%-12s</b> (<code>%s</code>)  MISSING\n",
-				html.EscapeString(e.name), html.EscapeString(addrShort)))
-		}
-	}
-	return b.String()
-}

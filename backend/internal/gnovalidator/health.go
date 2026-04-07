@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"html"
 	"log"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,18 +25,8 @@ type ChainHealthSnapshot struct {
 	IsStuck    bool
 	IsDisabled bool
 
-	// Per-validator liveness from the last committed block's precommits.
-	// true = validator signed; false = validator did not sign (MISSING).
-	// nil map means RPC was unreachable or block data unavailable.
-	ValidatorLiveness map[string]bool // addr -> signed
-
-	// MonikerMap snapshot for display (addr -> moniker).
-	// Populated from GetMonikerMap(chainID) alongside ValidatorLiveness.
-	Monikers map[string]string
-
 	// From DB (last RecentBlocksWindow blocks).
 	// Used for the healthy-chain daily report (yesterday's participation).
-	// On stuck/disabled chains, ValidatorLiveness is the primary signal.
 	ValidatorRates map[string]ValidatorRate
 	MinBlock       int64
 	MaxBlock       int64
@@ -112,58 +101,6 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 			snap.RPCReachable = false
 		}
 
-		// After the parallel goroutines complete, fetch the last committed block's
-		// precommits to determine per-validator liveness. This is done sequentially
-		// because it depends on snap.LatestBlockHeight set by goroutine 1.
-		if snap.RPCReachable && snap.LatestBlockHeight > 0 {
-			blockResult, err := rpcClient.Block(&snap.LatestBlockHeight)
-			if err != nil || blockResult == nil || blockResult.Block == nil || blockResult.Block.LastCommit == nil {
-				log.Printf("[health][%s] Block(%d) error: %v", chainID, snap.LatestBlockHeight, err)
-			} else {
-				// Build liveness map from precommits.
-				liveness := make(map[string]bool)
-				for _, precommit := range blockResult.Block.LastCommit.Precommits {
-					if precommit != nil {
-						liveness[precommit.ValidatorAddress.String()] = true
-					}
-				}
-
-				// Fetch the validator set to enumerate all slots (including non-signers).
-				valResult, err := rpcClient.Validators(&snap.LatestBlockHeight)
-				if err != nil || valResult == nil {
-					log.Printf("[health][%s] Validators(%d) error: %v", chainID, snap.LatestBlockHeight, err)
-				} else {
-					for _, v := range valResult.Validators {
-						addr := v.Address.String()
-						if _, ok := liveness[addr]; !ok {
-							liveness[addr] = false
-						}
-					}
-					snap.ValidatorLiveness = liveness
-				}
-			}
-
-			// Build monikers: DB is primary source, in-memory overrides.
-			monikers := make(map[string]string)
-			var dbMonikers []struct {
-				Addr    string `gorm:"column:addr"`
-				Moniker string `gorm:"column:moniker"`
-			}
-			if err := db.Table("addr_monikers").
-				Select("addr, moniker").
-				Where("chain_id = ?", chainID).
-				Find(&dbMonikers).Error; err == nil {
-				for _, row := range dbMonikers {
-					monikers[row.Addr] = row.Moniker
-				}
-			}
-			for addr, moniker := range GetMonikerMap(chainID) {
-				if moniker != "" {
-					monikers[addr] = moniker
-				}
-			}
-			snap.Monikers = monikers
-		}
 	}
 
 	rates, minBlock, maxBlock, err := CalculateRecentValidatorStatus(db, chainID, GetThresholds().RecentBlocksWindow)
@@ -305,53 +242,6 @@ func validatorRateEmoji(rate float64) string {
 	}
 }
 
-// formatValidatorLiveness formats per-validator liveness from the last committed
-// block's precommits. monikers maps addr -> display name; it may be nil or empty.
-// Signed validators are listed first, then missing ones, each group sorted by display name.
-func formatValidatorLiveness(liveness map[string]bool, monikers map[string]string) string {
-	if len(liveness) == 0 {
-		return "  (no data)\n"
-	}
-
-	type entry struct {
-		addr    string
-		name    string // display name (moniker or truncated addr)
-		signed  bool
-	}
-	entries := make([]entry, 0, len(liveness))
-	for addr, signed := range liveness {
-		name := monikers[addr]
-		if name == "" {
-			if len(addr) > 10 {
-				name = addr[:10] + "..."
-			} else {
-				name = addr
-			}
-		}
-		entries = append(entries, entry{addr: addr, name: name, signed: signed})
-	}
-	// Sort: signed validators first, then alphabetically by display name.
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].signed != entries[j].signed {
-			return entries[i].signed
-		}
-		return entries[i].name < entries[j].name
-	})
-
-	var sb strings.Builder
-	for _, e := range entries {
-		short := e.addr
-		if len(short) > 10 {
-			short = short[:10] + "..."
-		}
-		if e.signed {
-			sb.WriteString(fmt.Sprintf("  🟢 %-12s (%s)\n", e.name, short))
-		} else {
-			sb.WriteString(fmt.Sprintf("  🔴 %-12s (%s)  MISSING\n", e.name, short))
-		}
-	}
-	return sb.String()
-}
 
 func formatValidatorRates(rates map[string]ValidatorRate) string {
 	if len(rates) == 0 {
@@ -383,16 +273,6 @@ func FormatDisabledReport(chainID string, snap ChainHealthSnapshot) string {
 		))
 	} else if snap.MaxBlock > 0 {
 		sb.WriteString(fmt.Sprintf("Last known block in DB: #%d\n", snap.MaxBlock))
-	}
-	switch {
-	case snap.ValidatorLiveness != nil:
-		sb.WriteString(fmt.Sprintf("\nValidator status at last block #%d:\n", snap.LatestBlockHeight))
-		sb.WriteString(formatValidatorLiveness(snap.ValidatorLiveness, snap.Monikers))
-	case len(snap.ValidatorRates) > 0:
-		sb.WriteString(fmt.Sprintf("\nValidator participation (last %d blocks — RPC unreachable):\n", GetThresholds().RecentBlocksWindow))
-		sb.WriteString(formatValidatorRates(snap.ValidatorRates))
-	default:
-		sb.WriteString("\n(RPC unreachable — no validator data available)\n")
 	}
 	return sb.String()
 }
@@ -568,13 +448,7 @@ func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 	sb.WriteString(fmt.Sprintf("Consensus: round %d — %s%s\n",
 		snap.ConsensusRound, consensusLabel(snap.ConsensusRound), stuckSince))
 
-	if snap.ValidatorLiveness != nil {
-		sb.WriteString(fmt.Sprintf("\nValidator status at last block #%d:\n", snap.LatestBlockHeight))
-		sb.WriteString(formatValidatorLiveness(snap.ValidatorLiveness, snap.Monikers))
-	} else if len(snap.ValidatorRates) > 0 {
-		sb.WriteString(fmt.Sprintf("\nValidator participation (last %d blocks — RPC unreachable):\n", GetThresholds().RecentBlocksWindow))
-		sb.WriteString(formatValidatorRates(snap.ValidatorRates))
-	}
+	sb.WriteString(FormatAlertsLast24h(snap.AlertsLast24h))
 	return sb.String()
 }
 
