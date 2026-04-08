@@ -74,6 +74,17 @@ func GetAllChatIDs(db *gorm.DB, typeChatid string) ([]int64, error) {
 	return ids, nil
 }
 
+// GetChatIDsForChain returns all chat IDs of the given type that have at least
+// one active validator subscription for chainID. Used to scope chain-level
+// alerts (stuck, activity restored, new validator) to interested chats only.
+func GetChatIDsForChain(db *gorm.DB, typeChatid, chainID string) ([]int64, error) {
+	var ids []int64
+	err := db.Raw(`
+		SELECT chat_id FROM telegrams WHERE chain_id = ? AND type = ?
+	`, chainID, typeChatid).Scan(&ids).Error
+	return ids, err
+}
+
 // GetAllChatChains returns a map of chat_id -> chain_id for all validator chats.
 // Used at startup to hydrate chatChainState from persisted preferences.
 func GetAllChatChains(db *gorm.DB) (map[int64]string, error) {

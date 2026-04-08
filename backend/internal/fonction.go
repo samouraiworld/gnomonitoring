@@ -398,14 +398,14 @@ func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moni
 				for _, r := range res {
 					fullMsg += "\n <@" + r.MentionTag + ">"
 				}
-				if level == "WARNING" {
-					emoji = "⚠️"
-					prefix = ""
-					fullMsg = fmt.Sprintf(
-						"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-						chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-					)
-				}
+			}
+			if level == "WARNING" {
+				emoji = "⚠️"
+				prefix = ""
+				fullMsg = fmt.Sprintf(
+					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
+					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
+				)
 			}
 			sendErr := SendSlackAlert(fullMsg, wh.URL)
 			if sendErr != nil {
@@ -564,8 +564,8 @@ func SendInfoValidator(chainID, msg string, level string, db *gorm.DB) error {
 
 		}
 	}
-	if err := telegram.MsgTelegram(msg, Config.TokenTelegramValidator, "validator", db); err != nil {
-		log.Printf("❌ MsgTelegram: %v", err)
+	if err := telegram.MsgTelegramChain(msg, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
+		log.Printf("❌ MsgTelegramChain: %v", err)
 	}
 	return nil
 }
