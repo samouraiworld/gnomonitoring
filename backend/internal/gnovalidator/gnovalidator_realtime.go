@@ -575,6 +575,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 			continue
 		}
 		if participated == 0 {
+			log.Printf("[validator][%s] RESOLVED skipped for %s (%s): block %d not yet participated", chainID, a.Moniker, a.Addr, a.EndHeight+1)
 			continue
 		}
 
