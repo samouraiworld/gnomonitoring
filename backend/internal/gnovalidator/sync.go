@@ -180,7 +180,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 // - 5 approx hours with 6 workers for one month
 // - 2 approx  hours with 20 workers for one month
 func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from, to int64, monikerMap map[string]string) error {
-	const workers = 50
+	const workers = 20
 	const flushThreshold = 2000
 
 	firstActiveBlocks := GetFirstActiveBlockMap(chainID)

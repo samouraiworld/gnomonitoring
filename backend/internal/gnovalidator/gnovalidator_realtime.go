@@ -379,8 +379,11 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 			}
 		}()
 		for {
-			// Sync gate: skip alert processing until backfill is complete.
+			// During backfill, skip new-alert detection but still dispatch
+			// pending RESOLVED alerts so the dedup window is not permanently
+			// blocked by un-resolved WARNING/CRITICAL entries.
 			if !isChainSynced(chainID) {
+				SendResolveAlerts(db, chainID)
 				select {
 				case <-ctx.Done():
 					return
