@@ -31,9 +31,9 @@ type ChainHealthSnapshot struct {
 	MinBlock       int64
 	MaxBlock       int64
 
-	// Alert events from the last 24 hours (WARNING, CRITICAL, RESOLVED).
+	// Missed blocks per validator in the last 24 hours.
 	// Populated by FetchChainHealthSnapshot for use in daily reports.
-	AlertsLast24h []database.AlertSummary
+	MissedLast24h []database.MissedBlockCount
 }
 
 func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
@@ -111,12 +111,12 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 	snap.MinBlock = minBlock
 	snap.MaxBlock = maxBlock
 
-	alerts, err := database.GetAlertLogsLast24h(db, chainID)
+	missed, err := database.GetMissedBlocksLast24h(db, chainID)
 	if err != nil {
-		log.Printf("[health][%s] GetAlertLogsLast24h error: %v", chainID, err)
-		// non-fatal: leave AlertsLast24h nil
+		log.Printf("[health][%s] GetMissedBlocksLast24h error: %v", chainID, err)
+		// non-fatal: leave MissedLast24h nil
 	} else {
-		snap.AlertsLast24h = alerts
+		snap.MissedLast24h = missed
 	}
 
 	return snap
@@ -263,200 +263,121 @@ func formatValidatorRates(rates map[string]ValidatorRate) string {
 	return sb.String()
 }
 
-func FormatDisabledReport(chainID string, snap ChainHealthSnapshot) string {
+const reportSeparator = "---"
+
+func missedEmoji(missed int) string {
+	t := GetThresholds()
+	switch {
+	case missed >= t.CriticalThreshold:
+		return "🔴"
+	case missed >= t.WarningThreshold:
+		return "🟡"
+	default:
+		return "🟢"
+	}
+}
+
+func FormatMissedBlocksLast24h(rows []database.MissedBlockCount) string {
+	if len(rows) == 0 {
+		return ""
+	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("⚫ [%s] Chain status — MONITORING OFF\n", chainID))
-	if snap.LatestBlockHeight > 0 {
-		sb.WriteString(fmt.Sprintf("Last known block: #%d at %s UTC\n",
-			snap.LatestBlockHeight,
-			snap.LatestBlockTime.UTC().Format("2006-01-02 15:04"),
-		))
-	} else if snap.MaxBlock > 0 {
-		sb.WriteString(fmt.Sprintf("Last known block in DB: #%d\n", snap.MaxBlock))
+	
+	sb.WriteString("Missed blocks last 24h:\n")
+	for _, r := range rows {
+		moniker := r.Moniker
+		if moniker == "" {
+			moniker = "unknown"
+		}
+		addrShort := r.Addr
+		if len(addrShort) > 10 {
+			addrShort = addrShort[:10] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("  %s %-14s (%s) %d missed\n",
+			missedEmoji(r.Missed), moniker, addrShort, r.Missed))
 	}
 	return sb.String()
 }
 
-type validatorAlertSummary struct {
-	Moniker    string
-	Addr       string
-	WorstLevel string // "CRITICAL" > "WARNING"
-	Count      int    // total WARNING+CRITICAL events
-	LastSentAt time.Time
-	Resolved   bool
-	ResolvedAt int64 // end_height of RESOLVED row
-}
-
-func FormatAlertsLast24h(alerts []database.AlertSummary) string {
-	if len(alerts) == 0 {
+// FormatMissedBlocksLast24hHTML is the HTML-safe variant for Telegram (parse_mode: HTML).
+func FormatMissedBlocksLast24hHTML(rows []database.MissedBlockCount) string {
+	if len(rows) == 0 {
 		return ""
 	}
-
-	// Group by addr — alerts are ordered sent_at DESC so first seen = most recent.
-	byAddr := map[string]*validatorAlertSummary{}
-	var order []string
-	for _, a := range alerts {
-		entry, exists := byAddr[a.Addr]
-		if !exists {
-			entry = &validatorAlertSummary{Moniker: a.Moniker, Addr: a.Addr}
-			byAddr[a.Addr] = entry
-			order = append(order, a.Addr)
+	var sb strings.Builder
+	
+	sb.WriteString("Missed blocks last 24h:\n")
+	for _, r := range rows {
+		moniker := r.Moniker
+		if moniker == "" {
+			moniker = "unknown"
 		}
-		switch a.Level {
-		case "CRITICAL":
-			entry.Count++
-			entry.WorstLevel = "CRITICAL"
-			if a.SentAt.After(entry.LastSentAt) {
-				entry.LastSentAt = a.SentAt
-			}
-		case "WARNING":
-			entry.Count++
-			if entry.WorstLevel != "CRITICAL" {
-				entry.WorstLevel = "WARNING"
-			}
-			if a.SentAt.After(entry.LastSentAt) {
-				entry.LastSentAt = a.SentAt
-			}
-		case "RESOLVED":
-			entry.Resolved = true
-			entry.ResolvedAt = a.EndHeight
+		addrShort := r.Addr
+		if len(addrShort) > 10 {
+			addrShort = addrShort[:10] + "..."
 		}
+		sb.WriteString(fmt.Sprintf("  %s <b>%-14s</b> (<code>%s</code>) %d missed\n",
+			missedEmoji(r.Missed), html.EscapeString(moniker), html.EscapeString(addrShort), r.Missed))
 	}
-
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n⚠️ Alerts last 24h (%d validator(s)):\n", len(order)))
-
-	limit := 10
-	extra := 0
-	if len(order) > limit {
-		extra = len(order) - limit
-		order = order[:limit]
-	}
-
-	for _, addr := range order {
-		e := byAddr[addr]
-		addrShort := addr
-		if len(addrShort) > 12 {
-			addrShort = addrShort[:12] + "..."
-		}
-		var emoji string
-		if e.WorstLevel == "CRITICAL" {
-			emoji = "🚨"
-		} else {
-			emoji = "⚠️ "
-		}
-		b.WriteString(fmt.Sprintf("  %s %-8s  %-14s (%s) — %d alert(s) — last %s\n",
-			emoji, e.WorstLevel, e.Moniker, addrShort,
-			e.Count, e.LastSentAt.UTC().Format("15:04 UTC")))
-		if e.Resolved {
-			b.WriteString(fmt.Sprintf("  ✅ RESOLVED  %-14s (%s) at block #%d\n",
-				e.Moniker, addrShort, e.ResolvedAt))
-		}
-	}
-	if extra > 0 {
-		b.WriteString(fmt.Sprintf("  ... and %d more.\n", extra))
-	}
-	return b.String()
+	return sb.String()
 }
 
-// FormatAlertsLast24hHTML is the HTML-safe variant for Telegram (parse_mode: HTML).
-// Moniker and address fields are html.EscapeString'd to prevent markup injection.
-func FormatAlertsLast24hHTML(alerts []database.AlertSummary) string {
-	if len(alerts) == 0 {
-		return ""
+func FormatDisabledReport(chainID string, snap ChainHealthSnapshot) string {
+	date := time.Now().UTC().Format("2006-01-02")
+	var sb strings.Builder
+	sb.WriteString(reportSeparator + "\n")
+	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
+	
+	sb.WriteString("⚫ Monitoring OFF")
+	if snap.LatestBlockHeight > 0 {
+		sb.WriteString(fmt.Sprintf(" — Last known block: #%d at %s UTC",
+			snap.LatestBlockHeight,
+			snap.LatestBlockTime.UTC().Format("2006-01-02 15:04")))
+	} else if snap.MaxBlock > 0 {
+		sb.WriteString(fmt.Sprintf(" — Last known block in DB: #%d", snap.MaxBlock))
 	}
-
-	byAddr := map[string]*validatorAlertSummary{}
-	var order []string
-	for _, a := range alerts {
-		entry, exists := byAddr[a.Addr]
-		if !exists {
-			entry = &validatorAlertSummary{Moniker: a.Moniker, Addr: a.Addr}
-			byAddr[a.Addr] = entry
-			order = append(order, a.Addr)
-		}
-		switch a.Level {
-		case "CRITICAL":
-			entry.Count++
-			entry.WorstLevel = "CRITICAL"
-			if a.SentAt.After(entry.LastSentAt) {
-				entry.LastSentAt = a.SentAt
-			}
-		case "WARNING":
-			entry.Count++
-			if entry.WorstLevel != "CRITICAL" {
-				entry.WorstLevel = "WARNING"
-			}
-			if a.SentAt.After(entry.LastSentAt) {
-				entry.LastSentAt = a.SentAt
-			}
-		case "RESOLVED":
-			entry.Resolved = true
-			entry.ResolvedAt = a.EndHeight
-		}
-	}
-
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n⚠️ Alerts last 24h (%d validator(s)):\n", len(order)))
-
-	limit := 10
-	extra := 0
-	if len(order) > limit {
-		extra = len(order) - limit
-		order = order[:limit]
-	}
-
-	for _, addr := range order {
-		e := byAddr[addr]
-		addrShort := addr
-		if len(addrShort) > 12 {
-			addrShort = addrShort[:12] + "..."
-		}
-		safeMoniker := html.EscapeString(e.Moniker)
-		safeAddr := html.EscapeString(addrShort)
-		var emoji string
-		if e.WorstLevel == "CRITICAL" {
-			emoji = "🚨"
-		} else {
-			emoji = "⚠️ "
-		}
-		b.WriteString(fmt.Sprintf("  %s %-8s  %-14s (%s) — %d alert(s) — last %s\n",
-			emoji, e.WorstLevel, safeMoniker, safeAddr,
-			e.Count, e.LastSentAt.UTC().Format("15:04 UTC")))
-		if e.Resolved {
-			b.WriteString(fmt.Sprintf("  ✅ RESOLVED  %-14s (%s) at block #%d\n",
-				safeMoniker, safeAddr, e.ResolvedAt))
-		}
-	}
-	if extra > 0 {
-		b.WriteString(fmt.Sprintf("  ... and %d more.\n", extra))
-	}
-	return b.String()
+	sb.WriteString("\n")
+	return sb.String()
 }
 
 func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
+	date := time.Now().UTC().Format("2006-01-02")
 	var sb strings.Builder
+	sb.WriteString(reportSeparator + "\n")
+
+	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
+	
 	emoji := chainStatusEmoji(snap)
 	blockAge := formatBlockAge(snap.LatestBlockTime)
-	sb.WriteString(fmt.Sprintf("%s [%s] Chain status — block #%d (%s)\n",
-		emoji, chainID, snap.LatestBlockHeight, blockAge))
-
 	stuckSince := ""
 	if !snap.LatestBlockTime.IsZero() {
 		stuckSince = fmt.Sprintf(" since %s UTC", snap.LatestBlockTime.UTC().Format("2006-01-02 15:04"))
 	}
-	sb.WriteString(fmt.Sprintf("Consensus: round %d — %s%s\n",
+	sb.WriteString(fmt.Sprintf("%s Block #%d (%s) — Consensus: round %d — %s%s\n",
+		emoji, snap.LatestBlockHeight, blockAge,
 		snap.ConsensusRound, consensusLabel(snap.ConsensusRound), stuckSince))
 
-	sb.WriteString(FormatAlertsLast24h(snap.AlertsLast24h))
+	sb.WriteString(FormatMissedBlocksLast24h(snap.MissedLast24h))
 	return sb.String()
 }
 
-func FormatHealthyReport(chainID, date string, rates map[string]ValidatorRate, minBlock, maxBlock int64, alerts []database.AlertSummary) string {
+func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates map[string]ValidatorRate, minBlock, maxBlock int64) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n\n", chainID, date))
-	sb.WriteString(fmt.Sprintf("Participation yesterday (Blocks %d → %d):\n", minBlock, maxBlock))
-	sb.WriteString(formatValidatorRates(rates))
-	sb.WriteString(FormatAlertsLast24h(alerts))
+		sb.WriteString(reportSeparator + "\n")
+
+	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
+
+	if snap.RPCReachable {
+		emoji := chainStatusEmoji(snap)
+		blockAge := formatBlockAge(snap.LatestBlockTime)
+		sb.WriteString(fmt.Sprintf("%s Block #%d (%s) — Consensus: round %d — %s\n",
+			emoji, snap.LatestBlockHeight, blockAge,
+			snap.ConsensusRound, consensusLabel(snap.ConsensusRound)))
+		// sb.WriteString(reportSeparator + "\n")
+	}
+
+	// sb.WriteString(fmt.Sprintf("Participation yesterday (Blocks %d → %d):\n", minBlock, maxBlock))
+	// sb.WriteString(formatValidatorRates(rates))
+	sb.WriteString(FormatMissedBlocksLast24h(snap.MissedLast24h))
 	return sb.String()
 }

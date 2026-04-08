@@ -20,14 +20,14 @@ LIMIT 50;
 
 UPDATE daily_participations
 SET participated = 0
-WHERE chain_id = 'test12'
-  AND addr = 'g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r'
+WHERE chain_id = 'gnoland1'
+  AND addr = 'g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x'
 
   AND block_height > (
-      SELECT MAX(block_height) - 6
+      SELECT MAX(block_height) - 35
       FROM daily_participations
-      WHERE chain_id = 'test12'
-        AND addr = 'g1z9eedz4qfru6ggdsyj7yn85s5ewvdr5gr39c7r'
+      WHERE chain_id = 'gnoland1'
+        AND addr = 'g1pdg6ugp4r8r9km4kqxfz7e7qvn9ssq3fv2yn5x'
         
   );
 
