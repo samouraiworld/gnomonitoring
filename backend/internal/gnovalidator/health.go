@@ -263,7 +263,7 @@ func formatValidatorRates(rates map[string]ValidatorRate) string {
 	return sb.String()
 }
 
-const reportSeparator = "──────────────────────────"
+const reportSeparator = "---"
 
 func missedEmoji(missed int) string {
 	t := GetThresholds()
@@ -282,7 +282,7 @@ func FormatMissedBlocksLast24h(rows []database.MissedBlockCount) string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(reportSeparator + "\n")
+	
 	sb.WriteString("Missed blocks last 24h:\n")
 	for _, r := range rows {
 		moniker := r.Moniker
@@ -305,7 +305,7 @@ func FormatMissedBlocksLast24hHTML(rows []database.MissedBlockCount) string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(reportSeparator + "\n")
+	
 	sb.WriteString("Missed blocks last 24h:\n")
 	for _, r := range rows {
 		moniker := r.Moniker
@@ -325,8 +325,9 @@ func FormatMissedBlocksLast24hHTML(rows []database.MissedBlockCount) string {
 func FormatDisabledReport(chainID string, snap ChainHealthSnapshot) string {
 	date := time.Now().UTC().Format("2006-01-02")
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
 	sb.WriteString(reportSeparator + "\n")
+	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
+	
 	sb.WriteString("⚫ Monitoring OFF")
 	if snap.LatestBlockHeight > 0 {
 		sb.WriteString(fmt.Sprintf(" — Last known block: #%d at %s UTC",
@@ -342,9 +343,10 @@ func FormatDisabledReport(chainID string, snap ChainHealthSnapshot) string {
 func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 	date := time.Now().UTC().Format("2006-01-02")
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
 	sb.WriteString(reportSeparator + "\n")
 
+	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
+	
 	emoji := chainStatusEmoji(snap)
 	blockAge := formatBlockAge(snap.LatestBlockTime)
 	stuckSince := ""
@@ -361,8 +363,9 @@ func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 
 func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates map[string]ValidatorRate, minBlock, maxBlock int64) string {
 	var sb strings.Builder
+		sb.WriteString(reportSeparator + "\n")
+
 	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
-	sb.WriteString(reportSeparator + "\n")
 
 	if snap.RPCReachable {
 		emoji := chainStatusEmoji(snap)
@@ -370,11 +373,11 @@ func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates m
 		sb.WriteString(fmt.Sprintf("%s Block #%d (%s) — Consensus: round %d — %s\n",
 			emoji, snap.LatestBlockHeight, blockAge,
 			snap.ConsensusRound, consensusLabel(snap.ConsensusRound)))
-		sb.WriteString(reportSeparator + "\n")
+		// sb.WriteString(reportSeparator + "\n")
 	}
 
-	sb.WriteString(fmt.Sprintf("Participation yesterday (Blocks %d → %d):\n", minBlock, maxBlock))
-	sb.WriteString(formatValidatorRates(rates))
+	// sb.WriteString(fmt.Sprintf("Participation yesterday (Blocks %d → %d):\n", minBlock, maxBlock))
+	// sb.WriteString(formatValidatorRates(rates))
 	sb.WriteString(FormatMissedBlocksLast24h(snap.MissedLast24h))
 	return sb.String()
 }
