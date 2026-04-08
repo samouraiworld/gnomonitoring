@@ -394,8 +394,14 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 
 			today := time.Now().Format("2006-01-02")
 
-			// Query returns one row per contiguous missed sequence (last state only),
-			// avoiding N per-block rows for long-dead validators.
+			// Query returns one row per contiguous missed sequence within the
+			// recent window. The window is kept short (30 min) to avoid
+			// surfacing dozens of already-resolved historical sequences that
+			// would each trigger a dedup DB round-trip. Active incidents are
+			// always visible because new blocks are always within the window.
+			// The NOT EXISTS filter on alert_logs skips sequences already
+			// covered by a RESOLVED, eliminating the dedup check entirely for
+			// those sequences.
 			var windows []missedWindow
 			err := db.Raw(`
 				WITH ranked AS (
@@ -410,7 +416,7 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 							THEN 0 ELSE 1
 						END AS new_seq
 					FROM daily_participations
-					WHERE chain_id = ? AND date >= datetime('now', '-2 hours')
+					WHERE chain_id = ? AND date >= datetime('now', '-30 minutes')
 				),
 				grouped AS (
 					SELECT
@@ -432,11 +438,18 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 					WHERE participated = 0
 					GROUP BY addr, moniker, seq_id
 				)
-				SELECT addr, moniker, start_height, end_height, missed
-				FROM sequences
-				WHERE missed >= ?
-				ORDER BY addr, start_height
-			`, chainID, GetThresholds().WarningThreshold).Scan(&windows).Error
+				SELECT s.addr, s.moniker, s.start_height, s.end_height, s.missed
+				FROM sequences s
+				WHERE s.missed >= ?
+				  AND NOT EXISTS (
+				      SELECT 1 FROM alert_logs r
+				      WHERE r.chain_id  = ?
+				        AND r.addr      = s.addr
+				        AND r.level     = 'RESOLVED'
+				        AND r.end_height >= s.end_height
+				  )
+				ORDER BY s.addr, s.start_height
+			`, chainID, GetThresholds().WarningThreshold, chainID).Scan(&windows).Error
 			if err != nil {
 				log.Printf("[validator][%s] error executing missed blocks query: %v", chainID, err)
 				select {
@@ -574,23 +587,32 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 	log.Printf("[validator][%s] SendResolveAlerts: %d pending alert(s) without RESOLVED", chainID, len(pending))
 
 	for _, a := range pending {
-		// Validator back online only if end_height+1 exists AND participated=1.
-		var participated int
+		// Find the first block where the validator participated again after the
+		// missed sequence. No upper bound: the recovery may come many blocks later
+		// (e.g. long maintenance). The dead-validator silence check in
+		// WatchValidatorAlerts already prevents perpetual alerts for truly dead
+		// validators; here we only need to know when they returned.
+		var resumeHeight int64
 		err := db.Raw(`
-			SELECT COUNT(*) FROM daily_participations
-			WHERE chain_id = ? AND addr = ? AND block_height = ? AND participated = 1
-		`, chainID, a.Addr, a.EndHeight+1).Scan(&participated).Error
+			SELECT COALESCE(MIN(block_height), 0)
+			FROM daily_participations
+			WHERE chain_id    = ?
+			  AND addr        = ?
+			  AND block_height > ?
+			  AND participated = 1
+		`, chainID, a.Addr, a.EndHeight).Scan(&resumeHeight).Error
 		if err != nil {
 			log.Printf("[validator][%s] DB error checking participation: %v", chainID, err)
 			continue
 		}
-		if participated == 0 {
-			log.Printf("[validator][%s] RESOLVED skipped for %s (%s): block %d not yet participated", chainID, a.Moniker, a.Addr, a.EndHeight+1)
+		if resumeHeight == 0 {
+			log.Printf("[validator][%s] RESOLVED pending for %s (%s): no participation found after block %d yet",
+				chainID, a.Moniker, a.Addr, a.EndHeight)
 			continue
 		}
 
 		resolveMsg := fmt.Sprintf("[%s] ✅ RESOLVED: No more missed blocks for %s (%s) at Block %d",
-			chainID, a.Moniker, a.Addr, a.EndHeight+1)
+			chainID, a.Moniker, a.Addr, resumeHeight)
 		if err := internal.SendResolveValidator(chainID, resolveMsg, a.Addr, db); err != nil {
 			log.Printf("[validator][%s] SendResolveValidator error: %v", chainID, err)
 		}

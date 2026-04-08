@@ -269,6 +269,30 @@ func MsgTelegram(msg string, token, typeChatid string, db *gorm.DB) (err error) 
 // the given (chainID, addr) pair. chainID is used to scope the subscription
 // lookup so that alerts from one chain do not bleed into chats that are
 // monitoring a different chain.
+// MsgTelegramChain sends msg to every chat of typeChatid that has at least one
+// active subscription for chainID. Use this for chain-level alerts (stuck chain,
+// activity restored, new validator) where no specific validator address is involved.
+func MsgTelegramChain(msg, chainID, token, typeChatid string, db *gorm.DB) error {
+	if token == "" {
+		return fmt.Errorf("token is empty")
+	}
+
+	ids, err := database.GetChatIDsForChain(db, typeChatid, chainID)
+	if err != nil {
+		log.Printf("❌ GetChatIDsForChain failed (chain=%s): %v", chainID, err)
+		return err
+	}
+
+	for _, chatID := range ids {
+		if err := SendMessageTelegram(token, chatID, msg); err != nil {
+			log.Printf("❌ MsgTelegramChain send failed for chat_id=%d: %v", chatID, err)
+		} else {
+			log.Printf("✅ MsgTelegramChain sent to chat_id=%d (chain=%s)", chatID, chainID)
+		}
+	}
+	return nil
+}
+
 func MsgTelegramAlert(msg string, addr, chainID, token, typeChatid string, db *gorm.DB) (err error) {
 
 	if token == "" {
