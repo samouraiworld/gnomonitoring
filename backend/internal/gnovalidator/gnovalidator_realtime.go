@@ -443,6 +443,8 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 				}
 				continue
 			}
+			log.Printf("[validator][%s] alert check: found %d missed-block window(s) above threshold=%d",
+				chainID, len(windows), GetThresholds().WarningThreshold)
 
 			// Snapshot thresholds once for the whole cycle to avoid TOCTOU
 			// between the SQL filter and the Go-level level classification.
@@ -491,6 +493,8 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 					continue
 				}
 				if recentCount > 0 {
+					log.Printf("[validator][%s] dedup: skipping %s alert for %s (%s) start=%d end=%d missed=%d (recent alert within %dh window, no RESOLVED since)",
+						chainID, level, moniker, addr, start_height, end_height, missed, resendHours)
 					continue
 				}
 
@@ -508,6 +512,8 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 						continue
 					}
 					if activeRecently == 0 {
+						log.Printf("[validator][%s] silence: skipping %s alert for %s (%s): no participation in last %d days",
+							chainID, level, moniker, addr, t.DeadValidatorSilenceDays)
 						continue
 					}
 				}
@@ -562,6 +568,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 		log.Printf("[validator][%s] SendResolveAlerts query error: %v", chainID, err)
 		return
 	}
+	log.Printf("[validator][%s] SendResolveAlerts: %d pending alert(s) without RESOLVED", chainID, len(pending))
 
 	for _, a := range pending {
 		// Validator back online only if end_height+1 exists AND participated=1.

@@ -1,6 +1,6 @@
 # Étape 1 : Build avec CGO
-FROM golang:1.23.5 AS builder
-
+#FROM golang:1.26.1 AS builder
+FROM golang:1.26.1-bookworm AS builder
 WORKDIR /app
 
 
