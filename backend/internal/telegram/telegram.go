@@ -294,18 +294,20 @@ func MsgTelegramAlert(msg string, addr, chainID, token, typeChatid string, db *g
 			continue
 		}
 
+		matched := false
 		for _, s := range subs {
-
 			if s.Addr == addr {
-
+				matched = true
 				if err := SendMessageTelegram(token, chatID, msg); err != nil {
 					log.Printf("❌ send failed for chat_id=%d: %v", chatID, err)
-					continue
 				} else {
 					log.Printf("✅ message sent to chat_id=%d (validator=%s)", chatID, addr)
 				}
 				break
 			}
+		}
+		if !matched {
+			log.Printf("↪️  skip chat_id=%d (no sub matching addr=%s on chain=%s)", chatID, addr, chainID)
 		}
 
 	}

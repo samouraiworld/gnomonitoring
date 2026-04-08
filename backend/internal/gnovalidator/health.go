@@ -229,39 +229,6 @@ func chainStatusEmoji(snap ChainHealthSnapshot) string {
 	return "🟢"
 }
 
-func validatorRateEmoji(rate float64) string {
-	switch {
-	case rate >= 95:
-		return "🟢"
-	case rate >= 70:
-		return "🟡"
-	case rate >= 50:
-		return "🟠"
-	default:
-		return "🔴"
-	}
-}
-
-
-func formatValidatorRates(rates map[string]ValidatorRate) string {
-	if len(rates) == 0 {
-		return "  (no data)\n"
-	}
-	var sb strings.Builder
-	for addr, data := range rates {
-		moniker := data.Moniker
-		if moniker == "" {
-			moniker = "unknown"
-		}
-		emoji := validatorRateEmoji(data.Rate)
-		short := addr
-		if len(addr) > 10 {
-			short = addr[:10] + "..."
-		}
-		sb.WriteString(fmt.Sprintf("  %s %-12s (%s) %.1f%%\n", emoji, moniker, short, data.Rate))
-	}
-	return sb.String()
-}
 
 const reportSeparator = "---"
 
