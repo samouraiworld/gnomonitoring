@@ -1,7 +1,6 @@
 package gnovalidator
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -334,47 +333,19 @@ func fetchPrecommitBitmap(rpcClient *FallbackRPCClient, valSet []ValidatorInfo) 
 // in the rendered output. All queries run in parallel under a 5-second global timeout.
 // On any error the validator retains the safe defaults (KeepRunning=true, ServerType="").
 func enrichValidatorInfoFromValopers(rpcClient *FallbackRPCClient, vals []ValidatorInfo) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	var wg sync.WaitGroup
 	for i := range vals {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			// Safe default: KeepRunning = true, ServerType = ""
 			vals[idx].KeepRunning = true
 
-			addr := vals[idx].Address
-			query := []byte("gno.land/r/gnops/valopers:" + addr)
-
-			type result struct {
-				data string
-				err  error
-			}
-			ch := make(chan result, 1)
-			go func() {
-				resp, err := rpcClient.ABCIQuery("vm/qrender", query)
-				if err != nil {
-					ch <- result{err: err}
-					return
-				}
-				if resp == nil || resp.Response.Error != nil {
-					ch <- result{err: fmt.Errorf("abci error")}
-					return
-				}
-				ch <- result{data: string(resp.Response.Data)}
-			}()
-
-			select {
-			case <-ctx.Done():
+			query := []byte("gno.land/r/gnops/valopers:" + vals[idx].Address)
+			resp, err := rpcClient.ABCIQuery("vm/qrender", query)
+			if err != nil || resp == nil || resp.Response.Error != nil {
 				return
-			case r := <-ch:
-				if r.err != nil {
-					return
-				}
-				vals[idx].ServerType = parseValoperServerType(r.data)
 			}
+			vals[idx].ServerType = parseValoperServerType(string(resp.Response.Data))
 		}(i)
 	}
 	wg.Wait()
