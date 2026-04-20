@@ -527,6 +527,17 @@ func chainStatusEmoji(snap ChainHealthSnapshot) string {
 
 const reportSeparator = "---"
 
+func uptimeRateEmoji(rate float64) string {
+	switch {
+	case rate >= 95.0:
+		return "🟢"
+	case rate >= 80.0:
+		return "🟡"
+	default:
+		return "🔴"
+	}
+}
+
 func missedEmoji(missed int) string {
 	t := GetThresholds()
 	switch {
@@ -626,6 +637,13 @@ func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 
 	// Last known validator liveness section.
 	if len(snap.ValidatorSet) > 0 {
+		monikerMap := GetMonikerMap(chainID)
+
+		var totalPower int64
+		for _, vi := range snap.ValidatorSet {
+			totalPower += vi.VotingPower
+		}
+
 		sorted := make([]ValidatorInfo, len(snap.ValidatorSet))
 		copy(sorted, snap.ValidatorSet)
 		sort.Slice(sorted, func(i, j int) bool {
@@ -645,12 +663,26 @@ func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 				precommitMark = "✓"
 				statusEmoji = "🟢"
 			}
+			moniker := monikerMap[vi.Address]
+			if moniker == "" {
+				moniker = vi.Address
+				if len(moniker) > 10 {
+					moniker = moniker[:10] + "..."
+				}
+			}
 			addrShort := vi.Address
 			if len(addrShort) > 10 {
 				addrShort = addrShort[:10] + "..."
 			}
-			line := fmt.Sprintf("  %s %-14s (%s) precommit %s | power: %d",
-				statusEmoji, vi.Address, addrShort, precommitMark, vi.VotingPower)
+			var line string
+			if totalPower > 0 {
+				powerPct := float64(vi.VotingPower) / float64(totalPower) * 100
+				line = fmt.Sprintf("  %s %-14s (%s) precommit %s | %.1f%% power",
+					statusEmoji, moniker, addrShort, precommitMark, powerPct)
+			} else {
+				line = fmt.Sprintf("  %s %-14s (%s) precommit %s",
+					statusEmoji, moniker, addrShort, precommitMark)
+			}
 			if !vi.KeepRunning {
 				line += " ⚠️ intends to leave"
 			}
@@ -718,37 +750,120 @@ func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates m
 		sb.WriteString(fmt.Sprintf("Network: %d peers | Mempool: %d pending txs\n", snap.PeerCount, snap.MempoolTxCount))
 	}
 
-	// Validator set section.
-	if len(snap.ValidatorSet) > 0 {
-		sorted := make([]ValidatorInfo, len(snap.ValidatorSet))
-		copy(sorted, snap.ValidatorSet)
-		sort.Slice(sorted, func(i, j int) bool {
-			pi := snap.PrecommitBitmap[sorted[i].Address]
-			pj := snap.PrecommitBitmap[sorted[j].Address]
-			if pi != pj {
-				return pi
+	// Validator set section — participation rates from rates parameter (yesterday's data).
+	if len(rates) > 0 {
+		monikerMap := GetMonikerMap(chainID)
+
+		// Build a lookup from ValidatorSet for power and KeepRunning.
+		type valMeta struct {
+			VotingPower int64
+			KeepRunning bool
+			hasMeta     bool
+		}
+		valMetaMap := make(map[string]valMeta, len(snap.ValidatorSet))
+		var totalPower int64
+		for _, vi := range snap.ValidatorSet {
+			valMetaMap[vi.Address] = valMeta{
+				VotingPower: vi.VotingPower,
+				KeepRunning: vi.KeepRunning,
+				hasMeta:     true,
 			}
-			return sorted[i].Address < sorted[j].Address
+			totalPower += vi.VotingPower
+		}
+
+		type rateEntry struct {
+			addr    string
+			rate    float64
+			moniker string
+			meta    valMeta
+		}
+		entries := make([]rateEntry, 0, len(rates))
+		for addr, vr := range rates {
+			moniker := monikerMap[addr]
+			if moniker == "" {
+				moniker = vr.Moniker
+			}
+			if moniker == "" {
+				moniker = addr
+				if len(moniker) > 10 {
+					moniker = moniker[:10] + "..."
+				}
+			}
+			entries = append(entries, rateEntry{
+				addr:    addr,
+				rate:    vr.Rate,
+				moniker: moniker,
+				meta:    valMetaMap[addr],
+			})
+		}
+		// Sort ascending by rate (worst first), then address for stability.
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].rate != entries[j].rate {
+				return entries[i].rate < entries[j].rate
+			}
+			return entries[i].addr < entries[j].addr
 		})
-		sb.WriteString(fmt.Sprintf("Validator set (%d active):\n", len(sorted)))
-		for _, vi := range sorted {
-			precommit := snap.PrecommitBitmap[vi.Address]
-			precommitMark := "✗"
-			statusEmoji := "🔴"
-			if precommit {
-				precommitMark = "✓"
-				statusEmoji = "🟢"
+
+		headerPower := ""
+		if totalPower > 0 {
+			headerPower = fmt.Sprintf(" — total power: %d", totalPower)
+		}
+		sb.WriteString(fmt.Sprintf("Validator set (%d active%s):\n", len(entries), headerPower))
+
+		// Check if all validators are at 100%.
+		allPerfect := true
+		for _, e := range entries {
+			if e.rate < 100.0 {
+				allPerfect = false
+				break
 			}
-			addrShort := vi.Address
-			if len(addrShort) > 10 {
-				addrShort = addrShort[:10] + "..."
+		}
+		if allPerfect {
+			sb.WriteString(fmt.Sprintf("  All %d validators at 100%% uptime\n", len(entries)))
+		} else {
+			top := entries
+			var rest []rateEntry
+			if len(entries) > 5 {
+				top = entries[:5]
+				rest = entries[5:]
 			}
-			line := fmt.Sprintf("  %s %-14s (%s) precommit %s | power: %d",
-				statusEmoji, vi.Address, addrShort, precommitMark, vi.VotingPower)
-			if !vi.KeepRunning {
-				line += " ⚠️ intends to leave"
+			for _, e := range top {
+				uptimeEmoji := uptimeRateEmoji(e.rate)
+				addrShort := e.addr
+				if len(addrShort) > 10 {
+					addrShort = addrShort[:10] + "..."
+				}
+				var line string
+				if totalPower > 0 && e.meta.hasMeta {
+					powerPct := float64(e.meta.VotingPower) / float64(totalPower) * 100
+					line = fmt.Sprintf("  %s %-14s (%s) %.1f%% uptime | %.1f%% power",
+						uptimeEmoji, e.moniker, addrShort, e.rate, powerPct)
+				} else {
+					line = fmt.Sprintf("  %s %-14s (%s) %.1f%% uptime",
+						uptimeEmoji, e.moniker, addrShort, e.rate)
+				}
+				if e.meta.hasMeta && !e.meta.KeepRunning {
+					line += " ⚠️ intends to leave"
+				}
+				sb.WriteString(line + "\n")
 			}
-			sb.WriteString(line + "\n")
+			if len(rest) > 0 {
+				allRestPerfect := true
+				bestRest := 0.0
+				for _, e := range rest {
+					if e.rate < 100.0 {
+						allRestPerfect = false
+					}
+					if e.rate > bestRest {
+						bestRest = e.rate
+					}
+				}
+				if allRestPerfect {
+					sb.WriteString(fmt.Sprintf("  (%d others at 100%%)\n", len(rest)))
+				} else {
+					sb.WriteString(fmt.Sprintf("  (%d others, best: %.1f%%)\n", len(rest), bestRest))
+				}
+			}
 		}
 	}
 
