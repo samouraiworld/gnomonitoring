@@ -417,7 +417,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	if snap.RPCReachable {
 		monikerMap := GetMonikerMap(chainID)
 
-		ValidatorVotingPower.Reset()
+		ValidatorVotingPower.DeletePartialMatch(chainLabel)
 		for _, v := range snap.ValidatorSet {
 			moniker := monikerMap[v.Address]
 			ValidatorVotingPower.WithLabelValues(chainID, v.Address, moniker).Set(float64(v.VotingPower))
