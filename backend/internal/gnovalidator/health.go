@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -299,8 +300,8 @@ func fetchPrecommitBitmap(rpcClient *FallbackRPCClient, valSet []ValidatorInfo) 
 		}
 		var ps peerStateExposed
 		raw := []byte(peer.PeerState)
-		// Amino may encode PeerStateExposed as a quoted JSON string rather than
-		// a plain object. Unwrap the outer string layer if that is the case.
+		// Amino encodes PeerStateExposed as a JSON-quoted base64 string.
+		// Step 1: unwrap the outer JSON string layer → get the base64 bytes.
 		if len(raw) > 0 && raw[0] == '"' {
 			var inner string
 			if err := json.Unmarshal(raw, &inner); err != nil {
@@ -308,6 +309,18 @@ func fetchPrecommitBitmap(rpcClient *FallbackRPCClient, valSet []ValidatorInfo) 
 				continue
 			}
 			raw = []byte(inner)
+		}
+		// Step 2: if not a JSON object, try base64 decoding.
+		if len(raw) > 0 && raw[0] != '{' {
+			decoded, err := base64.StdEncoding.DecodeString(string(raw))
+			if err != nil {
+				decoded, err = base64.RawStdEncoding.DecodeString(string(raw))
+				if err != nil {
+					log.Printf("[health] DumpConsensusState: failed to base64 decode peer_state: %v", err)
+					continue
+				}
+			}
+			raw = decoded
 		}
 		if err := json.Unmarshal(raw, &ps); err != nil {
 			log.Printf("[health] DumpConsensusState: failed to decode peer_state: %v", err)
