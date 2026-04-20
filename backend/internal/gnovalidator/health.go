@@ -213,9 +213,9 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 
 	}
 
-	rates, minBlock, maxBlock, err := CalculateRecentValidatorStatus(db, chainID, GetThresholds().RecentBlocksWindow)
+	rates, minBlock, maxBlock, err := CalculateValidatorStatusLast24h(db, chainID)
 	if err != nil {
-		log.Printf("[health][%s] CalculateRecentValidatorStatus error: %v", chainID, err)
+		log.Printf("[health][%s] CalculateValidatorStatusLast24h error: %v", chainID, err)
 	}
 	snap.ValidatorRates = rates
 	snap.MinBlock = minBlock
@@ -474,6 +474,50 @@ func CalculateRecentValidatorStatus(db *gorm.DB, chainID string, lastNBlocks int
 	return rates, minBlock, maxBlock, nil
 }
 
+func CalculateValidatorStatusLast24h(db *gorm.DB, chainID string) (map[string]ValidatorRate, int64, int64, error) {
+	type row struct {
+		Addr              string
+		Moniker           string
+		TotalBlocks       int
+		ParticipatedCount int
+		FirstBlock        int64
+		LastBlock         int64
+	}
+	var rows []row
+	err := db.Raw(`
+		SELECT addr, MAX(moniker) AS moniker,
+			COUNT(*) AS total_blocks,
+			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_count,
+			MIN(block_height) AS first_block,
+			MAX(block_height) AS last_block
+		FROM daily_participations
+		WHERE chain_id = ?
+		  AND date >= datetime('now', '-24 hours')
+		GROUP BY addr
+	`, chainID).Scan(&rows).Error
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	rates := make(map[string]ValidatorRate, len(rows))
+	var minBlock, maxBlock int64
+	first := true
+	for _, r := range rows {
+		if r.TotalBlocks > 0 {
+			rate := float64(r.ParticipatedCount) / float64(r.TotalBlocks) * 100
+			rates[r.Addr] = ValidatorRate{Rate: rate, Moniker: r.Moniker}
+		}
+		if first || r.FirstBlock < minBlock {
+			minBlock = r.FirstBlock
+		}
+		if first || r.LastBlock > maxBlock {
+			maxBlock = r.LastBlock
+		}
+		first = false
+	}
+	return rates, minBlock, maxBlock, nil
+}
+
 func formatBlockAge(t time.Time) string {
 	if t.IsZero() {
 		return "unknown"
@@ -655,6 +699,18 @@ func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 			return sorted[i].Address < sorted[j].Address
 		})
 		sb.WriteString(fmt.Sprintf("Last known validator liveness (%d active):\n", len(sorted)))
+		{
+			hasOffline := false
+			for _, vi := range sorted {
+				if !snap.PrecommitBitmap[vi.Address] {
+					hasOffline = true
+					break
+				}
+			}
+			if len(sorted) > 5 || hasOffline {
+				sb.WriteString("  Top 5 worst performers (last 24h):\n")
+			}
+		}
 		for _, vi := range sorted {
 			precommit := snap.PrecommitBitmap[vi.Address]
 			precommitMark := "✗"
@@ -827,6 +883,7 @@ func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates m
 				top = entries[:5]
 				rest = entries[5:]
 			}
+			sb.WriteString("  Top 5 worst performers (last 24h):\n")
 			for _, e := range top {
 				uptimeEmoji := uptimeRateEmoji(e.rate)
 				addrShort := e.addr
