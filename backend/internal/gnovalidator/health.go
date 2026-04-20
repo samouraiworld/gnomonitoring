@@ -298,7 +298,18 @@ func fetchPrecommitBitmap(rpcClient *FallbackRPCClient, valSet []ValidatorInfo) 
 			continue
 		}
 		var ps peerStateExposed
-		if err := json.Unmarshal(peer.PeerState, &ps); err != nil {
+		raw := []byte(peer.PeerState)
+		// Amino may encode PeerStateExposed as a quoted JSON string rather than
+		// a plain object. Unwrap the outer string layer if that is the case.
+		if len(raw) > 0 && raw[0] == '"' {
+			var inner string
+			if err := json.Unmarshal(raw, &inner); err != nil {
+				log.Printf("[health] DumpConsensusState: failed to unwrap peer_state string: %v", err)
+				continue
+			}
+			raw = []byte(inner)
+		}
+		if err := json.Unmarshal(raw, &ps); err != nil {
 			log.Printf("[health] DumpConsensusState: failed to decode peer_state: %v", err)
 			continue
 		}
