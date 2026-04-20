@@ -32,6 +32,9 @@ type ChainHealthSnapshot struct {
 	LatestBlockTime   time.Time
 	ConsensusRound    int
 	RPCReachable      bool
+	PeerCount         int
+	MempoolTxCount    int
+	MempoolTotalBytes int64
 
 	// From in-memory flags
 	IsStuck    bool
@@ -156,6 +159,35 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 			changes := parseValsetChanges(string(resp.Response.Data))
 			mu.Lock()
 			snap.ValsetChanges = changes
+			mu.Unlock()
+		}()
+
+		// Goroutine 5: NetInfo → PeerCount
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := rpcClient.NetInfo()
+			if err != nil || result == nil {
+				log.Printf("[health][%s] NetInfo() error: %v", chainID, err)
+				return
+			}
+			mu.Lock()
+			snap.PeerCount = result.NPeers
+			mu.Unlock()
+		}()
+
+		// Goroutine 6: NumUnconfirmedTxs → MempoolTxCount, MempoolTotalBytes
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := rpcClient.NumUnconfirmedTxs()
+			if err != nil || result == nil {
+				log.Printf("[health][%s] NumUnconfirmedTxs() error: %v", chainID, err)
+				return
+			}
+			mu.Lock()
+			snap.MempoolTxCount = result.Count
+			snap.MempoolTotalBytes = result.TotalBytes
 			mu.Unlock()
 		}()
 
