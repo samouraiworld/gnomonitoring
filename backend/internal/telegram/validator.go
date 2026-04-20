@@ -2345,6 +2345,7 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 				top = entries[:5]
 				rest = entries[5:]
 			}
+			b.WriteString("  Top 5 worst performers (last 24h):\n")
 			for _, e := range top {
 				uptimeEmoji := telegramUptimeEmoji(e.rate)
 				addrShort := e.addr
