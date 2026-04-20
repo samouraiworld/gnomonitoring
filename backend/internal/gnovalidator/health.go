@@ -387,31 +387,36 @@ func parseValoperServerType(render string) string {
 	return ""
 }
 
-// parseValsetChanges parses the markdown table returned by r/sys/validators/v2 render.
-// Each data row has the format: | blockNum | address | power |
-// Header and separator lines are skipped. Malformed rows are skipped silently.
+// parseValsetChanges parses the bullet-list emitted by r/sys/validators/v2 Render.
+// Each entry has the format: "- #<blockNum>: <address> (<power>)"
+// Malformed lines are skipped silently.
 func parseValsetChanges(markdown string) []ValsetChange {
 	var changes []ValsetChange
 	for _, line := range strings.Split(markdown, "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
+		if !strings.HasPrefix(line, "- #") {
 			continue
 		}
-		// Strip leading/trailing pipes then split
-		inner := strings.TrimPrefix(strings.TrimSuffix(line, "|"), "|")
-		cols := strings.Split(inner, "|")
-		if len(cols) != 3 {
+		// Strip leading "- #"
+		line = strings.TrimPrefix(line, "- #")
+		// Split on ": " to get blockNum and the rest
+		colonIdx := strings.Index(line, ": ")
+		if colonIdx < 0 {
 			continue
 		}
-		blockStr := strings.TrimSpace(cols[0])
-		addrStr := strings.TrimSpace(cols[1])
-		powerStr := strings.TrimSpace(cols[2])
-
-		// Skip header/separator rows: must be numeric block, non-empty address, numeric power
-		blockNum, err := strconv.ParseInt(blockStr, 10, 64)
+		blockNum, err := strconv.ParseInt(line[:colonIdx], 10, 64)
 		if err != nil {
 			continue
 		}
+		rest := line[colonIdx+2:] // "<address> (<power>)"
+		// Extract power from trailing " (<power>)"
+		parenOpen := strings.LastIndex(rest, " (")
+		parenClose := strings.LastIndex(rest, ")")
+		if parenOpen < 0 || parenClose <= parenOpen {
+			continue
+		}
+		addrStr := strings.TrimSpace(rest[:parenOpen])
+		powerStr := rest[parenOpen+2 : parenClose]
 		power, err := strconv.ParseInt(powerStr, 10, 64)
 		if err != nil {
 			continue
