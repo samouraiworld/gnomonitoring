@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
@@ -990,6 +991,94 @@ func GetAddrMonikerHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) 
 	json.NewEncoder(w).Encode(map[string]string{"addr": addr, "moniker": moniker})
 }
 
+// =========================== Chain Health Snapshot ==============================
+
+type chainHealthValidatorJSON struct {
+	Address     string `json:"address"`
+	VotingPower int64  `json:"voting_power"`
+	KeepRunning bool   `json:"keep_running"`
+	ServerType  string `json:"server_type"`
+}
+
+type chainHealthValsetChangeJSON struct {
+	BlockNum int64  `json:"block_num"`
+	Address  string `json:"address"`
+	NewPower int64  `json:"new_power"`
+}
+
+type chainHealthResponse struct {
+	RPCReachable      bool                          `json:"rpc_reachable"`
+	IsStuck           bool                          `json:"is_stuck"`
+	IsDisabled        bool                          `json:"is_disabled"`
+	LatestBlockHeight int64                         `json:"latest_block_height"`
+	LatestBlockTime   string                        `json:"latest_block_time,omitempty"`
+	ConsensusRound    int                           `json:"consensus_round"`
+	PeerCount         int                           `json:"peer_count"`
+	MempoolTxCount    int                           `json:"mempool_tx_count"`
+	MempoolTotalBytes int64                         `json:"mempool_total_bytes"`
+	ValidatorSet      []chainHealthValidatorJSON     `json:"validator_set,omitempty"`
+	ValsetChanges     []chainHealthValsetChangeJSON  `json:"valset_changes,omitempty"`
+	PrecommitBitmap   map[string]bool               `json:"precommit_bitmap,omitempty"`
+}
+
+func GetChainHealth(w http.ResponseWriter, r *http.Request, db *gorm.DB, chainID string) {
+	EnableCORS(w, r)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := internal.Config.ValidateChainID(chainID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	snap := gnovalidator.FetchChainHealthSnapshot(db, chainID)
+
+	resp := chainHealthResponse{
+		RPCReachable:      snap.RPCReachable,
+		IsStuck:           snap.IsStuck,
+		IsDisabled:        snap.IsDisabled,
+		LatestBlockHeight: snap.LatestBlockHeight,
+		ConsensusRound:    snap.ConsensusRound,
+		PeerCount:         snap.PeerCount,
+		MempoolTxCount:    snap.MempoolTxCount,
+		MempoolTotalBytes: snap.MempoolTotalBytes,
+		PrecommitBitmap:   snap.PrecommitBitmap,
+	}
+	if !snap.LatestBlockTime.IsZero() {
+		resp.LatestBlockTime = snap.LatestBlockTime.UTC().Format(time.RFC3339)
+	}
+	if len(snap.ValidatorSet) > 0 {
+		vs := make([]chainHealthValidatorJSON, 0, len(snap.ValidatorSet))
+		for _, vi := range snap.ValidatorSet {
+			vs = append(vs, chainHealthValidatorJSON{
+				Address:     vi.Address,
+				VotingPower: vi.VotingPower,
+				KeepRunning: vi.KeepRunning,
+				ServerType:  vi.ServerType,
+			})
+		}
+		resp.ValidatorSet = vs
+	}
+	if len(snap.ValsetChanges) > 0 {
+		vc := make([]chainHealthValsetChangeJSON, 0, len(snap.ValsetChanges))
+		for _, c := range snap.ValsetChanges {
+			vc = append(vc, chainHealthValsetChangeJSON{
+				BlockNum: c.BlockNum,
+				Address:  c.Address,
+				NewPower: c.NewPower,
+			})
+		}
+		resp.ValsetChanges = vc
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 // ======================CORS=============================================
 func EnableCORS(w http.ResponseWriter, r ...*http.Request) {
 	origin := ""
@@ -1268,6 +1357,24 @@ func StartWebhookAPI(db *gorm.DB) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// /api/chain/<chainID>/health
+	mux.HandleFunc("/api/chain/", func(w http.ResponseWriter, r *http.Request) {
+		// Expected path: /api/chain/<chainID>/health
+		// Strip the prefix "/api/chain/" to get "<chainID>/health"
+		rest := strings.TrimPrefix(r.URL.Path, "/api/chain/")
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) != 2 || parts[1] != "health" {
+			http.NotFound(w, r)
+			return
+		}
+		chainID := parts[0]
+		if chainID == "" {
+			http.Error(w, "Missing chain ID", http.StatusBadRequest)
+			return
+		}
+		GetChainHealth(w, r, db, chainID)
 	})
 
 	// Starting the HTTP server -
