@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -18,6 +19,8 @@ import (
 type ValidatorInfo struct {
 	Address     string
 	VotingPower int64
+	KeepRunning bool   // default true if realm not found
+	ServerType  string // "cloud", "on-prem", "data-center", or ""
 }
 
 type ValsetChange struct {
@@ -203,6 +206,11 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 			snap.PrecommitBitmap = fetchPrecommitBitmap(rpcClient, snap.ValidatorSet)
 		}
 
+		// Phase 3: Enrich ValidatorSet with valopers realm data (KeepRunning, ServerType).
+		if len(snap.ValidatorSet) > 0 {
+			enrichValidatorInfoFromValopers(rpcClient, snap.ValidatorSet)
+		}
+
 	}
 
 	rates, minBlock, maxBlock, err := CalculateRecentValidatorStatus(db, chainID, GetThresholds().RecentBlocksWindow)
@@ -316,6 +324,84 @@ func fetchPrecommitBitmap(rpcClient *FallbackRPCClient, valSet []ValidatorInfo) 
 		bitmap[vi.Address] = setBits[i]
 	}
 	return bitmap
+}
+
+// enrichValidatorInfoFromValopers queries the valopers realm for each validator in-place.
+// For each validator, it calls ABCIQuery with path vm/qrender and data
+// "gno.land/r/gnops/valopers:<address>", then parses the render output to extract
+// ServerType. KeepRunning is always set to true because the realm does not expose it
+// in the rendered output. All queries run in parallel under a 5-second global timeout.
+// On any error the validator retains the safe defaults (KeepRunning=true, ServerType="").
+func enrichValidatorInfoFromValopers(rpcClient *FallbackRPCClient, vals []ValidatorInfo) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for i := range vals {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			// Safe default: KeepRunning = true, ServerType = ""
+			vals[idx].KeepRunning = true
+
+			addr := vals[idx].Address
+			query := []byte("gno.land/r/gnops/valopers:" + addr)
+
+			type result struct {
+				data string
+				err  error
+			}
+			ch := make(chan result, 1)
+			go func() {
+				resp, err := rpcClient.ABCIQuery("vm/qrender", query)
+				if err != nil {
+					ch <- result{err: err}
+					return
+				}
+				if resp == nil || resp.Response.Error != nil {
+					ch <- result{err: fmt.Errorf("abci error")}
+					return
+				}
+				ch <- result{data: string(resp.Response.Data)}
+			}()
+
+			select {
+			case <-ctx.Done():
+				return
+			case r := <-ch:
+				if r.err != nil {
+					return
+				}
+				vals[idx].ServerType = parseValoperServerType(r.data)
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+// parseValoperServerType extracts the "Server Type" field from the valopers realm
+// render output for a single validator address. The expected format is:
+//
+//	Valoper's details:
+//	## <Moniker>
+//	<Description>
+//
+//	- Address: <addr>
+//	- PubKey: <pubkey>
+//	- Server Type: <serverType>
+//
+//	[Profile link](...)
+//
+// Returns "" if the field is not found.
+func parseValoperServerType(render string) string {
+	const prefix = "- Server Type: "
+	for _, line := range strings.Split(render, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+		}
+	}
+	return ""
 }
 
 // parseValsetChanges parses the markdown table returned by r/sys/validators/v2 render.
