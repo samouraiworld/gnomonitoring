@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"log"
@@ -46,8 +47,9 @@ type ChainHealthSnapshot struct {
 	// Populated by FetchChainHealthSnapshot for use in daily reports.
 	MissedLast24h []database.MissedBlockCount
 
-	ValidatorSet  []ValidatorInfo
-	ValsetChanges []ValsetChange
+	ValidatorSet     []ValidatorInfo
+	ValsetChanges    []ValsetChange
+	PrecommitBitmap  map[string]bool // validator address → is precommitting in current round
 }
 
 func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
@@ -163,6 +165,12 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 			snap.RPCReachable = false
 		}
 
+		// Phase 2: DumpConsensusState — requires ValidatorSet from Phase 1.
+		// Run synchronously after the WaitGroup so no mutex is needed.
+		if len(snap.ValidatorSet) > 0 {
+			snap.PrecommitBitmap = fetchPrecommitBitmap(rpcClient, snap.ValidatorSet)
+		}
+
 	}
 
 	rates, minBlock, maxBlock, err := CalculateRecentValidatorStatus(db, chainID, GetThresholds().RecentBlocksWindow)
@@ -182,6 +190,100 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 	}
 
 	return snap
+}
+
+// peerStateExposed mirrors the JSON structure emitted by consensus.PeerStateExposed.
+type peerStateExposed struct {
+	RoundState struct {
+		Precommits *bitArrayJSON `json:"precommits"`
+	} `json:"round_state"`
+}
+
+// bitArrayJSON mirrors bitarray.BitArray for JSON decoding.
+type bitArrayJSON struct {
+	Bits  int      `json:"bits"`
+	Elems []uint64 `json:"elems"`
+}
+
+// bitsSet returns the set of bit indices that are 1 in the BitArray.
+func (b *bitArrayJSON) bitsSet() map[int]bool {
+	out := make(map[int]bool)
+	if b == nil {
+		return out
+	}
+	for i, elem := range b.Elems {
+		for j := 0; j < 64; j++ {
+			globalIdx := i*64 + j
+			if globalIdx >= b.Bits {
+				return out
+			}
+			if elem&(uint64(1)<<uint(j)) != 0 {
+				out[globalIdx] = true
+			}
+		}
+	}
+	return out
+}
+
+// orInto ORs the bits from src into dst (growing dst as needed).
+func orInto(dst []uint64, src []uint64) []uint64 {
+	if len(src) > len(dst) {
+		dst = append(dst, make([]uint64, len(src)-len(dst))...)
+	}
+	for i, v := range src {
+		dst[i] |= v
+	}
+	return dst
+}
+
+// fetchPrecommitBitmap calls DumpConsensusState and aggregates the precommit
+// BitArrays from all peers into a map[validatorAddress]bool.
+// Returns nil on any non-fatal failure.
+func fetchPrecommitBitmap(rpcClient *FallbackRPCClient, valSet []ValidatorInfo) map[string]bool {
+	result, err := rpcClient.DumpConsensusState()
+	if err != nil || result == nil {
+		log.Printf("[health] DumpConsensusState error: %v", err)
+		return nil
+	}
+	if len(result.Peers) == 0 {
+		return nil
+	}
+
+	// Aggregate precommit bitmasks across all peers via bitwise OR.
+	var aggregatedElems []uint64
+	aggregatedBits := 0
+
+	for _, peer := range result.Peers {
+		if peer.PeerState == nil {
+			continue
+		}
+		var ps peerStateExposed
+		if err := json.Unmarshal(peer.PeerState, &ps); err != nil {
+			log.Printf("[health] DumpConsensusState: failed to decode peer_state: %v", err)
+			continue
+		}
+		pc := ps.RoundState.Precommits
+		if pc == nil || pc.Bits == 0 {
+			continue
+		}
+		if pc.Bits > aggregatedBits {
+			aggregatedBits = pc.Bits
+		}
+		aggregatedElems = orInto(aggregatedElems, pc.Elems)
+	}
+
+	if aggregatedBits == 0 {
+		return nil
+	}
+
+	aggregated := &bitArrayJSON{Bits: aggregatedBits, Elems: aggregatedElems}
+	setBits := aggregated.bitsSet()
+
+	bitmap := make(map[string]bool, len(valSet))
+	for i, vi := range valSet {
+		bitmap[vi.Address] = setBits[i]
+	}
+	return bitmap
 }
 
 // parseValsetChanges parses the markdown table returned by r/sys/validators/v2 render.
