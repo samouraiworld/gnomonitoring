@@ -775,10 +775,16 @@ func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 		}
 	}
 
-	// Valset changes section.
-	if len(snap.ValsetChanges) > 0 {
-		sb.WriteString(fmt.Sprintf("Valset changes (last %d):\n", len(snap.ValsetChanges)))
-		for _, vc := range snap.ValsetChanges {
+	// Valset changes section — only show changes within the last 24h window.
+	var recentChanges []ValsetChange
+	for _, vc := range snap.ValsetChanges {
+		if vc.BlockNum >= snap.MinBlock {
+			recentChanges = append(recentChanges, vc)
+		}
+	}
+	if len(recentChanges) > 0 {
+		sb.WriteString(fmt.Sprintf("Valset changes (last 24h, %d):\n", len(recentChanges)))
+		for _, vc := range recentChanges {
 			if vc.NewPower == 0 {
 				sb.WriteString(fmt.Sprintf("  Block #%d — %s removed\n", vc.BlockNum, vc.Address))
 			} else {
@@ -928,10 +934,16 @@ func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates m
 		}
 	}
 
-	// Valset changes section.
-	if len(snap.ValsetChanges) > 0 {
-		sb.WriteString(fmt.Sprintf("Valset changes (last %d):\n", len(snap.ValsetChanges)))
-		for _, vc := range snap.ValsetChanges {
+	// Valset changes section — only show changes within the last 24h window.
+	var recentChanges []ValsetChange
+	for _, vc := range snap.ValsetChanges {
+		if vc.BlockNum >= snap.MinBlock {
+			recentChanges = append(recentChanges, vc)
+		}
+	}
+	if len(recentChanges) > 0 {
+		sb.WriteString(fmt.Sprintf("Valset changes (last 24h, %d):\n", len(recentChanges)))
+		for _, vc := range recentChanges {
 			if vc.NewPower == 0 {
 				sb.WriteString(fmt.Sprintf("  Block #%d — %s removed\n", vc.BlockNum, vc.Address))
 			} else {
