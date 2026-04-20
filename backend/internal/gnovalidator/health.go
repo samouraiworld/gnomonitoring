@@ -14,6 +14,17 @@ import (
 	"gorm.io/gorm"
 )
 
+type ValidatorInfo struct {
+	Address     string
+	VotingPower int64
+}
+
+type ValsetChange struct {
+	BlockNum int64
+	Address  string
+	NewPower int64
+}
+
 type ChainHealthSnapshot struct {
 	// From RPC (zero values if RPCReachable == false)
 	LatestBlockHeight int64
@@ -34,6 +45,9 @@ type ChainHealthSnapshot struct {
 	// Missed blocks per validator in the last 24 hours.
 	// Populated by FetchChainHealthSnapshot for use in daily reports.
 	MissedLast24h []database.MissedBlockCount
+
+	ValidatorSet  []ValidatorInfo
+	ValsetChanges []ValsetChange
 }
 
 func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
@@ -95,6 +109,54 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 			mu.Unlock()
 		}()
 
+		// Goroutine 3: Validators RPC → ValidatorSet
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := rpcClient.Validators(nil)
+			if err != nil || result == nil {
+				log.Printf("[health][%s] Validators() error: %v", chainID, err)
+				return
+			}
+			infos := make([]ValidatorInfo, 0, len(result.Validators))
+			for _, v := range result.Validators {
+				if v == nil {
+					continue
+				}
+				infos = append(infos, ValidatorInfo{
+					Address:     v.Address.String(),
+					VotingPower: v.VotingPower,
+				})
+			}
+			mu.Lock()
+			snap.ValidatorSet = infos
+			mu.Unlock()
+		}()
+
+		// Goroutine 4: ABCIQuery vm/qrender r/sys/validators/v2 → ValsetChanges
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := rpcClient.ABCIQuery("vm/qrender", []byte("gno.land/r/sys/validators/v2:"))
+			if err != nil {
+				log.Printf("[health][%s] ABCIQuery valset changes error: %v", chainID, err)
+				return
+			}
+			if resp == nil || resp.Response.Error != nil {
+				log.Printf("[health][%s] ABCIQuery valset changes response error: %v", chainID, func() interface{} {
+					if resp != nil {
+						return resp.Response.Error
+					}
+					return "nil response"
+				}())
+				return
+			}
+			changes := parseValsetChanges(string(resp.Response.Data))
+			mu.Lock()
+			snap.ValsetChanges = changes
+			mu.Unlock()
+		}()
+
 		wg.Wait()
 
 		if rpcFailed {
@@ -120,6 +182,47 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 	}
 
 	return snap
+}
+
+// parseValsetChanges parses the markdown table returned by r/sys/validators/v2 render.
+// Each data row has the format: | blockNum | address | power |
+// Header and separator lines are skipped. Malformed rows are skipped silently.
+func parseValsetChanges(markdown string) []ValsetChange {
+	var changes []ValsetChange
+	for _, line := range strings.Split(markdown, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
+			continue
+		}
+		// Strip leading/trailing pipes then split
+		inner := strings.TrimPrefix(strings.TrimSuffix(line, "|"), "|")
+		cols := strings.Split(inner, "|")
+		if len(cols) != 3 {
+			continue
+		}
+		blockStr := strings.TrimSpace(cols[0])
+		addrStr := strings.TrimSpace(cols[1])
+		powerStr := strings.TrimSpace(cols[2])
+
+		// Skip header/separator rows: must be numeric block, non-empty address, numeric power
+		blockNum, err := strconv.ParseInt(blockStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		power, err := strconv.ParseInt(powerStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		if addrStr == "" {
+			continue
+		}
+		changes = append(changes, ValsetChange{
+			BlockNum: blockNum,
+			Address:  addrStr,
+			NewPower: power,
+		})
+	}
+	return changes
 }
 
 // parseConsensusRound parses the "height/round/step" string and returns the round number.
