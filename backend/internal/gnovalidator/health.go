@@ -241,16 +241,39 @@ type peerStateExposed struct {
 }
 
 // bitArrayJSON mirrors bitarray.BitArray for JSON decoding.
-// Amino serializes int fields as JSON strings, so Bits uses json.Number
-// to accept both "7" and 7.
+// Amino encodes both int and uint64 fields as JSON strings, so we use a
+// custom UnmarshalJSON that accepts "7" and 7 for Bits, and ["121"] and [121] for Elems.
 type bitArrayJSON struct {
-	Bits  json.Number `json:"bits"`
-	Elems []uint64    `json:"elems"`
+	Bits  int
+	Elems []uint64
+}
+
+func (b *bitArrayJSON) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Bits  json.Number   `json:"bits"`
+		Elems []json.Number `json:"elems"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	n, err := raw.Bits.Int64()
+	if err != nil {
+		return err
+	}
+	b.Bits = int(n)
+	b.Elems = make([]uint64, len(raw.Elems))
+	for i, e := range raw.Elems {
+		v, err := strconv.ParseUint(e.String(), 10, 64)
+		if err != nil {
+			return err
+		}
+		b.Elems[i] = v
+	}
+	return nil
 }
 
 func (b *bitArrayJSON) bitsInt() int {
-	n, _ := b.Bits.Int64()
-	return int(n)
+	return b.Bits
 }
 
 // bitsSet returns the set of bit indices that are 1 in the BitArray.
@@ -347,7 +370,7 @@ func fetchPrecommitBitmap(rpcClient *FallbackRPCClient, valSet []ValidatorInfo) 
 		return nil
 	}
 
-	aggregated := &bitArrayJSON{Bits: json.Number(strconv.Itoa(aggregatedBits)), Elems: aggregatedElems}
+	aggregated := &bitArrayJSON{Bits: aggregatedBits, Elems: aggregatedElems}
 	setBits := aggregated.bitsSet()
 
 	bitmap := make(map[string]bool, len(valSet))
