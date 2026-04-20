@@ -2275,42 +2275,119 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 		b.WriteString(fmt.Sprintf("Network: %d peers | Mempool: %d pending txs\n", snap.PeerCount, snap.MempoolTxCount))
 	}
 
-	// Validator set section.
-	if len(snap.ValidatorSet) > 0 {
-		sorted := make([]ValidatorInfo, len(snap.ValidatorSet))
-		copy(sorted, snap.ValidatorSet)
-		sort.Slice(sorted, func(i, j int) bool {
-			pi := snap.PrecommitBitmap[sorted[i].Address]
-			pj := snap.PrecommitBitmap[sorted[j].Address]
-			if pi != pj {
-				return pi // precommitting first
+	// Validator set section — participation rates from snap.ValidatorRates (recent 100-block data).
+	if len(snap.ValidatorRates) > 0 {
+		// Build power lookup from ValidatorSet.
+		type valMeta struct {
+			VotingPower int64
+			KeepRunning bool
+			hasMeta     bool
+		}
+		valMetaMap := make(map[string]valMeta, len(snap.ValidatorSet))
+		var totalPower int64
+		for _, vi := range snap.ValidatorSet {
+			valMetaMap[vi.Address] = valMeta{
+				VotingPower: vi.VotingPower,
+				KeepRunning: vi.KeepRunning,
+				hasMeta:     true,
 			}
-			return sorted[i].Address < sorted[j].Address
+			totalPower += vi.VotingPower
+		}
+
+		type rateEntry struct {
+			addr    string
+			rate    float64
+			moniker string
+			meta    valMeta
+		}
+		entries := make([]rateEntry, 0, len(snap.ValidatorRates))
+		for addr, vr := range snap.ValidatorRates {
+			moniker := vr.Moniker
+			if moniker == "" {
+				moniker = addr
+				if len(moniker) > 10 {
+					moniker = moniker[:10] + "..."
+				}
+			}
+			entries = append(entries, rateEntry{
+				addr:    addr,
+				rate:    vr.Rate,
+				moniker: moniker,
+				meta:    valMetaMap[addr],
+			})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].rate != entries[j].rate {
+				return entries[i].rate < entries[j].rate
+			}
+			return entries[i].addr < entries[j].addr
 		})
-		b.WriteString(fmt.Sprintf("Validator set (%d active):\n", len(sorted)))
-		for _, vi := range sorted {
-			precommit := snap.PrecommitBitmap[vi.Address]
-			precommitMark := "✗"
-			statusEmoji := "🔴"
-			if precommit {
-				precommitMark = "✓"
-				statusEmoji = "🟢"
+
+		headerPower := ""
+		if totalPower > 0 {
+			headerPower = fmt.Sprintf(" — total power: %d", totalPower)
+		}
+		b.WriteString(fmt.Sprintf("Validator set (%d active%s):\n", len(entries), headerPower))
+
+		allPerfect := true
+		for _, e := range entries {
+			if e.rate < 100.0 {
+				allPerfect = false
+				break
 			}
-			addrShort := vi.Address
-			if len(addrShort) > 10 {
-				addrShort = addrShort[:10] + "..."
+		}
+		if allPerfect {
+			b.WriteString(fmt.Sprintf("  All %d validators at 100%% uptime\n", len(entries)))
+		} else {
+			top := entries
+			var rest []rateEntry
+			if len(entries) > 5 {
+				top = entries[:5]
+				rest = entries[5:]
 			}
-			line := fmt.Sprintf("  %s <b>%-14s</b> (<code>%s</code>) precommit %s | power: %d",
-				statusEmoji,
-				html.EscapeString(vi.Address), // moniker not available in ValidatorInfo; use address
-				html.EscapeString(addrShort),
-				precommitMark,
-				vi.VotingPower,
-			)
-			if !vi.KeepRunning {
-				line += " ⚠️ intends to leave"
+			for _, e := range top {
+				uptimeEmoji := telegramUptimeEmoji(e.rate)
+				addrShort := e.addr
+				if len(addrShort) > 10 {
+					addrShort = addrShort[:10] + "..."
+				}
+				var line string
+				if totalPower > 0 && e.meta.hasMeta {
+					powerPct := float64(e.meta.VotingPower) / float64(totalPower) * 100
+					line = fmt.Sprintf("  %s <b>%s</b> (<code>%s</code>) %.1f%% uptime | %.1f%% power",
+						uptimeEmoji,
+						html.EscapeString(e.moniker),
+						html.EscapeString(addrShort),
+						e.rate, powerPct)
+				} else {
+					line = fmt.Sprintf("  %s <b>%s</b> (<code>%s</code>) %.1f%% uptime",
+						uptimeEmoji,
+						html.EscapeString(e.moniker),
+						html.EscapeString(addrShort),
+						e.rate)
+				}
+				if e.meta.hasMeta && !e.meta.KeepRunning {
+					line += " ⚠️ intends to leave"
+				}
+				b.WriteString(line + "\n")
 			}
-			b.WriteString(line + "\n")
+			if len(rest) > 0 {
+				allRestPerfect := true
+				bestRest := 0.0
+				for _, e := range rest {
+					if e.rate < 100.0 {
+						allRestPerfect = false
+					}
+					if e.rate > bestRest {
+						bestRest = e.rate
+					}
+				}
+				if allRestPerfect {
+					b.WriteString(fmt.Sprintf("  (%d others at 100%%)\n", len(rest)))
+				} else {
+					b.WriteString(fmt.Sprintf("  (%d others, best: %.1f%%)\n", len(rest), bestRest))
+				}
+			}
 		}
 	}
 
@@ -2357,6 +2434,18 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 	}
 
 	return b.String()
+}
+
+// telegramUptimeEmoji returns the uptime status emoji for Telegram HTML messages.
+func telegramUptimeEmoji(rate float64) string {
+	switch {
+	case rate >= 95.0:
+		return "🟢"
+	case rate >= 80.0:
+		return "🟡"
+	default:
+		return "🔴"
+	}
 }
 
 // consensusRoundLabel returns a human-readable label for a consensus round number.
