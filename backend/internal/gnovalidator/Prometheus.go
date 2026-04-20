@@ -142,6 +142,39 @@ var (
 		[]string{"chain", "level"},
 	)
 
+	// Phase 4: RPC-enriched metrics
+	ValidatorVotingPower = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "gnoland_validator_voting_power",
+			Help: "Current voting power of each validator",
+		},
+		[]string{"chain", "validator_address", "moniker"},
+	)
+
+	ChainPeerCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "gnoland_chain_peer_count",
+			Help: "Number of connected peers",
+		},
+		[]string{"chain"},
+	)
+
+	ChainMempoolTxCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "gnoland_chain_mempool_tx_count",
+			Help: "Pending transactions in mempool",
+		},
+		[]string{"chain"},
+	)
+
+	ChainValsetSize = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "gnoland_chain_valset_size",
+			Help: "Number of active validators in current set",
+		},
+		[]string{"chain"},
+	)
+
 	initOnce sync.Once
 )
 
@@ -163,6 +196,11 @@ func Init() {
 		// Phase 3: Alert metrics
 		prometheus.MustRegister(ActiveAlerts)
 		prometheus.MustRegister(AlertsTotal)
+		// Phase 4: RPC-enriched metrics
+		prometheus.MustRegister(ValidatorVotingPower)
+		prometheus.MustRegister(ChainPeerCount)
+		prometheus.MustRegister(ChainMempoolTxCount)
+		prometheus.MustRegister(ChainValsetSize)
 	})
 }
 
@@ -372,6 +410,24 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 			continue
 		}
 		AlertsTotal.WithLabelValues(chainID, level).Set(float64(totalCount))
+	}
+
+	// Phase 4: RPC-enriched metrics (voting power, peer count, mempool, valset size)
+	snap := FetchChainHealthSnapshot(db, chainID)
+	if snap.RPCReachable {
+		monikerMap := GetMonikerMap(chainID)
+
+		ValidatorVotingPower.DeletePartialMatch(chainLabel)
+		for _, v := range snap.ValidatorSet {
+			moniker := monikerMap[v.Address]
+			ValidatorVotingPower.WithLabelValues(chainID, v.Address, moniker).Set(float64(v.VotingPower))
+		}
+
+		ChainPeerCount.WithLabelValues(chainID).Set(float64(snap.PeerCount))
+		ChainMempoolTxCount.WithLabelValues(chainID).Set(float64(snap.MempoolTxCount))
+		ChainValsetSize.WithLabelValues(chainID).Set(float64(len(snap.ValidatorSet)))
+	} else {
+		log.Printf("[metrics][%s] RPC unreachable, skipping Phase 4 metrics", chainID)
 	}
 
 	log.Printf("[metrics][%s] update complete", chainID)

@@ -72,7 +72,7 @@ func main() {
 	telegram.SetChainHealthFetcher(
 		func(chainID string) telegram.ChainHealthSnapshot {
 			snap := gnovalidator.FetchChainHealthSnapshot(db, chainID)
-			return telegram.ChainHealthSnapshot{
+			tgSnap := telegram.ChainHealthSnapshot{
 				LatestBlockHeight: snap.LatestBlockHeight,
 				LatestBlockTime:   snap.LatestBlockTime,
 				ConsensusRound:    snap.ConsensusRound,
@@ -83,7 +83,29 @@ func main() {
 				MinBlock:          snap.MinBlock,
 				MaxBlock:          snap.MaxBlock,
 				MissedLast24h:     snap.MissedLast24h,
+				PeerCount:         snap.PeerCount,
+				MempoolTxCount:    snap.MempoolTxCount,
+				MempoolTotalBytes: snap.MempoolTotalBytes,
 			}
+			if snap.PrecommitBitmap != nil {
+				tgSnap.PrecommitBitmap = snap.PrecommitBitmap
+			}
+			for _, vi := range snap.ValidatorSet {
+				tgSnap.ValidatorSet = append(tgSnap.ValidatorSet, telegram.ValidatorInfo{
+					Address:     vi.Address,
+					VotingPower: vi.VotingPower,
+					KeepRunning: vi.KeepRunning,
+					ServerType:  vi.ServerType,
+				})
+			}
+			for _, vc := range snap.ValsetChanges {
+				tgSnap.ValsetChanges = append(tgSnap.ValsetChanges, telegram.ValsetChange{
+					BlockNum: vc.BlockNum,
+					Address:  vc.Address,
+					NewPower: vc.NewPower,
+				})
+			}
+			return tgSnap
 		},
 		func(chainID string, snap telegram.ChainHealthSnapshot) string {
 			return gnovalidator.FormatDisabledReport(chainID, gnovalidator.ChainHealthSnapshot{
@@ -93,13 +115,33 @@ func main() {
 			})
 		},
 		func(chainID string, snap telegram.ChainHealthSnapshot) string {
-			return gnovalidator.FormatStuckReport(chainID, gnovalidator.ChainHealthSnapshot{
+			gnSnap := gnovalidator.ChainHealthSnapshot{
 				LatestBlockHeight: snap.LatestBlockHeight,
 				LatestBlockTime:   snap.LatestBlockTime,
 				ConsensusRound:    snap.ConsensusRound,
 				IsStuck:           snap.IsStuck,
 				MissedLast24h:     snap.MissedLast24h,
-			})
+				PeerCount:         snap.PeerCount,
+				MempoolTxCount:    snap.MempoolTxCount,
+				MempoolTotalBytes: snap.MempoolTotalBytes,
+				PrecommitBitmap:   snap.PrecommitBitmap,
+			}
+			for _, vi := range snap.ValidatorSet {
+				gnSnap.ValidatorSet = append(gnSnap.ValidatorSet, gnovalidator.ValidatorInfo{
+					Address:     vi.Address,
+					VotingPower: vi.VotingPower,
+					KeepRunning: vi.KeepRunning,
+					ServerType:  vi.ServerType,
+				})
+			}
+			for _, vc := range snap.ValsetChanges {
+				gnSnap.ValsetChanges = append(gnSnap.ValsetChanges, gnovalidator.ValsetChange{
+					BlockNum: vc.BlockNum,
+					Address:  vc.Address,
+					NewPower: vc.NewPower,
+				})
+			}
+			return gnovalidator.FormatStuckReport(chainID, gnSnap)
 		},
 	)
 	telegram.MissedBlocksFormatter = gnovalidator.FormatMissedBlocksLast24hHTML
