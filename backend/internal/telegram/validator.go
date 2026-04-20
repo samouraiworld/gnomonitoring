@@ -2392,31 +2392,6 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 		}
 	}
 
-	// Infrastructure line.
-	if len(snap.ValidatorSet) > 0 {
-		typeCounts := map[string]int{}
-		hasType := false
-		for _, vi := range snap.ValidatorSet {
-			if vi.ServerType != "" {
-				typeCounts[vi.ServerType]++
-				hasType = true
-			}
-		}
-		if hasType {
-			var parts []string
-			for _, t := range []string{"cloud", "on-prem", "data-center"} {
-				if c, ok := typeCounts[t]; ok {
-					parts = append(parts, fmt.Sprintf("%d %s", c, t))
-					delete(typeCounts, t)
-				}
-			}
-			for t, c := range typeCounts {
-				parts = append(parts, fmt.Sprintf("%d %s", c, t))
-			}
-			b.WriteString("Infrastructure: " + strings.Join(parts, ", ") + "\n")
-		}
-	}
-
 	// Valset changes section.
 	if len(snap.ValsetChanges) > 0 {
 		b.WriteString(fmt.Sprintf("Valset changes (last %d):\n", len(snap.ValsetChanges)))
