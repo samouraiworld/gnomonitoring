@@ -1035,7 +1035,21 @@ func GetChainHealth(w http.ResponseWriter, r *http.Request, db *gorm.DB, chainID
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	snap := gnovalidator.FetchChainHealthSnapshot(db, chainID)
+	type snapResult struct {
+		snap gnovalidator.ChainHealthSnapshot
+	}
+	ch := make(chan snapResult, 1)
+	go func() {
+		ch <- snapResult{snap: gnovalidator.FetchChainHealthSnapshot(db, chainID)}
+	}()
+	var snap gnovalidator.ChainHealthSnapshot
+	select {
+	case res := <-ch:
+		snap = res.snap
+	case <-time.After(20 * time.Second):
+		http.Error(w, "health snapshot timed out", http.StatusGatewayTimeout)
+		return
+	}
 
 	resp := chainHealthResponse{
 		RPCReachable:      snap.RPCReachable,
