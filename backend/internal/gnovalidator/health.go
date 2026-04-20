@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -636,7 +637,7 @@ func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 	sb.WriteString(reportSeparator + "\n")
 
 	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
-	
+
 	emoji := chainStatusEmoji(snap)
 	blockAge := formatBlockAge(snap.LatestBlockTime)
 	stuckSince := ""
@@ -647,13 +648,89 @@ func FormatStuckReport(chainID string, snap ChainHealthSnapshot) string {
 		emoji, snap.LatestBlockHeight, blockAge,
 		snap.ConsensusRound, consensusLabel(snap.ConsensusRound), stuckSince))
 
+	// Network line.
+	if snap.PeerCount > 0 || snap.MempoolTxCount > 0 {
+		sb.WriteString(fmt.Sprintf("Network: %d peers | Mempool: %d pending txs\n", snap.PeerCount, snap.MempoolTxCount))
+	}
+
+	// Last known validator liveness section.
+	if len(snap.ValidatorSet) > 0 {
+		sorted := make([]ValidatorInfo, len(snap.ValidatorSet))
+		copy(sorted, snap.ValidatorSet)
+		sort.Slice(sorted, func(i, j int) bool {
+			pi := snap.PrecommitBitmap[sorted[i].Address]
+			pj := snap.PrecommitBitmap[sorted[j].Address]
+			if pi != pj {
+				return pi
+			}
+			return sorted[i].Address < sorted[j].Address
+		})
+		sb.WriteString(fmt.Sprintf("Last known validator liveness (%d active):\n", len(sorted)))
+		for _, vi := range sorted {
+			precommit := snap.PrecommitBitmap[vi.Address]
+			precommitMark := "✗"
+			statusEmoji := "🔴"
+			if precommit {
+				precommitMark = "✓"
+				statusEmoji = "🟢"
+			}
+			addrShort := vi.Address
+			if len(addrShort) > 10 {
+				addrShort = addrShort[:10] + "..."
+			}
+			line := fmt.Sprintf("  %s %-14s (%s) precommit %s | power: %d",
+				statusEmoji, vi.Address, addrShort, precommitMark, vi.VotingPower)
+			if !vi.KeepRunning {
+				line += " ⚠️ intends to leave"
+			}
+			sb.WriteString(line + "\n")
+		}
+	}
+
+	// Infrastructure line.
+	if len(snap.ValidatorSet) > 0 {
+		typeCounts := map[string]int{}
+		hasType := false
+		for _, vi := range snap.ValidatorSet {
+			if vi.ServerType != "" {
+				typeCounts[vi.ServerType]++
+				hasType = true
+			}
+		}
+		if hasType {
+			var parts []string
+			for _, t := range []string{"cloud", "on-prem", "data-center"} {
+				if c, ok := typeCounts[t]; ok {
+					parts = append(parts, fmt.Sprintf("%d %s", c, t))
+					delete(typeCounts, t)
+				}
+			}
+			for t, c := range typeCounts {
+				parts = append(parts, fmt.Sprintf("%d %s", c, t))
+			}
+			sb.WriteString("Infrastructure: " + strings.Join(parts, ", ") + "\n")
+		}
+	}
+
+	// Valset changes section.
+	if len(snap.ValsetChanges) > 0 {
+		sb.WriteString(fmt.Sprintf("Valset changes (last %d):\n", len(snap.ValsetChanges)))
+		for _, vc := range snap.ValsetChanges {
+			if vc.NewPower == 0 {
+				sb.WriteString(fmt.Sprintf("  Block #%d — %s removed\n", vc.BlockNum, vc.Address))
+			} else {
+				sb.WriteString(fmt.Sprintf("  Block #%d — %s added (power: %d)\n", vc.BlockNum, vc.Address, vc.NewPower))
+			}
+		}
+	}
+
 	sb.WriteString(FormatMissedBlocksLast24h(snap.MissedLast24h))
 	return sb.String()
 }
 
 func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates map[string]ValidatorRate, minBlock, maxBlock int64) string {
 	var sb strings.Builder
-		sb.WriteString(reportSeparator + "\n")
+	sb.WriteString(reportSeparator + "\n")
 
 	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", chainID, date))
 
@@ -663,11 +740,84 @@ func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates m
 		sb.WriteString(fmt.Sprintf("%s Block #%d (%s) — Consensus: round %d — %s\n",
 			emoji, snap.LatestBlockHeight, blockAge,
 			snap.ConsensusRound, consensusLabel(snap.ConsensusRound)))
-		// sb.WriteString(reportSeparator + "\n")
 	}
 
-	// sb.WriteString(fmt.Sprintf("Participation yesterday (Blocks %d → %d):\n", minBlock, maxBlock))
-	// sb.WriteString(formatValidatorRates(rates))
+	// Network line.
+	if snap.PeerCount > 0 || snap.MempoolTxCount > 0 {
+		sb.WriteString(fmt.Sprintf("Network: %d peers | Mempool: %d pending txs\n", snap.PeerCount, snap.MempoolTxCount))
+	}
+
+	// Validator set section.
+	if len(snap.ValidatorSet) > 0 {
+		sorted := make([]ValidatorInfo, len(snap.ValidatorSet))
+		copy(sorted, snap.ValidatorSet)
+		sort.Slice(sorted, func(i, j int) bool {
+			pi := snap.PrecommitBitmap[sorted[i].Address]
+			pj := snap.PrecommitBitmap[sorted[j].Address]
+			if pi != pj {
+				return pi
+			}
+			return sorted[i].Address < sorted[j].Address
+		})
+		sb.WriteString(fmt.Sprintf("Validator set (%d active):\n", len(sorted)))
+		for _, vi := range sorted {
+			precommit := snap.PrecommitBitmap[vi.Address]
+			precommitMark := "✗"
+			statusEmoji := "🔴"
+			if precommit {
+				precommitMark = "✓"
+				statusEmoji = "🟢"
+			}
+			addrShort := vi.Address
+			if len(addrShort) > 10 {
+				addrShort = addrShort[:10] + "..."
+			}
+			line := fmt.Sprintf("  %s %-14s (%s) precommit %s | power: %d",
+				statusEmoji, vi.Address, addrShort, precommitMark, vi.VotingPower)
+			if !vi.KeepRunning {
+				line += " ⚠️ intends to leave"
+			}
+			sb.WriteString(line + "\n")
+		}
+	}
+
+	// Infrastructure line.
+	if len(snap.ValidatorSet) > 0 {
+		typeCounts := map[string]int{}
+		hasType := false
+		for _, vi := range snap.ValidatorSet {
+			if vi.ServerType != "" {
+				typeCounts[vi.ServerType]++
+				hasType = true
+			}
+		}
+		if hasType {
+			var parts []string
+			for _, t := range []string{"cloud", "on-prem", "data-center"} {
+				if c, ok := typeCounts[t]; ok {
+					parts = append(parts, fmt.Sprintf("%d %s", c, t))
+					delete(typeCounts, t)
+				}
+			}
+			for t, c := range typeCounts {
+				parts = append(parts, fmt.Sprintf("%d %s", c, t))
+			}
+			sb.WriteString("Infrastructure: " + strings.Join(parts, ", ") + "\n")
+		}
+	}
+
+	// Valset changes section.
+	if len(snap.ValsetChanges) > 0 {
+		sb.WriteString(fmt.Sprintf("Valset changes (last %d):\n", len(snap.ValsetChanges)))
+		for _, vc := range snap.ValsetChanges {
+			if vc.NewPower == 0 {
+				sb.WriteString(fmt.Sprintf("  Block #%d — %s removed\n", vc.BlockNum, vc.Address))
+			} else {
+				sb.WriteString(fmt.Sprintf("  Block #%d — %s added (power: %d)\n", vc.BlockNum, vc.Address, vc.NewPower))
+			}
+		}
+	}
+
 	sb.WriteString(FormatMissedBlocksLast24h(snap.MissedLast24h))
 	return sb.String()
 }

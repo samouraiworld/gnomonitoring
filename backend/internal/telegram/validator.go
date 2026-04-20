@@ -47,14 +47,36 @@ type ChainHealthSnapshot struct {
 	LatestBlockTime   time.Time
 	ConsensusRound    int
 	RPCReachable      bool
-	IsStuck        bool
-	IsDisabled     bool
-	ValidatorRates map[string]ValidatorRate
-	MinBlock       int64
-	MaxBlock       int64
-	MissedLast24h  []database.MissedBlockCount
+	IsStuck           bool
+	IsDisabled        bool
+	ValidatorRates    map[string]ValidatorRate
+	MinBlock          int64
+	MaxBlock          int64
+	MissedLast24h     []database.MissedBlockCount
+
+	// New RPC-enriched fields (mirrors of gnovalidator types).
+	ValidatorSet      []ValidatorInfo
+	ValsetChanges     []ValsetChange
+	PrecommitBitmap   map[string]bool
+	PeerCount         int
+	MempoolTxCount    int
+	MempoolTotalBytes int64
 }
 
+// ValidatorInfo mirrors gnovalidator.ValidatorInfo.
+type ValidatorInfo struct {
+	Address     string
+	VotingPower int64
+	KeepRunning bool
+	ServerType  string
+}
+
+// ValsetChange mirrors gnovalidator.ValsetChange.
+type ValsetChange struct {
+	BlockNum int64
+	Address  string
+	NewPower int64
+}
 
 // ValidatorRate mirrors gnovalidator.ValidatorRate.
 type ValidatorRate struct {
@@ -2246,6 +2268,88 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 		age := formatDuration(time.Since(snap.LatestBlockTime))
 		b.WriteString(fmt.Sprintf(" — block <code>#%d</code> (%s ago)\n", snap.LatestBlockHeight, age))
 		b.WriteString(fmt.Sprintf("Consensus: round %d — %s\n", snap.ConsensusRound, roundLabel))
+	}
+
+	// Network line.
+	if snap.PeerCount > 0 || snap.MempoolTxCount > 0 {
+		b.WriteString(fmt.Sprintf("Network: %d peers | Mempool: %d pending txs\n", snap.PeerCount, snap.MempoolTxCount))
+	}
+
+	// Validator set section.
+	if len(snap.ValidatorSet) > 0 {
+		sorted := make([]ValidatorInfo, len(snap.ValidatorSet))
+		copy(sorted, snap.ValidatorSet)
+		sort.Slice(sorted, func(i, j int) bool {
+			pi := snap.PrecommitBitmap[sorted[i].Address]
+			pj := snap.PrecommitBitmap[sorted[j].Address]
+			if pi != pj {
+				return pi // precommitting first
+			}
+			return sorted[i].Address < sorted[j].Address
+		})
+		b.WriteString(fmt.Sprintf("Validator set (%d active):\n", len(sorted)))
+		for _, vi := range sorted {
+			precommit := snap.PrecommitBitmap[vi.Address]
+			precommitMark := "✗"
+			statusEmoji := "🔴"
+			if precommit {
+				precommitMark = "✓"
+				statusEmoji = "🟢"
+			}
+			addrShort := vi.Address
+			if len(addrShort) > 10 {
+				addrShort = addrShort[:10] + "..."
+			}
+			line := fmt.Sprintf("  %s <b>%-14s</b> (<code>%s</code>) precommit %s | power: %d",
+				statusEmoji,
+				html.EscapeString(vi.Address), // moniker not available in ValidatorInfo; use address
+				html.EscapeString(addrShort),
+				precommitMark,
+				vi.VotingPower,
+			)
+			if !vi.KeepRunning {
+				line += " ⚠️ intends to leave"
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+
+	// Infrastructure line.
+	if len(snap.ValidatorSet) > 0 {
+		typeCounts := map[string]int{}
+		hasType := false
+		for _, vi := range snap.ValidatorSet {
+			if vi.ServerType != "" {
+				typeCounts[vi.ServerType]++
+				hasType = true
+			}
+		}
+		if hasType {
+			var parts []string
+			for _, t := range []string{"cloud", "on-prem", "data-center"} {
+				if c, ok := typeCounts[t]; ok {
+					parts = append(parts, fmt.Sprintf("%d %s", c, t))
+					delete(typeCounts, t)
+				}
+			}
+			for t, c := range typeCounts {
+				parts = append(parts, fmt.Sprintf("%d %s", c, t))
+			}
+			b.WriteString("Infrastructure: " + strings.Join(parts, ", ") + "\n")
+		}
+	}
+
+	// Valset changes section.
+	if len(snap.ValsetChanges) > 0 {
+		b.WriteString(fmt.Sprintf("Valset changes (last %d):\n", len(snap.ValsetChanges)))
+		for _, vc := range snap.ValsetChanges {
+			addrEsc := html.EscapeString(vc.Address)
+			if vc.NewPower == 0 {
+				b.WriteString(fmt.Sprintf("  Block #%d — <code>%s</code> removed\n", vc.BlockNum, addrEsc))
+			} else {
+				b.WriteString(fmt.Sprintf("  Block #%d — <code>%s</code> added (power: %d)\n", vc.BlockNum, addrEsc, vc.NewPower))
+			}
+		}
 	}
 
 	if MissedBlocksFormatter != nil {
