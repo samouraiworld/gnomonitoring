@@ -103,6 +103,7 @@ export default function Monikers() {
                     </td>
                     <td className="mono">{m.first_active_block >= 0 ? m.first_active_block.toLocaleString() : '—'}</td>
                     <td>
+                      <button className="btn btn-ghost btn-sm" onClick={() => { setEditKey(key); setEditValue(m.moniker) }}>Edit</button>
                       <button className="btn btn-ghost btn-sm" onClick={() => setDelTarget({ chain: m.chain_id, addr: m.addr })} style={{ color: 'var(--status-critical)' }}>Delete</button>
                     </td>
                   </tr>
