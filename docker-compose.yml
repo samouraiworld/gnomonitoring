@@ -1,19 +1,16 @@
 services:
   detect-proposal:
-    build: 
+    build:
         context: ./backend
     restart: on-failure
     container_name: gnomonitoring-backend
     volumes:
-      - ./backend/main.go:/root/main.go
-      - ./backend/config.yaml:/root/config.yaml
-      - ./backend/go.mod:/root/go.mod
-      - ./backend/go.sum:/root/go.sum 
-      - ./backend/db/:/root/db/
+      - ./backend/config.yaml:/app/config.yaml
+      - ./backend/db/:/app/db/
     ports:
       - 8880:8888 #metrics
       - 8989:8989 #backend
-    command: [ "go", "run", "main.go","--disable-report" ]
+    command: [ "./server", "--disable-report" ]
 
   frontend:
       build:
@@ -22,7 +19,7 @@ services:
       ports:
         - "9191:80"
       volumes:
-        - ./panel/.env.local:/app/.env.local
+        - ./panel/.env:/app/.env.local
       env_file:
-        - ./panel/.env.local
+        - ./panel/.env
       restart: unless-stopped
