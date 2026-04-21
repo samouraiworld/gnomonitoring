@@ -7,6 +7,53 @@ Entries are ordered newest-first within each section.
 
 ## [Unreleased]
 
+### Added
+
+- **Live RPC data in daily report and `/status`** — `ChainHealthSnapshot` now
+  fetches validator set with voting power (`Validators()`), valset changes from
+  `r/sys/validators/v2`, peer count (`NetInfo()`), and mempool size
+  (`NumUnconfirmedTxs()`) in parallel goroutines.
+  See [`feat/feat-daily-report-rpc-enrichment.md`](feat/feat-daily-report-rpc-enrichment.md).
+
+- **Per-validator uptime over last 24h in report** — validator section replaced
+  the misleading precommit bitmap with participation rate from DB over the last
+  24h window, showing top 5 worst performers with uptime % and voting power %.
+  Monikers resolved from `addr_monikers` (authoritative) with fallback to
+  `daily_participations.moniker`.
+
+- **Valset changes filtered to last 24h** — additions and removals from
+  `r/sys/validators/v2` are filtered to the current 24h block window; genesis
+  entries (Block #0) no longer pollute the section.
+
+- **New Prometheus metrics** — `gnoland_validator_voting_power`,
+  `gnoland_chain_peer_count`, `gnoland_chain_mempool_tx_count`,
+  `gnoland_chain_valset_size` added to the 5-minute metrics cycle.
+
+- **REST endpoint `GET /api/chain/:chainID/health`** — returns the full
+  `ChainHealthSnapshot` as JSON. Public, read-only, 20s timeout.
+
+### Fixed
+
+- **`ValidatorVotingPower` metric wiped all chains on each cycle** — replaced
+  `Reset()` with `DeletePartialMatch(chainLabel)` so only the current chain's
+  stale entries are cleared.
+
+- **`parseValsetChanges` never matched** — parser was written for a markdown
+  table but the realm emits a bullet-list (`- #blockNum: addr (power)`).
+  Rewritten to match the actual format.
+
+- **`DumpConsensusState` peer_state decode failures** — amino encodes
+  `PeerStateExposed` as a base64 string inside a JSON string; added two-step
+  unwrap (JSON string → base64 decode → JSON unmarshal). Also added custom
+  `UnmarshalJSON` for `bitArrayJSON` to handle amino's string-encoded `int`
+  and `uint64` fields (`"bits": "7"`, `"elems": ["121"]`).
+
+- **Goroutine leak in `enrichValidatorInfoFromValopers`** — removed inner
+  goroutine wrapping that leaked on context timeout; ABCIQuery now called
+  directly in the outer goroutine.
+
+---
+
 ### Fixed
 
 - **Alert dedup permanently blocked during backfill** — `SendResolveAlerts` is
@@ -23,6 +70,19 @@ Entries are ordered newest-first within each section.
   decision path observable without a debugger: CTE window count per cycle, dedup
   skip reason (with heights and window duration), dead-validator silence skip, and
   pending-RESOLVED count per `SendResolveAlerts` call.
+
+- **Web daily reports fixed for multi-chain users** — `SheduleUserReport` now
+  queries the user's registered webhook chains instead of hard-coding
+  `DefaultChain`; web users with webhooks on `test12` or `gnoland1` now receive
+  reports for the correct chain.
+  See [`feat/feat-fix-web-report-multi-chain.md`](feat/feat-fix-web-report-multi-chain.md).
+
+### Changed
+
+- **Removed per-validator liveness section from `/status` and stuck-chain report**
+  — the point-in-time precommit snapshot was not actionable and has been replaced
+  by the 24h participation rate section.
+  See [`feat/feat-remove-liveness-section.md`](feat/feat-remove-liveness-section.md).
 
 ---
 

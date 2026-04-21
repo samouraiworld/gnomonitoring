@@ -129,11 +129,12 @@ func CalculateRate(db *gorm.DB, chainID, date string) (map[string]ValidatorRate,
 	// Single query combining agrega (fast path) with raw fallback for days not yet aggregated.
 	// Returns one row per validator with participation totals and block height range.
 	rows, err := db.Raw(`
-		SELECT addr, MAX(moniker) AS moniker,
-			SUM(total_blocks) AS total_blocks,
-			SUM(participated_count) AS participated_count,
-			MIN(first_block_height) AS first_block,
-			MAX(last_block_height)  AS last_block
+		SELECT combined.addr,
+			COALESCE(am.moniker, MAX(combined.moniker), '') AS moniker,
+			SUM(combined.total_blocks) AS total_blocks,
+			SUM(combined.participated_count) AS participated_count,
+			MIN(combined.first_block_height) AS first_block,
+			MAX(combined.last_block_height)  AS last_block
 		FROM (
 			SELECT chain_id, addr, moniker, total_blocks, participated_count,
 				first_block_height, last_block_height
@@ -150,7 +151,8 @@ func CalculateRate(db *gorm.DB, chainID, date string) (map[string]ValidatorRate,
 			WHERE dp.chain_id = ? AND DATE(dp.date) = ? AND dpa.block_date IS NULL
 			GROUP BY dp.chain_id, dp.addr
 		) combined
-		GROUP BY addr
+		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
+		GROUP BY combined.addr
 	`, chainID, date, chainID, date).Rows()
 	if err != nil {
 		log.Printf("[report][%s] error querying participation for %s: %v", chainID, date, err)
