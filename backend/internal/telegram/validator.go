@@ -1898,7 +1898,7 @@ func handleCmdMenuCallback(
 			}
 			snap := ChainHealthFetcher(state.ChainID)
 			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, formatChainHealthMessage(state.ChainID, snap), nil)
-		case "uptime", "rate", "missing", "operation_time":
+		case "uptime", "rate", "missing", "operation_time", "tx_contrib":
 			// Period-aware commands: show period picker before confirm.
 			state.Action = action
 			state.Step = "period"
@@ -1971,6 +1971,7 @@ func buildActionMarkup(command string, enabledChains []string) *InlineKeyboardMa
 			},
 			{
 				{Text: "Operation time", CallbackData: encodeCmdCallback("a", "operation_time")},
+				{Text: "TX Contrib",     CallbackData: encodeCmdCallback("a", "tx_contrib")},
 			},
 			{cancelBtn},
 		}}
@@ -2146,6 +2147,13 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "operation_time", "", "", 1, limitDefault, sortDefault)
 			if err != nil {
 				log.Printf("[cmd] operation_time chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				return "❌ An error occurred. Please try again.", nil
+			}
+			return msg, markup
+		case "tx_contrib":
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "tx_contrib", period, "", 1, limitDefault, sortDefault)
+			if err != nil {
+				log.Printf("[cmd] tx_contrib chat=%d chain=%s period=%s: %v", chatID, state.ChainID, period, err)
 				return "❌ An error occurred. Please try again.", nil
 			}
 			return msg, markup
