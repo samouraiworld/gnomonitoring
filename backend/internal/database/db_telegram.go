@@ -377,7 +377,7 @@ func UpdateTelegramValidatorSubStatus(db *gorm.DB, chatID int64, chainID, addr, 
 // ============================ Telegram govdao =============================================
 // status of govdao handlers
 func GetStatusofGovdao(db *gorm.DB, chainID string) ([]Govdao, error) {
-	var results []Govdao
+	results := []Govdao{}
 	query := `
 		SELECT
 			id,
