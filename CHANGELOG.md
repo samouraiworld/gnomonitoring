@@ -71,6 +71,19 @@ Entries are ordered newest-first within each section.
   skip reason (with heights and window duration), dead-validator silence skip, and
   pending-RESOLVED count per `SendResolveAlerts` call.
 
+- **Web daily reports fixed for multi-chain users** — `SheduleUserReport` now
+  queries the user's registered webhook chains instead of hard-coding
+  `DefaultChain`; web users with webhooks on `test12` or `gnoland1` now receive
+  reports for the correct chain.
+  See [`feat/feat-fix-web-report-multi-chain.md`](feat/feat-fix-web-report-multi-chain.md).
+
+### Changed
+
+- **Removed per-validator liveness section from `/status` and stuck-chain report**
+  — the point-in-time precommit snapshot was not actionable and has been replaced
+  by the 24h participation rate section.
+  See [`feat/feat-remove-liveness-section.md`](feat/feat-remove-liveness-section.md).
+
 ---
 
 ## [2026-04-07]
