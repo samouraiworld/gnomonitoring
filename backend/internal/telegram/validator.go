@@ -1898,7 +1898,7 @@ func handleCmdMenuCallback(
 			}
 			snap := ChainHealthFetcher(state.ChainID)
 			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, formatChainHealthMessage(state.ChainID, snap), nil)
-		case "uptime", "rate", "missing", "operation_time":
+		case "uptime", "rate", "missing", "operation_time", "tx_contrib":
 			// Period-aware commands: show period picker before confirm.
 			state.Action = action
 			state.Step = "period"
