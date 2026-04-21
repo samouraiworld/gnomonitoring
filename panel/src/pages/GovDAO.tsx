@@ -17,7 +17,7 @@ export default function GovDAO() {
     setLoading(true)
     const params = chain ? `?chain=${chain}` : ''
     api.get<GovdaoProposal[]>(`/admin/govdao/proposals${params}`)
-      .then(setProposals)
+      .then(data => setProposals(data ?? []))
       .catch(() => toast.error('Failed to load proposals'))
       .finally(() => setLoading(false))
   }, [chain])
