@@ -500,15 +500,17 @@ func CalculateRecentValidatorStatus(db *gorm.DB, chainID string, lastNBlocks int
 	}
 	var rows []row
 	err := db.Raw(`
-		SELECT addr, MAX(moniker) AS moniker,
+		SELECT dp.addr,
+			COALESCE(am.moniker, MAX(dp.moniker), '') AS moniker,
 			COUNT(*) AS total_blocks,
-			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_count,
-			MIN(block_height) AS first_block,
-			MAX(block_height) AS last_block
-		FROM daily_participations
-		WHERE chain_id = ?
-		  AND block_height >= (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - ?
-		GROUP BY addr
+			SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END) AS participated_count,
+			MIN(dp.block_height) AS first_block,
+			MAX(dp.block_height) AS last_block
+		FROM daily_participations dp
+		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		WHERE dp.chain_id = ?
+		  AND dp.block_height >= (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - ?
+		GROUP BY dp.addr
 	`, chainID, chainID, lastNBlocks).Scan(&rows).Error
 	if err != nil {
 		return nil, 0, 0, err
@@ -544,15 +546,17 @@ func CalculateValidatorStatusLast24h(db *gorm.DB, chainID string) (map[string]Va
 	}
 	var rows []row
 	err := db.Raw(`
-		SELECT addr, MAX(moniker) AS moniker,
+		SELECT dp.addr,
+			COALESCE(am.moniker, MAX(dp.moniker), '') AS moniker,
 			COUNT(*) AS total_blocks,
-			SUM(CASE WHEN participated THEN 1 ELSE 0 END) AS participated_count,
-			MIN(block_height) AS first_block,
-			MAX(block_height) AS last_block
-		FROM daily_participations
-		WHERE chain_id = ?
-		  AND date >= datetime('now', '-24 hours')
-		GROUP BY addr
+			SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END) AS participated_count,
+			MIN(dp.block_height) AS first_block,
+			MAX(dp.block_height) AS last_block
+		FROM daily_participations dp
+		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		WHERE dp.chain_id = ?
+		  AND dp.date >= datetime('now', '-24 hours')
+		GROUP BY dp.addr
 	`, chainID).Scan(&rows).Error
 	if err != nil {
 		return nil, 0, 0, err
