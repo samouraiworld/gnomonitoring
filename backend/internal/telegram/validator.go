@@ -2150,6 +2150,13 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 				return "❌ An error occurred. Please try again.", nil
 			}
 			return msg, markup
+		case "tx_contrib":
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "tx_contrib", period, "", 1, limitDefault, sortDefault)
+			if err != nil {
+				log.Printf("[cmd] tx_contrib chat=%d chain=%s period=%s: %v", chatID, state.ChainID, period, err)
+				return "❌ An error occurred. Please try again.", nil
+			}
+			return msg, markup
 		}
 	}
 	return "⚠️ Nothing to execute.", nil
