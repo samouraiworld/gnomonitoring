@@ -1971,6 +1971,7 @@ func buildActionMarkup(command string, enabledChains []string) *InlineKeyboardMa
 			},
 			{
 				{Text: "Operation time", CallbackData: encodeCmdCallback("a", "operation_time")},
+				{Text: "TX Contrib",     CallbackData: encodeCmdCallback("a", "tx_contrib")},
 			},
 			{cancelBtn},
 		}}
