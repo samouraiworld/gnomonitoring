@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
+	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
+	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
@@ -112,7 +116,142 @@ func GetGenesisMonikers(rpcURL string) (map[string]string, error) {
 	return monikers, nil
 }
 
-func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEndpoint string) {
+// fetchMonikerFromStatus calls /status on rpcURL and returns the node's
+// consensus validator address and moniker. Returns an error if the RPC is
+// unreachable or the response is incomplete.
+func fetchMonikerFromStatus(rpcURL string) (addr, moniker string, err error) {
+	c, err := rpcclient.NewHTTPClient(rpcURL)
+	if err != nil {
+		return "", "", fmt.Errorf("NewHTTPClient: %w", err)
+	}
+	result, err := c.Status()
+	if err != nil || result == nil {
+		return "", "", fmt.Errorf("Status(): %w", err)
+	}
+	addr = result.ValidatorInfo.Address.String()
+	moniker = result.NodeInfo.Moniker
+	if addr == "" || moniker == "" {
+		return "", "", fmt.Errorf("incomplete status response: addr=%q moniker=%q", addr, moniker)
+	}
+	return addr, moniker, nil
+}
+
+// extractPort returns the port from rawURL, or "26657" if none is present
+// (e.g. the configured RPC is behind a reverse proxy on 443/80).
+func extractPort(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Port() == "" {
+		return "26657"
+	}
+	return u.Port()
+}
+
+// peerDialTimeout bounds the TCP reachability pre-check in
+// discoverMonikersFromPeers, since gno's RPC client does not enforce its own
+// request timeout during the TCP-connect phase (see isPeerReachable).
+const peerDialTimeout = 2 * time.Second
+
+// isPeerReachable reports whether a TCP connection to host:port can be
+// established within timeout. gno's RPC client does not bound the
+// TCP-connect phase with its request timeout, so a peer whose RPC port is
+// firewalled (SYN dropped) can otherwise block for the OS TCP connect
+// timeout (~127s on Linux defaults) before fetchMonikerFromStatus fails.
+func isPeerReachable(host, port string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), timeout)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// isResolvedMoniker reports whether m is a real moniker, as opposed to the
+// "unknown" placeholder persisted by InitMonikerMap for validators that no
+// source could resolve yet.
+func isResolvedMoniker(m string) bool {
+	return m != "" && m != "unknown"
+}
+
+// discoverMonikersFromPeers queries /net_info on each rpcEndpoint, then calls
+// /status on every distinct connected peer to learn its validator address and
+// moniker. Newly discovered pairs are persisted to the addr_monikers table and
+// returned in the result map. Addresses already resolved in existingMonikers
+// (i.e. present with a value other than "" or "unknown") are skipped,
+// preserving DB admin overrides and other moniker sources; addresses still
+// marked "unknown" are retried on every call.
+func discoverMonikersFromPeers(db *gorm.DB, chainID string, rpcEndpoints []string, existingMonikers map[string]string) map[string]string {
+	discovered := make(map[string]string)
+	seenIPs := make(map[string]bool)
+
+	for _, endpoint := range rpcEndpoints {
+		port := extractPort(endpoint)
+
+		c, err := rpcclient.NewHTTPClient(endpoint)
+		if err != nil {
+			log.Printf("[valoper][%s] discovery: NewHTTPClient(%s): %v", chainID, endpoint, err)
+			continue
+		}
+
+		netInfo, err := c.NetInfo()
+		if err != nil || netInfo == nil {
+			log.Printf("[valoper][%s] discovery: NetInfo(%s): %v", chainID, endpoint, err)
+			continue
+		}
+
+		for _, peer := range netInfo.Peers {
+			if peer.RemoteIP == "" || seenIPs[peer.RemoteIP] {
+				continue
+			}
+			seenIPs[peer.RemoteIP] = true
+
+			if !isPeerReachable(peer.RemoteIP, port, peerDialTimeout) {
+				continue
+			}
+
+			peerRPC := fmt.Sprintf("http://%s:%s", peer.RemoteIP, port)
+			addr, moniker, err := fetchMonikerFromStatus(peerRPC)
+			if err != nil {
+				log.Printf("[valoper][%s] discovery: fetchMonikerFromStatus(%s): %v", chainID, peerRPC, err)
+				continue
+			}
+
+			if isResolvedMoniker(existingMonikers[addr]) || isResolvedMoniker(discovered[addr]) {
+				continue
+			}
+
+			discovered[addr] = moniker
+			if err := database.UpsertAddrMoniker(db, chainID, addr, moniker); err != nil {
+				log.Printf("[valoper][%s] discovery: failed to upsert moniker for %s: %v", chainID, addr, err)
+			}
+		}
+	}
+
+	return discovered
+}
+
+// resolveMoniker picks the display moniker for addr using the documented
+// priority order: DB override > valoper realm > genesis file > peer
+// discovery (last resort) > "unknown". A "unknown" placeholder in dbMap
+// (persisted by a previous run) is treated as not-yet-resolved, so a
+// validator can still pick up a name from valoper, genesis or peer discovery
+// once one becomes available.
+func resolveMoniker(addr string, dbMap, valoperMap, genesisMap, discoveredMap map[string]string) string {
+	if m, ok := dbMap[addr]; ok && isResolvedMoniker(m) {
+		return m
+	}
+	if m, ok := valoperMap[addr]; ok {
+		return m
+	}
+	if m, ok := genesisMap[addr]; ok {
+		return m
+	}
+	if m, ok := discoveredMap[addr]; ok {
+		return m
+	}
+	return "unknown"
+}
+
+func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainCfg *internal.ChainConfig) {
 	type Validator struct {
 		Address string `json:"address"`
 	}
@@ -122,7 +261,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEnd
 		} `json:"result"`
 	}
 	// Step 1 — Retrieve active validators from the RPC endpoint `/validators`
-	url := fmt.Sprintf("%s/validators", strings.TrimRight(rpcEndpoint, "/"))
+	url := fmt.Sprintf("%s/validators", strings.TrimRight(chainCfg.RPCEndpoint(), "/"))
 	var resp *http.Response
 	err := doWithRetry(3, 2*time.Second, func() error {
 		var e error
@@ -167,7 +306,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEnd
 	}
 
 	// Step 3 — Genesis monikers
-	genesisMap, err := GetGenesisMonikers(rpcEndpoint)
+	genesisMap, err := GetGenesisMonikers(chainCfg.RPCEndpoint())
 	if err != nil {
 		log.Printf("⚠️ Failed to get genesis monikers: %v", err)
 	}
@@ -176,22 +315,21 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, rpcEnd
 	if err != nil {
 		log.Printf("⚠️ Failed to get monikers from DB: %v", err)
 	}
+	if dbMap == nil {
+		dbMap = make(map[string]string)
+	}
+
+	// Step 4.5 — Discover monikers of still-unresolved validators via peer /net_info + /status,
+	// persisting newly found pairs to the addr_monikers table. Used as a last resort in Step 5,
+	// below valoperMap and genesisMap.
+	discoveredMap := discoverMonikersFromPeers(db, chainID, chainCfg.RPCEndpoints, dbMap)
 
 	// Step 5 — Building a Complete and Prioritized MonikerMap
 	tempMonikers := make(map[string]string)
 
 	for _, val := range validatorsResp.Result.Validators {
 		addr := val.Address
-		moniker := "unknown"
-		if m, ok := dbMap[addr]; ok {
-			moniker = m
-		} else if m, ok := valoperMap[addr]; ok {
-			moniker = m
-		} else if m, ok := genesisMap[addr]; ok {
-			moniker = m
-		}
-
-		tempMonikers[addr] = moniker
+		tempMonikers[addr] = resolveMoniker(addr, dbMap, valoperMap, genesisMap, discoveredMap)
 	}
 
 	for addr, moniker := range tempMonikers {
