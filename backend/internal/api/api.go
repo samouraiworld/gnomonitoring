@@ -1122,6 +1122,23 @@ func EnableCORS(w http.ResponseWriter, r ...*http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 }
 
+// corsThenAuth runs EnableCORS and short-circuits OPTIONS preflight with
+// 200 OK before the auth middleware runs. This is required because
+// clerkhttp.RequireHeaderAuthorization returns 403 for preflight requests
+// (browsers never send Authorization on OPTIONS), which would otherwise
+// prevent EnableCORS from running and break CORS for the real request.
+func corsThenAuth(next http.Handler, protect func(http.Handler) http.Handler) http.Handler {
+	authed := protect(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		EnableCORS(w, r)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		authed.ServeHTTP(w, r)
+	})
+}
+
 // ======================== Start API =====================================
 func StartWebhookAPI(db *gorm.DB) {
 	clerk.SetKey(internal.Config.ClerkSecretKey)
@@ -1195,6 +1212,9 @@ func StartWebhookAPI(db *gorm.DB) {
 			UpdateAlertContactHandler(w, r, db)
 		case http.MethodDelete:
 			DeleteAlertContactHandler(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w, r)
+			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -1222,13 +1242,17 @@ func StartWebhookAPI(db *gorm.DB) {
 		mux.Handle("/alert-contacts", alertContactsHandler)
 		mux.Handle("/usersH", usersHHandler)
 	} else {
-		// In production mode, use Clerk protection
+		// In production mode, use Clerk protection.
+		// CORS headers (and OPTIONS preflight short-circuit) must be applied
+		// before the Clerk auth check, since RequireHeaderAuthorization
+		// returns 403 for preflight requests and would otherwise prevent
+		// EnableCORS from ever running.
 		protected := clerkhttp.RequireHeaderAuthorization()
-		mux.Handle("/webhooks/govdao", protected(webhookGovDAOHandler))
-		mux.Handle("/webhooks/validator", protected(webhookValidatorHandler))
-		mux.Handle("/users", protected(userHandler))
-		mux.Handle("/alert-contacts", protected(alertContactsHandler))
-		mux.Handle("/usersH", protected(usersHHandler))
+		mux.Handle("/webhooks/govdao", corsThenAuth(webhookGovDAOHandler, protected))
+		mux.Handle("/webhooks/validator", corsThenAuth(webhookValidatorHandler, protected))
+		mux.Handle("/users", corsThenAuth(userHandler, protected))
+		mux.Handle("/alert-contacts", corsThenAuth(alertContactsHandler, protected))
+		mux.Handle("/usersH", corsThenAuth(usersHHandler, protected))
 	}
 
 	// ====================== Dashboard =================
