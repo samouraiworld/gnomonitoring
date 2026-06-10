@@ -331,7 +331,7 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 	}()
 }
 
-func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client, rpcEndpoint string, refreshInterval time.Duration) {
+func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client, chainCfg *internal.ChainConfig, refreshInterval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(refreshInterval)
 		defer ticker.Stop()
@@ -346,7 +346,7 @@ func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client
 				oldMap := GetMonikerMap(chainID)
 
 				// Refresh MonikerMap
-				InitMonikerMap(db, chainID, client, rpcEndpoint)
+				InitMonikerMap(db, chainID, client, chainCfg)
 
 				// Compare with the old Monikermap
 				for addr, moniker := range GetMonikerMap(chainID) {
@@ -678,8 +678,8 @@ func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, 
 	client := gnoclient.Client{RPCClient: rpcClient}
 
 	t := GetThresholds()
-	InitMonikerMap(db, chainID, client, chainCfg.RPCEndpoint())
-	WatchNewValidators(ctx, db, chainID, client, chainCfg.RPCEndpoint(), t.NewValidatorScan())
+	InitMonikerMap(db, chainID, client, chainCfg)
+	WatchNewValidators(ctx, db, chainID, client, chainCfg, t.NewValidatorScan())
 	CollectParticipation(ctx, db, chainID, client)
 	WatchValidatorAlerts(ctx, db, chainID, t.AlertCheckInterval())
 }
