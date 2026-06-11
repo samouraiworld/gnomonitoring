@@ -91,6 +91,7 @@ type WebhookValidator struct {
 	ChainID     *string   `gorm:"column:chain_id;default:null"`
 }
 type DailyParticipation struct {
+	ID             uint64    `gorm:"column:id;primaryKey;autoIncrement"`
 	Date           time.Time `gorm:"column:date"`
 	BlockHeight    int64     `gorm:"column:block_height;uniqueIndex:uniq_chain_addr_height,priority:3"`
 	ChainID        string    `gorm:"column:chain_id;not null;default:'betanet';uniqueIndex:uniq_chain_addr_height,priority:1"`
@@ -424,7 +425,7 @@ func PopulateFirstActiveBlocks(db *gorm.DB) error {
 			 FROM daily_participations
 			 WHERE addr = addr_monikers.addr
 			   AND chain_id = addr_monikers.chain_id
-			   AND participated = 1)
+			   AND participated = true)
 		)
 		WHERE first_active_block = -1
 	`)
@@ -443,7 +444,7 @@ func PopulateFirstActiveBlocks(db *gorm.DB) error {
 func CleanupSpuriousParticipations(db *gorm.DB) error {
 	raw := db.Exec(`
 		DELETE FROM daily_participations
-		WHERE participated = 0
+		WHERE participated = false
 		  AND EXISTS (
 			  SELECT 1 FROM addr_monikers am
 			  WHERE am.addr = daily_participations.addr

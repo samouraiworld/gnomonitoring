@@ -400,7 +400,7 @@ func CreateMissingBlocksView(db *gorm.DB) error {
 
 	// Create the view with multi-chain support
 	createViewSQL := `
-		CREATE VIEW IF NOT EXISTS daily_missing_series AS
+		CREATE VIEW daily_missing_series AS
 		WITH ranked AS (
 			SELECT
 				dp.chain_id,
@@ -410,38 +410,38 @@ func CreateMissingBlocksView(db *gorm.DB) error {
 				dp.block_height,
 				dp.participated,
 				CASE
-					WHEN dp.participated = 0 AND LAG(dp.participated) OVER
-						(PARTITION BY dp.chain_id, dp.addr, DATE(dp.date) ORDER BY dp.block_height) = 1
+					WHEN dp.participated = false AND LAG(dp.participated) OVER
+						(PARTITION BY dp.chain_id, dp.addr, dp.date::date ORDER BY dp.block_height) = true
 					THEN 1
-					WHEN dp.participated = 0 AND LAG(dp.participated) OVER
-						(PARTITION BY dp.chain_id, dp.addr, DATE(dp.date) ORDER BY dp.block_height) IS NULL
+					WHEN dp.participated = false AND LAG(dp.participated) OVER
+						(PARTITION BY dp.chain_id, dp.addr, dp.date::date ORDER BY dp.block_height) IS NULL
 					THEN 1
 					ELSE 0
 				END AS new_seq
 			FROM daily_participations dp
 			LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
-			WHERE dp.date >= datetime('now', '-24 hours')
+			WHERE dp.date >= NOW() - INTERVAL '24 hours'
 		),
 		grouped AS (
 			SELECT *,
-				SUM(new_seq) OVER (PARTITION BY chain_id, addr, DATE(date) ORDER BY block_height) AS seq_id
+				SUM(new_seq) OVER (PARTITION BY chain_id, addr, date::date ORDER BY block_height) AS seq_id
 			FROM ranked
 		)
 		SELECT
 			chain_id,
 			addr,
 			moniker,
-			DATE(date) AS date,
-			TIME(date) AS time_block,
-			MIN(block_height) OVER (PARTITION BY chain_id, addr, DATE(date), seq_id) AS start_height,
+			date::date AS date,
+			date::time AS time_block,
+			MIN(block_height) OVER (PARTITION BY chain_id, addr, date::date, seq_id) AS start_height,
 			block_height AS end_height,
 			SUM(1) OVER (
-				PARTITION BY chain_id, addr, DATE(date), seq_id
+				PARTITION BY chain_id, addr, date::date, seq_id
 				ORDER BY block_height
 				ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 			) AS missed
 		FROM grouped
-		WHERE participated = 0
+		WHERE participated = false
 		ORDER BY chain_id, addr, date, seq_id, block_height;
 	`
 

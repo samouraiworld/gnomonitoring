@@ -411,12 +411,12 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 						block_height,
 						participated,
 						CASE
-							WHEN participated = 0
-							 AND LAG(participated) OVER (PARTITION BY addr, moniker ORDER BY block_height) IS NOT DISTINCT FROM 0
+							WHEN participated = false
+							 AND LAG(participated) OVER (PARTITION BY addr, moniker ORDER BY block_height) IS NOT DISTINCT FROM false
 							THEN 0 ELSE 1
 						END AS new_seq
 					FROM daily_participations
-					WHERE chain_id = ? AND date >= datetime('now', '-30 minutes')
+					WHERE chain_id = ? AND date >= NOW() - INTERVAL '30 minutes'
 				),
 				grouped AS (
 					SELECT
@@ -435,7 +435,7 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 						MAX(block_height) AS end_height,
 						COUNT(*)          AS missed
 					FROM grouped
-					WHERE participated = 0
+					WHERE participated = false
 					GROUP BY addr, moniker, seq_id
 				)
 				SELECT s.addr, s.moniker, s.start_height, s.end_height, s.missed
@@ -488,13 +488,13 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 				// sequence starts strictly after the resolved range (i.e. a genuinely new
 				// incident, not the same down-period being re-detected).
 				resendHours := t.ResendHoursForLevel(level)
-				window := fmt.Sprintf("-%d hours", resendHours)
+				window := fmt.Sprintf("%d hours", resendHours)
 				var recentCount int64
 				err := db.Raw(`
 					SELECT COUNT(*) FROM alert_logs al
 					WHERE al.chain_id = ? AND al.addr = ? AND al.level = ?
-					AND al.skipped = 1
-					AND al.sent_at >= datetime('now', ?)
+					AND al.skipped = true
+					AND al.sent_at >= NOW() - ?::interval
 					AND NOT EXISTS (
 						SELECT 1 FROM alert_logs r
 						WHERE r.chain_id = al.chain_id
@@ -516,12 +516,12 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 
 				// Silence permanently dead validators: skip if no participation in the last N days.
 				if t.DeadValidatorSilenceDays > 0 {
-					silenceWindow := fmt.Sprintf("-%d days", t.DeadValidatorSilenceDays)
+					silenceWindow := fmt.Sprintf("%d days", t.DeadValidatorSilenceDays)
 					var activeRecently int64
 					err = db.Raw(`
 						SELECT COUNT(*) FROM daily_participations
-						WHERE chain_id = ? AND addr = ? AND participated = 1
-						AND date >= datetime('now', ?)
+						WHERE chain_id = ? AND addr = ? AND participated = true
+						AND date >= NOW() - ?::interval
 					`, chainID, addr, silenceWindow).Scan(&activeRecently).Error
 					if err != nil {
 						log.Printf("[validator][%s] DB error checking silence window: %v", chainID, err)
@@ -569,7 +569,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 		FROM alert_logs al
 		WHERE al.chain_id = ?
 		  AND al.level IN ('WARNING', 'CRITICAL')
-		  AND al.skipped = 1
+		  AND al.skipped = true
 		  AND NOT EXISTS (
 		      SELECT 1 FROM alert_logs r
 		      WHERE r.chain_id = al.chain_id
@@ -599,7 +599,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 			WHERE chain_id    = ?
 			  AND addr        = ?
 			  AND block_height > ?
-			  AND participated = 1
+			  AND participated = true
 		`, chainID, a.Addr, a.EndHeight).Scan(&resumeHeight).Error
 		if err != nil {
 			log.Printf("[validator][%s] DB error checking participation: %v", chainID, err)
@@ -632,9 +632,14 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 	}
 
 	stmt := `
-		INSERT OR REPLACE INTO daily_participations
-		(chain_id, date, block_height, moniker, addr, participated,tx_contribution)
-		VALUES (?, ?, ?, ?, ?, ?,?)
+		INSERT INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated, tx_contribution)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (chain_id, block_height, addr) DO UPDATE SET
+		  date            = excluded.date,
+		  moniker         = excluded.moniker,
+		  participated    = excluded.participated,
+		  tx_contribution = excluded.tx_contribution
 	`
 
 	for valAddr, moniker := range monikerMap {

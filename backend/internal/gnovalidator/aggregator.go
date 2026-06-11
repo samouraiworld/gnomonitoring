@@ -54,8 +54,8 @@ func runAggregation(db *gorm.DB) {
 
 // AggregateChain inserts or updates rows in daily_participation_agregas for all
 // complete days (< today UTC) not yet aggregated for the given chain.
-// Each day is processed in its own transaction to keep write locks short and
-// avoid blocking concurrent writers (realtime loop, moniker refresh, etc.).
+// Each day is processed in its own transaction to keep transactions short and
+// avoid contending with concurrent writers (realtime loop, moniker refresh, etc.).
 func AggregateChain(db *gorm.DB, chainID string) error {
 	// Collect the distinct unaggregated days in one read (no write lock).
 	var lastDate string
@@ -68,9 +68,9 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 
 	var days []string
 	if err := db.Raw(
-		`SELECT DISTINCT DATE(date) AS d
+		`SELECT DISTINCT date::date AS d
 		 FROM daily_participations
-		 WHERE chain_id = ? AND DATE(date) > ? AND DATE(date) < DATE('now')
+		 WHERE chain_id = ? AND date::date > ? AND date::date < CURRENT_DATE
 		 ORDER BY d ASC`,
 		chainID, lastDate,
 	).Scan(&days).Error; err != nil {
@@ -89,7 +89,7 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 		SELECT
 		  chain_id,
 		  addr,
-		  DATE(date)                                            AS block_date,
+		  date::date                                            AS block_date,
 		  MAX(moniker)                                          AS moniker,
 		  SUM(CASE WHEN participated     THEN 1 ELSE 0 END)    AS participated_count,
 		  SUM(CASE WHEN NOT participated THEN 1 ELSE 0 END)    AS missed_count,
@@ -98,8 +98,8 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 		  MIN(block_height)                                    AS first_block_height,
 		  MAX(block_height)                                    AS last_block_height
 		FROM daily_participations
-		WHERE chain_id = ? AND DATE(date) = ?
-		GROUP BY chain_id, addr, DATE(date)
+		WHERE chain_id = ? AND date::date = ?
+		GROUP BY chain_id, addr, date::date
 		ON CONFLICT(chain_id, addr, block_date) DO UPDATE SET
 		  moniker               = excluded.moniker,
 		  participated_count    = excluded.participated_count,
@@ -117,7 +117,7 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 		}
 		totalRows += result.RowsAffected
 		// Yield briefly between days so other writers (realtime loop, monikers)
-		// can acquire the write lock without hitting busy_timeout.
+		// can make progress without contending with this loop's transactions.
 		time.Sleep(5 * time.Millisecond)
 	}
 
@@ -130,21 +130,23 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 const pruneBatchSize = 10_000
 
 // PruneRawData deletes rows from daily_participations older than rawRetentionDays
-// in batches of pruneBatchSize to avoid long write locks on SQLite.
+// in batches of pruneBatchSize to keep each DELETE transaction short and avoid
+// long-running transactions that could bloat Postgres dead tuples.
 func PruneRawData(db *gorm.DB, chainID string) error {
 	retentionDays := GetThresholds().RawRetentionDays
-	cutoff := fmt.Sprintf("-%d days", retentionDays)
+	cutoffDays := fmt.Sprintf("%d days", retentionDays) // e.g. "7 days", cast to interval in SQL
 	var totalPruned int64
 
 	for {
 		result := db.Exec(
 			`DELETE FROM daily_participations
-			 WHERE rowid IN (
-			   SELECT rowid FROM daily_participations
-			   WHERE chain_id = ? AND date < datetime('now', ?)
+			 WHERE id IN (
+			   SELECT id FROM daily_participations
+			   WHERE chain_id = ? AND date < NOW() - ?::interval
+			   ORDER BY id
 			   LIMIT ?
 			 )`,
-			chainID, cutoff, pruneBatchSize,
+			chainID, cutoffDays, pruneBatchSize,
 		)
 		if result.Error != nil {
 			return result.Error

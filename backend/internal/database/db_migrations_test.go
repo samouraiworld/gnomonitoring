@@ -19,48 +19,48 @@ func TestMigrationsApplyChainIDColumns(t *testing.T) {
 	// Verify chain_id exists in daily_participations
 	var result int
 	err := db.Raw(`
-		SELECT COUNT(*) FROM pragma_table_info('daily_participations')
-		WHERE name='chain_id'
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name='daily_participations' AND column_name='chain_id'
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in daily_participations")
 
 	// Verify chain_id exists in alert_logs
 	err = db.Raw(`
-		SELECT COUNT(*) FROM pragma_table_info('alert_logs')
-		WHERE name='chain_id'
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name='alert_logs' AND column_name='chain_id'
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in alert_logs")
 
 	// Verify chain_id exists in addr_monikers
 	err = db.Raw(`
-		SELECT COUNT(*) FROM pragma_table_info('addr_monikers')
-		WHERE name='chain_id'
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name='addr_monikers' AND column_name='chain_id'
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in addr_monikers")
 
 	// Verify chain_id exists in govdaos
 	err = db.Raw(`
-		SELECT COUNT(*) FROM pragma_table_info('govdaos')
-		WHERE name='chain_id'
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name='govdaos' AND column_name='chain_id'
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in govdaos")
 
 	// Verify chain_id exists in telegram_validator_subs
 	err = db.Raw(`
-		SELECT COUNT(*) FROM pragma_table_info('telegram_validator_subs')
-		WHERE name='chain_id'
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name='telegram_validator_subs' AND column_name='chain_id'
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in telegram_validator_subs")
 
 	// Verify chain_id exists in telegram_hour_reports
 	err = db.Raw(`
-		SELECT COUNT(*) FROM pragma_table_info('telegram_hour_reports')
-		WHERE name='chain_id'
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name='telegram_hour_reports' AND column_name='chain_id'
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in telegram_hour_reports")
@@ -82,8 +82,8 @@ func TestMigrationsIndexesCreated(t *testing.T) {
 	for _, indexName := range expectedIndexes {
 		var result int
 		err := db.Raw(`
-			SELECT COUNT(*) FROM sqlite_master
-			WHERE type='index' AND name=?
+			SELECT COUNT(*) FROM pg_indexes
+			WHERE indexname=?
 		`, indexName).Scan(&result).Error
 		require.NoError(t, err)
 		assert.Equal(t, 1, result, "index %s should exist", indexName)
@@ -382,7 +382,7 @@ func TestTelegramHourReportWithChainID(t *testing.T) {
 func TestApplyTelegramChainIDMigration(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	var count int
-	err := db.Raw(`SELECT COUNT(*) FROM pragma_table_info('telegrams') WHERE name='chain_id'`).
+	err := db.Raw(`SELECT COUNT(*) FROM information_schema.columns WHERE table_name='telegrams' AND column_name='chain_id'`).
 		Scan(&count).Error
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "chain_id column should exist in telegrams")
