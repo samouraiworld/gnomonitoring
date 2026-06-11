@@ -12,7 +12,7 @@ import (
 
 type Govdao struct {
 	Id      int    `gorm:"primaryKey;autoIncrement:false;column:id"`
-	ChainID string `gorm:"column:chain_id;not null;default:betanet"`
+	ChainID string `gorm:"column:chain_id;not null;default:'betanet'"`
 	Url     string `gorm:"column:url;" `
 	Title   string `gorm:"column:title;" `
 	Tx      string `gorm:"column:tx;" `
@@ -21,22 +21,22 @@ type Govdao struct {
 type Telegram struct {
 	ChatID    int64  `gorm:"primaryKey;column:chat_id;"                                           json:"chat_id"`
 	Type      string `gorm:"primaryKey;column:type;not null;check:type IN ('govdao','validator')" json:"chat_type"`
-	ChainID   string `gorm:"column:chain_id;not null;default:betanet"                             json:"chain_id"`
+	ChainID   string `gorm:"column:chain_id;not null;default:'betanet'"                             json:"chain_id"`
 	ChatTitle string `gorm:"column:chat_title;not null;default:''"                                json:"chat_title"`
 }
 type TelegramHourReport struct {
 	ChatID            int64  `gorm:"primaryKey;column:chat_id;"                          json:"chat_id"`
-	ChainID           string `gorm:"primaryKey;column:chain_id;not null;default:betanet" json:"chain_id"`
+	ChainID           string `gorm:"primaryKey;column:chain_id;not null;default:'betanet'" json:"chain_id"`
 	DailyReportHour   int    `gorm:"column:daily_report_hour;default:9"                  json:"daily_report_hour"`
 	DailyReportMinute int    `gorm:"column:daily_report_minute;default:0"                json:"daily_report_minute"`
 	Activate          bool   `gorm:"column:activate;default:true"                        json:"activate"`
-	Timezone          string `gorm:"column:timezone;default:Europe/Paris"                json:"timezone"`
+	Timezone          string `gorm:"column:timezone;default:'Europe/Paris'"                json:"timezone"`
 }
 
 type TelegramValidatorSub struct {
 	ID        uint      `gorm:"primaryKey;autoIncrement"                                                                   json:"ID"`
 	ChatID    int64     `gorm:"index:idx_tvs_chain_addr_chatid,unique,priority:3;not null"                                 json:"chat_id"`
-	ChainID   string    `gorm:"column:chain_id;not null;default:betanet;index:idx_tvs_chain_addr_chatid,unique,priority:1" json:"chain_id"`
+	ChainID   string    `gorm:"column:chain_id;not null;default:'betanet';index:idx_tvs_chain_addr_chatid,unique,priority:1" json:"chain_id"`
 	Moniker   string    `gorm:"size:64;index"                                                                              json:"moniker"`
 	Addr      string    `gorm:"index:idx_tvs_chain_addr_chatid,unique,priority:2;not null"                                 json:"addr"`
 	Activate  bool      `gorm:"default:true;index"                                                                         json:"activate"`
@@ -58,7 +58,7 @@ type HourReport struct {
 	UserID            string `gorm:"primaryKey;column:user_id;not null" `
 	DailyReportHour   int    `gorm:"column:daily_report_hour;default:9" json:"daily_report_hour"`
 	DailyReportMinute int    `gorm:"column:daily_report_minute;default:0" json:"daily_report_minute"`
-	Timezone          string `gorm:"column:timezone;default:Europe/Paris" `
+	Timezone          string `gorm:"column:timezone;default:'Europe/Paris'" `
 }
 
 type AlertContact struct {
@@ -93,7 +93,7 @@ type WebhookValidator struct {
 type DailyParticipation struct {
 	Date           time.Time `gorm:"column:date"`
 	BlockHeight    int64     `gorm:"column:block_height;uniqueIndex:uniq_chain_addr_height,priority:3"`
-	ChainID        string    `gorm:"column:chain_id;not null;default:betanet;uniqueIndex:uniq_chain_addr_height,priority:1"`
+	ChainID        string    `gorm:"column:chain_id;not null;default:'betanet';uniqueIndex:uniq_chain_addr_height,priority:1"`
 	Moniker        string    `gorm:"column:moniker"`
 	Addr           string    `gorm:"column:addr;not null;uniqueIndex:uniq_chain_addr_height,priority:2"`
 	Participated   bool      `gorm:"column:participated;not null"`
@@ -115,7 +115,7 @@ type DailyParticipationAgrega struct {
 
 type AlertLog struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement;column:id"                              json:"ID"`
-	ChainID     string    `gorm:"column:chain_id;not null;default:betanet;index:idx_al_chain_addr,priority:1" json:"chain_id"`
+	ChainID     string    `gorm:"column:chain_id;not null;default:'betanet';index:idx_al_chain_addr,priority:1" json:"chain_id"`
 	Addr        string    `gorm:"column:addr;not null;index:idx_al_chain_addr,priority:2"         json:"addr"`
 	Moniker     string    `gorm:"column:moniker;not null"                                         json:"moniker"`
 	Level       string    `gorm:"column:level;not null"                                           json:"level"`
@@ -128,7 +128,7 @@ type AlertLog struct {
 
 type AddrMoniker struct {
 	ID               uint   `gorm:"primaryKey;autoIncrement;column:id"                                     json:"ID"`
-	ChainID          string `gorm:"column:chain_id;not null;default:betanet;uniqueIndex:uniq_chain_addr,priority:1" json:"chain_id"`
+	ChainID          string `gorm:"column:chain_id;not null;default:'betanet';uniqueIndex:uniq_chain_addr,priority:1" json:"chain_id"`
 	Addr             string `gorm:"column:addr;not null;uniqueIndex:uniq_chain_addr,priority:2"            json:"addr"`
 	Moniker          string `gorm:"column:moniker;not null"                                                json:"moniker"`
 	FirstActiveBlock int64  `gorm:"column:first_active_block;default:-1"                                   json:"first_active_block"`
