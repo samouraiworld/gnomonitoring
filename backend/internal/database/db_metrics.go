@@ -51,28 +51,26 @@ func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 		end = start.AddDate(1, 0, 0)
 
 	case "all_time":
-		var minS, maxS sql.NullString
-		const layout = "2006-01-02 15:04:05.999999999-07:00"
+		// Scan the timestamptz bounds directly into time.Time. The Postgres
+		// driver returns native timestamps, so no string layout parsing is
+		// needed (and string parsing would break on RFC3339 output).
+		var minT, maxT sql.NullTime
 		if err := db.Raw(`
 				SELECT
 					MIN(sent_at),
 					MAX(sent_at)
 				FROM alert_logs
 				WHERE chain_id = ?
-				`, chainID).Row().Scan(&minS, &maxS); err != nil {
+				`, chainID).Row().Scan(&minT, &maxT); err != nil {
 			return nil, fmt.Errorf("error scanning alert log bounds: %w", err)
 		}
 
-		startf, err := time.Parse(layout, minS.String)
-		if err != nil {
-			return nil, fmt.Errorf("error get date max alertLog %w", err)
+		if !minT.Valid || !maxT.Valid {
+			// No alert_logs rows for this chain: return an empty result.
+			return alerts, nil
 		}
-		start = startf
-		endf, err := time.Parse(layout, maxS.String)
-		if err != nil {
-			return nil, fmt.Errorf("error get date min alertLog %w", err)
-		}
-		end = endf.AddDate(1, 0, 0)
+		start = minT.Time
+		end = maxT.Time.AddDate(1, 0, 0)
 
 	default:
 		return nil, fmt.Errorf("invalid period: %s", period)

@@ -4,8 +4,6 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
-
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
@@ -20,7 +18,7 @@ func TestMigrationsApplyChainIDColumns(t *testing.T) {
 	var result int
 	err := db.Raw(`
 		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name='daily_participations' AND column_name='chain_id'
+		WHERE table_name='daily_participations' AND column_name='chain_id' AND table_schema=current_schema()
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in daily_participations")
@@ -28,7 +26,7 @@ func TestMigrationsApplyChainIDColumns(t *testing.T) {
 	// Verify chain_id exists in alert_logs
 	err = db.Raw(`
 		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name='alert_logs' AND column_name='chain_id'
+		WHERE table_name='alert_logs' AND column_name='chain_id' AND table_schema=current_schema()
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in alert_logs")
@@ -36,7 +34,7 @@ func TestMigrationsApplyChainIDColumns(t *testing.T) {
 	// Verify chain_id exists in addr_monikers
 	err = db.Raw(`
 		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name='addr_monikers' AND column_name='chain_id'
+		WHERE table_name='addr_monikers' AND column_name='chain_id' AND table_schema=current_schema()
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in addr_monikers")
@@ -44,7 +42,7 @@ func TestMigrationsApplyChainIDColumns(t *testing.T) {
 	// Verify chain_id exists in govdaos
 	err = db.Raw(`
 		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name='govdaos' AND column_name='chain_id'
+		WHERE table_name='govdaos' AND column_name='chain_id' AND table_schema=current_schema()
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in govdaos")
@@ -52,7 +50,7 @@ func TestMigrationsApplyChainIDColumns(t *testing.T) {
 	// Verify chain_id exists in telegram_validator_subs
 	err = db.Raw(`
 		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name='telegram_validator_subs' AND column_name='chain_id'
+		WHERE table_name='telegram_validator_subs' AND column_name='chain_id' AND table_schema=current_schema()
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in telegram_validator_subs")
@@ -60,7 +58,7 @@ func TestMigrationsApplyChainIDColumns(t *testing.T) {
 	// Verify chain_id exists in telegram_hour_reports
 	err = db.Raw(`
 		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name='telegram_hour_reports' AND column_name='chain_id'
+		WHERE table_name='telegram_hour_reports' AND column_name='chain_id' AND table_schema=current_schema()
 	`).Scan(&result).Error
 	assert.NoError(t, err)
 	assert.Equal(t, 1, result, "chain_id column should exist in telegram_hour_reports")
@@ -83,7 +81,7 @@ func TestMigrationsIndexesCreated(t *testing.T) {
 		var result int
 		err := db.Raw(`
 			SELECT COUNT(*) FROM pg_indexes
-			WHERE indexname=?
+			WHERE indexname=? AND schemaname=current_schema()
 		`, indexName).Scan(&result).Error
 		require.NoError(t, err)
 		assert.Equal(t, 1, result, "index %s should exist", indexName)
@@ -382,7 +380,7 @@ func TestTelegramHourReportWithChainID(t *testing.T) {
 func TestApplyTelegramChainIDMigration(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	var count int
-	err := db.Raw(`SELECT COUNT(*) FROM information_schema.columns WHERE table_name='telegrams' AND column_name='chain_id'`).
+	err := db.Raw(`SELECT COUNT(*) FROM information_schema.columns WHERE table_name='telegrams' AND column_name='chain_id' AND table_schema=current_schema()`).
 		Scan(&count).Error
 	require.NoError(t, err)
 	assert.Equal(t, 1, count, "chain_id column should exist in telegrams")

@@ -267,7 +267,7 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64, chainID string) ([]Valida
 			v.moniker,
 			v.addr,
 			CASE
-				WHEN s.activate = 1 THEN 'on'
+				WHEN s.activate THEN 'on'
 				ELSE 'off'
 			END AS status
 		FROM v

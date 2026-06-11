@@ -3,8 +3,6 @@ package database_test
 import (
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
-
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 )

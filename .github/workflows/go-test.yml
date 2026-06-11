@@ -17,6 +17,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gnomonitoring
+          POSTGRES_PASSWORD: gnomonitoring
+          POSTGRES_DB: gnomonitoring_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -27,9 +42,6 @@ jobs:
           go-version: "1.23"
           cache-dependency-path: backend/go.sum
 
-      - name: Install CGO dependencies
-        run: sudo apt-get install -y gcc libc-dev libsqlite3-dev
-
       - name: Verify go.mod / go.sum are tidy
         run: |
           cd backend
@@ -37,6 +49,8 @@ jobs:
           git diff --exit-code go.mod go.sum
 
       - name: Run tests (race detector + coverage)
+        env:
+          TEST_DATABASE_DSN: "host=localhost port=5432 user=gnomonitoring password=gnomonitoring dbname=gnomonitoring_test sslmode=disable"
         run: |
           cd backend
           go test \
