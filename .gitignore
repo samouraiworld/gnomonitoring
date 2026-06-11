@@ -22,3 +22,10 @@ feat/feat-page-admin.md
 panel/node_modules
 panel/dist
 panel/.env
+
+# Local environment files (compose secrets, e.g. POSTGRES_PASSWORD).
+# Keep .env.example tracked.
+.env
+**/.env
+!.env.example
+!**/.env.example

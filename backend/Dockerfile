@@ -1,31 +1,22 @@
-# Étape 1 : Build avec CGO
-#FROM golang:1.26.1 AS builder
+# Step 1: Build (CGO-free, pure-Go pgx driver — no SQLite/libc needed)
 FROM golang:1.26.1-bookworm AS builder
 WORKDIR /app
-
-
-RUN apt-get update && apt-get install -y gcc libc-dev
 
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o server .
 
-RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o server .
 
-
-FROM debian:bookworm-slim AS final
+# Step 2: Final (distroless static — includes CA certificates)
+FROM gcr.io/distroless/static-debian12 AS final
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsqlite3-0 \
-    ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-
 COPY --from=builder /app/server .
-# COPY config.yaml ./config.yaml
 
+EXPOSE 8888
 EXPOSE 8989
 ENTRYPOINT ["./server"]
