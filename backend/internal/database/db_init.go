@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"gorm.io/driver/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -185,9 +185,12 @@ func ApplyMultiChainMigrations(db *gorm.DB) error {
 
 	// Check whether chain_id already exists in daily_participations.
 	var count int
-	row := sqlDB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('daily_participations') WHERE name='chain_id'`)
+	row := sqlDB.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = 'daily_participations' AND column_name = 'chain_id'
+	`)
 	if err := row.Scan(&count); err != nil {
-		return fmt.Errorf("ApplyMultiChainMigrations: pragma check: %w", err)
+		return fmt.Errorf("ApplyMultiChainMigrations: information_schema check: %w", err)
 	}
 
 	// If chain_id already present, migrations have already been applied.
@@ -215,31 +218,6 @@ func ApplyMultiChainMigrations(db *gorm.DB) error {
 		}
 	}
 
-	// telegram_hour_reports cannot gain a new PRIMARY KEY column via ALTER TABLE in
-	// SQLite, so we recreate the table and preserve existing rows.
-	recreateStmts := []string{
-		`CREATE TABLE IF NOT EXISTS telegram_hour_reports_new (
-			chat_id              INTEGER NOT NULL,
-			chain_id             TEXT    NOT NULL DEFAULT 'betanet',
-			daily_report_hour    INTEGER NOT NULL DEFAULT 9,
-			daily_report_minute  INTEGER NOT NULL DEFAULT 0,
-			activate             INTEGER NOT NULL DEFAULT 1,
-			timezone             TEXT    NOT NULL DEFAULT 'Europe/Paris',
-			PRIMARY KEY (chat_id, chain_id)
-		)`,
-		`INSERT INTO telegram_hour_reports_new (chat_id, chain_id, daily_report_hour, daily_report_minute, activate, timezone)
-			SELECT chat_id, 'betanet', daily_report_hour, daily_report_minute, activate, timezone
-			FROM telegram_hour_reports`,
-		`DROP TABLE telegram_hour_reports`,
-		`ALTER TABLE telegram_hour_reports_new RENAME TO telegram_hour_reports`,
-	}
-
-	for _, stmt := range recreateStmts {
-		if _, err := sqlDB.Exec(stmt); err != nil {
-			return fmt.Errorf("ApplyMultiChainMigrations: recreate telegram_hour_reports: %w", err)
-		}
-	}
-
 	return nil
 }
 
@@ -252,9 +230,10 @@ func ApplyTelegramChainIDMigration(db *gorm.DB) error {
 	}
 	var count int
 	if err := sqlDB.QueryRow(
-		`SELECT COUNT(*) FROM pragma_table_info('telegrams') WHERE name='chain_id'`,
+		`SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = 'telegrams' AND column_name = 'chain_id'`,
 	).Scan(&count); err != nil {
-		return fmt.Errorf("ApplyTelegramChainIDMigration: pragma check: %w", err)
+		return fmt.Errorf("ApplyTelegramChainIDMigration: information_schema check: %w", err)
 	}
 	if count > 0 {
 		return nil
@@ -333,38 +312,27 @@ func CreateAggregaIndexes(db *gorm.DB) error {
 	return nil
 }
 
-// InitDB opens the SQLite database, enables performance pragmas, runs
+// InitDB opens the PostgreSQL database, configures the connection pool, runs
 // AutoMigrate, applies multi-chain schema migrations, rebuilds indexes and
 // creates the missing-blocks view.
-func InitDB(dbPath string) (*gorm.DB, error) {
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+func InitDB(dsn string) (*gorm.DB, error) {
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Error),
 	})
 	if err != nil {
 		log.Fatalf("DB opening error: %v", err)
 	}
 
-	// Activate WAL mode
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, err
 	}
-	// SQLite allows only one writer at a time. Limiting the pool to a single
-	// connection serialises all access and prevents "database is locked" errors
-	// that arise when multiple goroutines (realtime loop, aggregator, Prometheus
-	// updater, etc.) hold separate connections and race on the write lock.
-	sqlDB.SetMaxOpenConns(1)
-
-	_, err = sqlDB.Exec("PRAGMA journal_mode = WAL;")
-	if err != nil {
-		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
-	}
-
-	_, _ = sqlDB.Exec("PRAGMA synchronous = NORMAL;")
-	_, _ = sqlDB.Exec("PRAGMA temp_store = MEMORY;")
-	_, _ = sqlDB.Exec("PRAGMA cache_size = -64000;")   // 64 MB page cache
-	_, _ = sqlDB.Exec("PRAGMA mmap_size = 268435456;") // 256 MB memory-mapped I/O
-	_, _ = sqlDB.Exec("PRAGMA busy_timeout = 5000;")   // 5s retry on SQLITE_BUSY
+	// Postgres handles concurrent writers natively (MVCC) — no single-connection
+	// workaround needed. Size the pool for the realtime loop, aggregator,
+	// Prometheus updater, scheduler and HTTP API running concurrently.
+	sqlDB.SetMaxOpenConns(20)
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	err = db.AutoMigrate(
 		&User{}, &AlertContact{}, &WebhookValidator{},

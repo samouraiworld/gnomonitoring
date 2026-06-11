@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/api"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/chainmanager"
@@ -47,7 +46,7 @@ func main() {
 
 	// ======================== Init DB ==================== //
 
-	db, err := database.InitDB("./db/webhooks.db")
+	db, err := database.InitDB(internal.Config.Database.DSN())
 	if err != nil {
 		log.Fatalf("[main] failed to initialize database: %v", err)
 	}

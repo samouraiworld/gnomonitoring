@@ -7,8 +7,10 @@ toolchain go1.23.10
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/machinebox/graphql v0.2.2
+	github.com/mattn/go-sqlite3 v1.14.45
 	github.com/stretchr/testify v1.10.0
 	gopkg.in/yaml.v2 v2.4.0
+	gorm.io/driver/postgres v1.6.0
 )
 
 require (
@@ -28,6 +30,10 @@ require (
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.25.1 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/pgx/v5 v5.6.0 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
@@ -72,9 +78,7 @@ require (
 require (
 	github.com/clerk/clerk-sdk-go/v2 v2.4.0
 	github.com/gnolang/gno v0.0.0-20250813140035-2b22f0bd37c7
-	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/prometheus/client_golang v1.22.0
 	golang.org/x/net v0.39.0 // indirect
-	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.30.1
 )

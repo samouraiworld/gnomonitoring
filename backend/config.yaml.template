@@ -7,6 +7,14 @@ clerk_secret_key: "sk_test...."  # change me
 token_telegram_validator: ""
 token_telegram_govdao: ""
 
+database:
+  host: "localhost"
+  port: 5432
+  user: "gnomonitoring"
+  password: ""
+  dbname: "gnomonitoring"
+  sslmode: "disable"
+
 # Default chain used when no ?chain= query parameter is supplied.
 # Must match one of the enabled chain keys below. Falls back to the
 # first enabled chain alphabetically if not set or invalid.
