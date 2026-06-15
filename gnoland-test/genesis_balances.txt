@@ -1,0 +1,6 @@
+# Local devnet balances - throwaway accounts, generously funded for testing.
+g1q3vhcyhhy84tzfctcm8n8n2ydmqqacapxhtwtv=10000000000000ugnot  # samourai-crew-1
+g1n0thyhx87f0ryum0h7yf3m6y0kk8csvkcwuh7c=10000000000000ugnot # samourai-crew-2
+g1h6g7fcwwtq5vsazmpgura3gjek8trvzq4f4c87=10000000000000ugnot # samourai-crew-3
+g132qwl96yd6s40a4wer8jxsq7a04xy5pr0c4qj7=10000000000000ugnot # samourai-crew-4 (phase2)
+g1fz9afdzgqsk2kw6sp44rjthcx25vz0e3ucgst5=10000000000000ugnot        # dev (unrestricted, .gnokey-dev)

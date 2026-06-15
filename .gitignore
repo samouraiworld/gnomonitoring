@@ -29,3 +29,10 @@ panel/.env
 **/.env
 !.env.example
 !**/.env.example
+
+# gnoland-test/ local devnet: .env only holds P2P seed addresses (not a
+# secret), and .gnokey-dev/ is a throwaway dev keybase committed for
+# reproducibility. Both are exceptions to the rules above.
+!gnoland-test/.env
+!gnoland-test/.gnokey-dev/
+!gnoland-test/.gnokey-dev/**
