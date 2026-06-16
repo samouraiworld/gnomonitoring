@@ -18,6 +18,7 @@ CLAUDE.md
 CODEX.md
 .claudeignore
 backend/db/backup**
+backend/migrate-sqlite-to-postgres
 feat/feat-page-admin.md
 panel/node_modules
 panel/dist
