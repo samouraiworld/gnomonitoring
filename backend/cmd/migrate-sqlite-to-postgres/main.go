@@ -182,7 +182,6 @@ func copyDailyParticipations(pgDSN string, src *gorm.DB) {
 	if err != nil {
 		log.Fatalf("pgxpool connect: %v", err)
 	}
-	defer pool.Close()
 
 	cols := []string{"date", "block_height", "chain_id", "moniker", "addr", "participated", "tx_contribution"}
 
@@ -226,6 +225,7 @@ func copyDailyParticipations(pgDSN string, src *gorm.DB) {
 		}
 	}
 
+	pool.Close()
 	log.Printf("[daily_participations] %d rows copied in %s (%.0f rows/s)",
 		total, time.Since(start).Round(time.Second), float64(total)/time.Since(start).Seconds())
 }
