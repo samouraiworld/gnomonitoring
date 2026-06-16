@@ -327,7 +327,7 @@ func WebsocketGovdao(ctx context.Context, db *gorm.DB, chainID string, graphqlEn
 func ExtractTitle(proposalID int, rpcEndpoint string) (string, error) {
 	rpcClient, err := rpcclient.NewHTTPClient(rpcEndpoint)
 	if err != nil {
-		log.Fatalf("Failed to connect to RPC: %v", err)
+		return "", fmt.Errorf("connect to RPC: %w", err)
 	}
 	client := &gnoclient.Client{RPCClient: rpcClient}
 
@@ -483,7 +483,7 @@ func ExtractProposalRender(proposalID int, rpcEndpoint string) (string, error) {
 
 	rpcClient, err := rpcclient.NewHTTPClient(rpcEndpoint)
 	if err != nil {
-		log.Fatalf("Failed to connect to RPC: %v", err)
+		return "", fmt.Errorf("connect to RPC: %w", err)
 	}
 	client := &gnoclient.Client{RPCClient: rpcClient}
 

@@ -144,13 +144,12 @@ func formatStatusProposal(db *gorm.DB, chainID string, limit int) (msg string, e
 			break
 		}
 		var emoji string
-		if r.Status == "ACEPTED" {
+		switch r.Status {
+		case "ACCEPTED":
 			emoji = "✅"
-		}
-		if r.Status == "IN PROGRESS" {
+		case "ACTIVE", "IN PROGRESS":
 			emoji = "⏳"
-		}
-		if r.Status == "REJECTED" {
+		case "REJECTED":
 			emoji = "❌"
 		}
 
