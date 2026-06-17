@@ -565,7 +565,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 
 	var pending []pendingAlert
 	err := db.Raw(`
-		SELECT al.addr, al.moniker, al.start_height, al.end_height
+		SELECT DISTINCT ON (al.addr) al.addr, al.moniker, al.start_height, al.end_height
 		FROM alert_logs al
 		WHERE al.chain_id = ?
 		  AND al.level IN ('WARNING', 'CRITICAL')
@@ -577,7 +577,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 		        AND r.level    = 'RESOLVED'
 		        AND r.end_height >= al.end_height
 		  )
-		ORDER BY al.addr, al.end_height
+		ORDER BY al.addr, al.end_height DESC
 		LIMIT 50
 	`, chainID).Scan(&pending).Error
 	if err != nil {
