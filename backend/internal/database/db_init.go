@@ -188,7 +188,9 @@ func ApplyMultiChainMigrations(db *gorm.DB) error {
 	var count int
 	row := sqlDB.QueryRow(`
 		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name = 'daily_participations' AND column_name = 'chain_id'
+		WHERE table_schema = current_schema()
+		  AND table_name = 'daily_participations'
+		  AND column_name = 'chain_id'
 	`)
 	if err := row.Scan(&count); err != nil {
 		return fmt.Errorf("ApplyMultiChainMigrations: information_schema check: %w", err)
@@ -232,7 +234,9 @@ func ApplyTelegramChainIDMigration(db *gorm.DB) error {
 	var count int
 	if err := sqlDB.QueryRow(
 		`SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_name = 'telegrams' AND column_name = 'chain_id'`,
+		WHERE table_schema = current_schema()
+		  AND table_name = 'telegrams'
+		  AND column_name = 'chain_id'`,
 	).Scan(&count); err != nil {
 		return fmt.Errorf("ApplyTelegramChainIDMigration: information_schema check: %w", err)
 	}
