@@ -30,6 +30,18 @@ services:
       - "127.0.0.1:8880:8888"
       - "127.0.0.1:8989:8989"
     command: ["./server"]
+    networks:
+      - default
+      - gno-devnet
 
 volumes:
   pgdata:
+
+networks:
+  default:
+  # Réseau du devnet local (gnoland-test/). Doit être démarré en premier :
+  #   cd gnoland-test && docker compose up -d
+  # Sans ça, docker compose up échoue car le réseau externe n'existe pas.
+  gno-devnet:
+    name: gnoland-test_default
+    external: true
