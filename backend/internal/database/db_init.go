@@ -321,7 +321,7 @@ func InitDB(dsn string) (*gorm.DB, error) {
 		Logger: logger.Default.LogMode(logger.Error),
 	})
 	if err != nil {
-		log.Fatalf("DB opening error: %v", err)
+		return nil, fmt.Errorf("DB opening error: %w", err)
 	}
 
 	sqlDB, err := db.DB()
