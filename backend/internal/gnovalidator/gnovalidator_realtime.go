@@ -575,7 +575,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 		      WHERE r.chain_id = al.chain_id
 		        AND r.addr     = al.addr
 		        AND r.level    = 'RESOLVED'
-		        AND r.end_height = al.end_height
+		        AND r.end_height >= al.end_height
 		  )
 		ORDER BY al.addr, al.end_height
 		LIMIT 50
