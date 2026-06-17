@@ -415,6 +415,15 @@ func SeedAdminConfig(db *gorm.DB) error {
 // as a fallback for recent validators within the 7-day retention window.
 // Idempotent: only updates rows where first_active_block = -1.
 func PopulateFirstActiveBlocks(db *gorm.DB) error {
+	var pending int64
+	if err := db.Model(&AddrMoniker{}).Where("first_active_block = -1").Count(&pending).Error; err != nil {
+		return fmt.Errorf("PopulateFirstActiveBlocks: count: %w", err)
+	}
+	if pending == 0 {
+		return nil
+	}
+
+	start := time.Now()
 	result := db.Exec(`
 		UPDATE addr_monikers
 		SET first_active_block = COALESCE(
@@ -437,7 +446,7 @@ func PopulateFirstActiveBlocks(db *gorm.DB) error {
 		return result.Error
 	}
 	if result.RowsAffected > 0 {
-		log.Printf("[db] populated first_active_block for %d validators", result.RowsAffected)
+		log.Printf("[db] populated first_active_block for %d validators in %s", result.RowsAffected, time.Since(start).Round(time.Millisecond))
 	}
 	return nil
 }
@@ -446,6 +455,8 @@ func PopulateFirstActiveBlocks(db *gorm.DB) error {
 // validator's first_active_block from both daily_participations and daily_participation_agregas.
 // Idempotent: safe to run on every startup (no-op once all spurious rows are removed).
 func CleanupSpuriousParticipations(db *gorm.DB) error {
+	start := time.Now()
+
 	raw := db.Exec(`
 		DELETE FROM daily_participations
 		WHERE participated = false
@@ -461,7 +472,8 @@ func CleanupSpuriousParticipations(db *gorm.DB) error {
 		return raw.Error
 	}
 	if raw.RowsAffected > 0 {
-		log.Printf("[db] deleted %d spurious participated=false rows from daily_participations", raw.RowsAffected)
+		log.Printf("[db] deleted %d spurious participated=false rows from daily_participations in %s",
+			raw.RowsAffected, time.Since(start).Round(time.Millisecond))
 	}
 
 	agrega := db.Exec(`
@@ -478,7 +490,8 @@ func CleanupSpuriousParticipations(db *gorm.DB) error {
 		return agrega.Error
 	}
 	if agrega.RowsAffected > 0 {
-		log.Printf("[db] deleted %d spurious rows from daily_participation_agregas", agrega.RowsAffected)
+		log.Printf("[db] deleted %d spurious rows from daily_participation_agregas in %s",
+			agrega.RowsAffected, time.Since(start).Round(time.Millisecond))
 	}
 	return nil
 }
