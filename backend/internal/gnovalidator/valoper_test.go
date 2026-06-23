@@ -476,3 +476,43 @@ func TestResolveMoniker(t *testing.T) {
 		})
 	}
 }
+
+func TestParseSigningAddress(t *testing.T) {
+	cases := []struct {
+		name     string
+		markdown string
+		want     string
+	}{
+		{
+			name: "extracts signing address from a profile render",
+			markdown: `("Valoper's details:\n## samourai-crew-1\n1. Name: SamouraiCoop\n\n` +
+				`- Operator Address: g1n9y62agq998jt8w59az60xcqlftjknjg2grhn4\n` +
+				`- Signing Address: g1k7asng8uzf74xs0tsrfwytldl76hs4l3asglym\n` +
+				`- Signing PubKey: gpub1pggj7ard9eg82\n- Server Type: cloud\n" string)`,
+			want: "g1k7asng8uzf74xs0tsrfwytldl76hs4l3asglym",
+		},
+		{
+			name:     "tolerates extra whitespace after the label",
+			markdown: "- Signing Address:    g1zhmw2fzprflze5qfqs8hxm9vdawvmvrejk3z25\n",
+			want:     "g1zhmw2fzprflze5qfqs8hxm9vdawvmvrejk3z25",
+		},
+		{
+			name:     "returns empty when no signing address is present",
+			markdown: "- Operator Address: g1n9y62agq998jt8w59az60xcqlftjknjg2grhn4\n",
+			want:     "",
+		},
+		{
+			name:     "returns empty for empty input",
+			markdown: "",
+			want:     "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseSigningAddress(tc.markdown); got != tc.want {
+				t.Errorf("parseSigningAddress() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

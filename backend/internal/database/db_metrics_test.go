@@ -441,3 +441,119 @@ func TestGetMoniker_CrossChain(t *testing.T) {
 	// Should not contain betanet validator
 	assert.NotContains(t, gnolandMap, "g1val1")
 }
+
+// TestGetMissedBlocksLast24h_PrefersAddrMonikers verifies that the missed-blocks
+// query resolves the display moniker from addr_monikers (kept current by the
+// metrics updater) rather than the moniker frozen into each daily_participations
+// row at insert time. Without the join, a validator whose name was "unknown"
+// when its blocks were recorded keeps showing "unknown" even after addr_monikers
+// is updated — the bug this guards against.
+func TestGetMissedBlocksLast24h_PrefersAddrMonikers(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now()
+
+	// Validator A: stale "unknown" frozen in daily_participations, but a fresh
+	// name now present in addr_monikers.
+	rows := []database.DailyParticipation{
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 100, Date: now.Add(-1 * time.Hour), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 101, Date: now.Add(-2 * time.Hour), Participated: false},
+		// Validator B: no addr_monikers entry, falls back to the dp moniker.
+		{ChainID: "test13", Addr: "g1other", Moniker: "OtherName", BlockHeight: 102, Date: now.Add(-3 * time.Hour), Participated: false},
+		// Participated row must be ignored.
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 103, Date: now.Add(-30 * time.Minute), Participated: true},
+		// Older than 24h must be ignored.
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 104, Date: now.Add(-48 * time.Hour), Participated: false},
+	}
+	require.NoError(t, db.Create(&rows).Error)
+
+	require.NoError(t, db.Create(&database.AddrMoniker{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1"}).Error)
+
+	result, err := database.GetMissedBlocksLast24h(db, "test13")
+	require.NoError(t, err)
+
+	got := map[string]database.MissedBlockCount{}
+	for _, r := range result {
+		got[r.Addr] = r
+	}
+
+	assert.Equal(t, "samourai-crew-1", got["g1signer"].Moniker, "should resolve from addr_monikers, not stale dp.moniker")
+	assert.Equal(t, 2, got["g1signer"].Missed, "should count only missed blocks within the last 24h")
+	assert.Equal(t, "OtherName", got["g1other"].Moniker, "should fall back to dp.moniker when no addr_monikers row exists")
+	assert.Equal(t, 1, got["g1other"].Missed)
+}
+
+// TestGetMissedWindows_JoinsAddrMonikersAndDoesNotFragment verifies the alert
+// detection query (1) resolves the moniker from addr_monikers rather than the
+// value frozen into daily_participations, and (2) treats a contiguous missed
+// streak as ONE window even when the per-row moniker changes mid-streak (it
+// must group by addr only, not by (addr, moniker)).
+func TestGetMissedWindows_JoinsAddrMonikersAndDoesNotFragment(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now()
+
+	// One contiguous missed streak whose frozen moniker flips "unknown" ->
+	// "samourai-crew-1" partway through. Old code keyed on (addr, moniker) and
+	// would split this into two windows.
+	rows := []database.DailyParticipation{
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 10, Date: now.Add(-20 * time.Minute), Participated: true},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 11, Date: now.Add(-19 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 12, Date: now.Add(-18 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1", BlockHeight: 13, Date: now.Add(-17 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1", BlockHeight: 14, Date: now.Add(-16 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1", BlockHeight: 15, Date: now.Add(-15 * time.Minute), Participated: false},
+		// Second validator: no addr_monikers entry -> falls back to dp moniker.
+		{ChainID: "test13", Addr: "g1other", Moniker: "OtherName", BlockHeight: 20, Date: now.Add(-12 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1other", Moniker: "OtherName", BlockHeight: 21, Date: now.Add(-11 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1other", Moniker: "OtherName", BlockHeight: 22, Date: now.Add(-10 * time.Minute), Participated: false},
+	}
+	require.NoError(t, db.Create(&rows).Error)
+	require.NoError(t, db.Create(&database.AddrMoniker{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1"}).Error)
+
+	windows, err := database.GetMissedWindows(db, "test13", 3)
+	require.NoError(t, err)
+
+	got := map[string]database.MissedWindow{}
+	for _, w := range windows {
+		got[w.Addr] = w
+	}
+
+	// g1signer: a single un-fragmented window of 5 missed, moniker from addr_monikers.
+	signer, ok := got["g1signer"]
+	require.True(t, ok, "expected a window for g1signer")
+	assert.Equal(t, 5, signer.Missed, "contiguous streak must not fragment on moniker change")
+	assert.Equal(t, "samourai-crew-1", signer.Moniker, "moniker must come from addr_monikers")
+	assert.Equal(t, int64(11), signer.StartHeight)
+	assert.Equal(t, int64(15), signer.EndHeight)
+
+	// g1other: 3 missed, moniker falls back to the dp value.
+	other, ok := got["g1other"]
+	require.True(t, ok, "expected a window for g1other")
+	assert.Equal(t, 3, other.Missed)
+	assert.Equal(t, "OtherName", other.Moniker)
+}
+
+// TestGetAlertLog_PrefersAddrMonikers verifies the alert-history query exposed
+// over the REST API resolves the current moniker from addr_monikers rather than
+// the one frozen into alert_logs when the alert fired.
+func TestGetAlertLog_PrefersAddrMonikers(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	require.NoError(t, db.Create(&database.AlertLog{
+		ChainID: "test13", Addr: "g1signer", Moniker: "unknown", Level: "WARNING",
+		StartHeight: 100, EndHeight: 130, SentAt: time.Now(),
+	}).Error)
+	require.NoError(t, db.Create(&database.AddrMoniker{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1"}).Error)
+
+	alerts, err := database.GetAlertLog(db, "test13", "current_year")
+	require.NoError(t, err)
+	require.NotEmpty(t, alerts)
+
+	var found bool
+	for _, a := range alerts {
+		if a.Addr == "g1signer" {
+			found = true
+			assert.Equal(t, "samourai-crew-1", a.Moniker, "should resolve from addr_monikers, not frozen alert_logs.moniker")
+		}
+	}
+	assert.True(t, found, "expected the g1signer alert in the result")
+}

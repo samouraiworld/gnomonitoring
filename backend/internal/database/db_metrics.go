@@ -79,15 +79,94 @@ func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 	startStr := start.Format("2006-01-02")
 	endStr := end.Format("2006-01-02")
 
-	result := db.
-		Model(&AlertLog{}).
-		Select("DISTINCT moniker, level,addr, start_height, end_height,msg,sent_at").
-		Order("end_height desc").
-		Where("chain_id = ? AND sent_at BETWEEN ? AND ?", chainID, startStr, endStr).
-		Limit(10).
-		Scan(&alerts)
+	// Resolve the moniker from addr_monikers (kept current) and fall back to the
+	// value frozen into alert_logs when the alert fired, mirroring the other
+	// moniker-bearing queries.
+	err := db.Raw(`
+		SELECT DISTINCT
+		       COALESCE(am.moniker, al.moniker, '') AS moniker,
+		       al.level, al.addr, al.start_height, al.end_height, al.msg, al.sent_at
+		FROM alert_logs al
+		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
+		WHERE al.chain_id = ? AND al.sent_at BETWEEN ? AND ?
+		ORDER BY al.end_height DESC
+		LIMIT 10
+	`, chainID, startStr, endStr).Scan(&alerts).Error
 
-	return alerts, result.Error
+	return alerts, err
+}
+
+// MissedWindow describes one contiguous run of missed blocks for a validator,
+// used by the alert detection loop.
+type MissedWindow struct {
+	Addr        string
+	Moniker     string
+	StartHeight int64
+	EndHeight   int64
+	Missed      int
+}
+
+// GetMissedWindows returns each contiguous missed-block sequence (>= threshold
+// misses) for the given chain within the last 30 minutes. The moniker is
+// resolved from addr_monikers, falling back to the value frozen into
+// daily_participations. Sequences are grouped by addr only — never by moniker —
+// so a streak is not fragmented when a validator's moniker is resolved partway
+// through it. Sequences already covered by a RESOLVED alert are excluded.
+func GetMissedWindows(db *gorm.DB, chainID string, threshold int) ([]MissedWindow, error) {
+	var windows []MissedWindow
+	err := db.Raw(`
+		WITH ranked AS (
+			SELECT
+				addr,
+				moniker,
+				block_height,
+				participated,
+				CASE
+					WHEN participated = false
+					 AND LAG(participated) OVER (PARTITION BY addr ORDER BY block_height) IS NOT DISTINCT FROM false
+					THEN 0 ELSE 1
+				END AS new_seq
+			FROM daily_participations
+			WHERE chain_id = ? AND date >= NOW() - INTERVAL '30 minutes'
+		),
+		grouped AS (
+			SELECT
+				addr,
+				moniker,
+				block_height,
+				participated,
+				SUM(new_seq) OVER (PARTITION BY addr ORDER BY block_height) AS seq_id
+			FROM ranked
+		),
+		sequences AS (
+			SELECT
+				addr,
+				MAX(moniker)      AS dp_moniker,
+				MIN(block_height) AS start_height,
+				MAX(block_height) AS end_height,
+				COUNT(*)          AS missed
+			FROM grouped
+			WHERE participated = false
+			GROUP BY addr, seq_id
+		)
+		SELECT s.addr,
+		       COALESCE(am.moniker, s.dp_moniker, '') AS moniker,
+		       s.start_height,
+		       s.end_height,
+		       s.missed
+		FROM sequences s
+		LEFT JOIN addr_monikers am ON am.chain_id = ? AND am.addr = s.addr
+		WHERE s.missed >= ?
+		  AND NOT EXISTS (
+		      SELECT 1 FROM alert_logs r
+		      WHERE r.chain_id   = ?
+		        AND r.addr       = s.addr
+		        AND r.level      = 'RESOLVED'
+		        AND r.end_height >= s.end_height
+		  )
+		ORDER BY s.addr, s.start_height
+	`, chainID, chainID, threshold, chainID).Scan(&windows).Error
+	return windows, err
 }
 
 // GetAlertLogsLast24h returns all alert_logs rows sent in the last 24 hours
@@ -599,13 +678,22 @@ type MissedBlockCount struct {
 // last 24 hours for the given chain, ordered by missed count descending.
 func GetMissedBlocksLast24h(db *gorm.DB, chainID string) ([]MissedBlockCount, error) {
 	var result []MissedBlockCount
+	// Resolve the moniker from addr_monikers (kept current by the metrics
+	// updater) and only fall back to the moniker frozen into the
+	// daily_participations row when no override exists, mirroring the sibling
+	// queries (CalculateValidatorStatusLast24h, CalculateRate). Without this
+	// join a validator named "unknown" when its blocks were recorded keeps
+	// showing "unknown" even after its moniker is later resolved.
 	err := db.Raw(`
-		SELECT addr, MAX(moniker) AS moniker, COUNT(*) AS missed
-		FROM daily_participations
-		WHERE chain_id = ?
-		  AND participated = false
-		  AND date >= NOW() - INTERVAL '24 hours'
-		GROUP BY addr
+		SELECT dp.addr,
+		       COALESCE(MAX(am.moniker), MAX(dp.moniker), '') AS moniker,
+		       COUNT(*) AS missed
+		FROM daily_participations dp
+		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		WHERE dp.chain_id = ?
+		  AND dp.participated = false
+		  AND dp.date >= NOW() - INTERVAL '24 hours'
+		GROUP BY dp.addr
 		ORDER BY missed DESC
 	`, chainID).Scan(&result).Error
 	return result, err
