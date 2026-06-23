@@ -441,3 +441,43 @@ func TestGetMoniker_CrossChain(t *testing.T) {
 	// Should not contain betanet validator
 	assert.NotContains(t, gnolandMap, "g1val1")
 }
+
+// TestGetMissedBlocksLast24h_PrefersAddrMonikers verifies that the missed-blocks
+// query resolves the display moniker from addr_monikers (kept current by the
+// metrics updater) rather than the moniker frozen into each daily_participations
+// row at insert time. Without the join, a validator whose name was "unknown"
+// when its blocks were recorded keeps showing "unknown" even after addr_monikers
+// is updated — the bug this guards against.
+func TestGetMissedBlocksLast24h_PrefersAddrMonikers(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now()
+
+	// Validator A: stale "unknown" frozen in daily_participations, but a fresh
+	// name now present in addr_monikers.
+	rows := []database.DailyParticipation{
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 100, Date: now.Add(-1 * time.Hour), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 101, Date: now.Add(-2 * time.Hour), Participated: false},
+		// Validator B: no addr_monikers entry, falls back to the dp moniker.
+		{ChainID: "test13", Addr: "g1other", Moniker: "OtherName", BlockHeight: 102, Date: now.Add(-3 * time.Hour), Participated: false},
+		// Participated row must be ignored.
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 103, Date: now.Add(-30 * time.Minute), Participated: true},
+		// Older than 24h must be ignored.
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 104, Date: now.Add(-48 * time.Hour), Participated: false},
+	}
+	require.NoError(t, db.Create(&rows).Error)
+
+	require.NoError(t, db.Create(&database.AddrMoniker{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1"}).Error)
+
+	result, err := database.GetMissedBlocksLast24h(db, "test13")
+	require.NoError(t, err)
+
+	got := map[string]database.MissedBlockCount{}
+	for _, r := range result {
+		got[r.Addr] = r
+	}
+
+	assert.Equal(t, "samourai-crew-1", got["g1signer"].Moniker, "should resolve from addr_monikers, not stale dp.moniker")
+	assert.Equal(t, 2, got["g1signer"].Missed, "should count only missed blocks within the last 24h")
+	assert.Equal(t, "OtherName", got["g1other"].Moniker, "should fall back to dp.moniker when no addr_monikers row exists")
+	assert.Equal(t, 1, got["g1other"].Missed)
+}

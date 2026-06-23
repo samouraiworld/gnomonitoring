@@ -599,13 +599,22 @@ type MissedBlockCount struct {
 // last 24 hours for the given chain, ordered by missed count descending.
 func GetMissedBlocksLast24h(db *gorm.DB, chainID string) ([]MissedBlockCount, error) {
 	var result []MissedBlockCount
+	// Resolve the moniker from addr_monikers (kept current by the metrics
+	// updater) and only fall back to the moniker frozen into the
+	// daily_participations row when no override exists, mirroring the sibling
+	// queries (CalculateValidatorStatusLast24h, CalculateRate). Without this
+	// join a validator named "unknown" when its blocks were recorded keeps
+	// showing "unknown" even after its moniker is later resolved.
 	err := db.Raw(`
-		SELECT addr, MAX(moniker) AS moniker, COUNT(*) AS missed
-		FROM daily_participations
-		WHERE chain_id = ?
-		  AND participated = false
-		  AND date >= NOW() - INTERVAL '24 hours'
-		GROUP BY addr
+		SELECT dp.addr,
+		       COALESCE(MAX(am.moniker), MAX(dp.moniker), '') AS moniker,
+		       COUNT(*) AS missed
+		FROM daily_participations dp
+		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		WHERE dp.chain_id = ?
+		  AND dp.participated = false
+		  AND dp.date >= NOW() - INTERVAL '24 hours'
+		GROUP BY dp.addr
 		ORDER BY missed DESC
 	`, chainID).Scan(&result).Error
 	return result, err
