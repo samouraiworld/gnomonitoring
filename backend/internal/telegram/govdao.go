@@ -128,7 +128,7 @@ func formatStatusProposal(db *gorm.DB, chainID string, limit int) (msg string, e
 
 	}
 	if len(status) == 0 {
-		return " <b>No GovDAO proposals available", nil
+		return " <b>No GovDAO proposals available</b>", nil
 	}
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "🗳️ [%s] <b>Gov Dao Proposal</b>", html.EscapeString(chainID))
@@ -160,8 +160,8 @@ func formatStatusProposal(db *gorm.DB, chainID string, limit int) (msg string, e
 				"%s  %s \n\n",
 
 			r.Id,
-			r.Title,
-			r.Url,
+			html.EscapeString(r.Title),
+			html.EscapeString(r.Url),
 			emoji,
 			r.Status,
 		))
@@ -178,7 +178,7 @@ func FormatGetLastExecute(db *gorm.DB, chainID string, limit int) (msg string, e
 
 	}
 	if len(status) == 0 {
-		return " <b>No executed proposals found", nil
+		return " <b>No executed proposals found</b>", nil
 	}
 	// limit
 	if len(status) < limit {
