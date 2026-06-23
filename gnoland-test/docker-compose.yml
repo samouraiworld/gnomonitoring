@@ -1,0 +1,98 @@
+services:
+  validator:
+    image: "gno-validator:local"
+    restart: on-failure
+    ports:
+      - 127.0.0.1:26658:26657
+    volumes:
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./validator/config.toml:/gnoroot/config.toml:ro
+      - ./validator/genesis.json:/gnoroot/gnoland-data/genesis.json:ro
+      - ./validator/gnoland-data:/gnoroot/gnoland-data
+    entrypoint: /entrypoint.sh
+    environment:
+      MONIKER: "samourai-crew-1"
+      SEEDS: "${SEEDS_VALIDATOR}"
+      PERSISTENT_PEERS: "${SEEDS_VALIDATOR}"
+      PEX: "true"
+
+  validator2:
+    image: "gno-validator:local"
+    restart: on-failure
+    ports:
+      - 127.0.0.1:26659:26657
+    volumes:
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./validator2/config.toml:/gnoroot/config.toml:ro
+      - ./validator2/genesis.json:/gnoroot/gnoland-data/genesis.json:ro
+      - ./validator2/gnoland-data:/gnoroot/gnoland-data
+    entrypoint: /entrypoint.sh
+    environment:
+      MONIKER: "samourai-crew-2"
+      SEEDS: "${SEEDS_VALIDATOR2}"
+      PERSISTENT_PEERS: "${SEEDS_VALIDATOR2}"
+      PEX: "true"
+
+  validator3:
+    image: "gno-validator:local"
+    restart: on-failure
+    ports:
+      - 127.0.0.1:26660:26657
+    volumes:
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./validator3/config.toml:/gnoroot/config.toml:ro
+      - ./validator3/genesis.json:/gnoroot/gnoland-data/genesis.json:ro
+      - ./validator3/gnoland-data:/gnoroot/gnoland-data
+    entrypoint: /entrypoint.sh
+    environment:
+      MONIKER: "samourai-crew-3"
+      SEEDS: "${SEEDS_VALIDATOR3}"
+      PERSISTENT_PEERS: "${SEEDS_VALIDATOR3}"
+      PEX: "true"
+
+  # validator4 is prepared by bootstrap.sh (secrets + node ID reserved) but
+  # kept out of genesis. It is started only for the Phase 2 "new validator
+  # via GovDAO" scenario:
+  #   docker compose --profile phase2 up -d validator4
+  validator4:
+    image: "gno-validator:local"
+    restart: on-failure
+    profiles: ["phase2"]
+    ports:
+      - 127.0.0.1:26661:26657
+    volumes:
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./validator4/config.toml:/gnoroot/config.toml:ro
+      - ./validator4/genesis.json:/gnoroot/gnoland-data/genesis.json:ro
+      - ./validator4/gnoland-data:/gnoroot/gnoland-data
+    entrypoint: /entrypoint.sh
+    environment:
+      MONIKER: "samourai-crew-4"
+      SEEDS: "${SEEDS_VALIDATOR4}"
+      PERSISTENT_PEERS: "${SEEDS_VALIDATOR4}"
+      PEX: "true"
+
+  tx-indexer:
+    image: "ghcr.io/gnolang/tx-indexer@sha256:174d52f27059723c1161a4edff7d15b4d23ed436d7bbcf01f5c219431b0dfbc5"
+    container_name: tx-indexer
+    restart: unless-stopped
+    ports:
+      - 8546:8546
+    command: start --remote http://validator:26657 --listen-address 0.0.0.0:8546 --db-path /var/lib/app/
+    volumes:
+      - tx-indexer-db:/var/lib/app/
+
+  gnoweb:
+    image: ghcr.io/gnolang/gno/gnoweb:master
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:8890:8888
+    entrypoint:
+      - gnoweb
+      - --bind=0.0.0.0:8888
+      - --remote=http://validator:26657
+      - --with-analytics
+      - --chainid=dev
+
+volumes:
+  tx-indexer-db:

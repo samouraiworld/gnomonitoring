@@ -7,6 +7,18 @@ clerk_secret_key: "sk_test...."  # change me
 token_telegram_validator: ""
 token_telegram_govdao: ""
 
+database:
+  host: "localhost"
+  port: 5432
+  user: "gnomonitoring"
+  password: ""
+  dbname: "gnomonitoring"
+  sslmode: "disable"
+
+# Local devnet: to test against the local Gno.land devnet started via
+# gnoland-test/bootstrap.sh + docker compose, copy the `chains.local` entry
+# from gnoland-test/config.devnet.yaml.example into the `chains:` map below.
+
 # Default chain used when no ?chain= query parameter is supplied.
 # Must match one of the enabled chain keys below. Falls back to the
 # first enabled chain alphabetically if not set or invalid.

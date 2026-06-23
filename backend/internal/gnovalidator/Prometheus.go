@@ -353,6 +353,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 			// Parse the date string returned from SQL (format: "YYYY-MM-DD HH:MM:SS" or with timezone)
 			var t time.Time
 			layouts := []string{
+				time.RFC3339,                // Postgres returns ::date as RFC3339 (e.g. 2026-06-01T00:00:00Z)
 				"2006-01-02 15:04:05-07:00", // with timezone
 				"2006-01-02 15:04:05",       // without timezone
 				"2006-01-02",                // date only (from daily_participation_agregas.block_date)

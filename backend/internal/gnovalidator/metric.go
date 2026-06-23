@@ -15,12 +15,12 @@ func CalculateMissedBlocks(db *gorm.DB, chainID string) ([]MissedBlockStat, erro
 
 	query := `
 		SELECT dp.addr,
-		       COALESCE(am.moniker, dp.moniker) AS moniker,
-		       SUM(CASE WHEN dp.participated = 0 THEN 1 ELSE 0 END) AS missed
+		       COALESCE(MAX(am.moniker), MAX(dp.moniker)) AS moniker,
+		       SUM(CASE WHEN dp.participated = false THEN 1 ELSE 0 END) AS missed
 		FROM daily_participations dp
 		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ?
-		  AND dp.date >= date('now')
+		  AND dp.date >= CURRENT_DATE
 		GROUP BY dp.addr`
 
 	err := db.Raw(query, chainID).Scan(&results).Error

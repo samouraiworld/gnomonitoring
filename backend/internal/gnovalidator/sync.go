@@ -32,8 +32,8 @@ func flushBatch(db *gorm.DB, rows []dpRow) error {
 		return nil
 	}
 	const cols = 7
-	const maxVars = 990 // marge
-	// sqlite limit insert 999 var
+	const maxVars = 990 // conservative chunk size
+	// Postgres allows up to 65535 bind parameters per statement; we stay well below.
 	maxRows := maxVars / cols
 	// len(rows) nbr rows
 

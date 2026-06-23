@@ -18,7 +18,22 @@ CLAUDE.md
 CODEX.md
 .claudeignore
 backend/db/backup**
+backend/migrate-sqlite-to-postgres
 feat/feat-page-admin.md
 panel/node_modules
 panel/dist
 panel/.env
+
+# Local environment files (compose secrets, e.g. POSTGRES_PASSWORD).
+# Keep .env.example tracked.
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# gnoland-test/ local devnet: .env only holds P2P seed addresses (not a
+# secret), and .gnokey-dev/ is a throwaway dev keybase committed for
+# reproducibility. Both are exceptions to the rules above.
+!gnoland-test/.env
+!gnoland-test/.gnokey-dev/
+!gnoland-test/.gnokey-dev/**

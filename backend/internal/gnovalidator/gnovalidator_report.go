@@ -130,7 +130,7 @@ func CalculateRate(db *gorm.DB, chainID, date string) (map[string]ValidatorRate,
 	// Returns one row per validator with participation totals and block height range.
 	rows, err := db.Raw(`
 		SELECT combined.addr,
-			COALESCE(am.moniker, MAX(combined.moniker), '') AS moniker,
+			COALESCE(MAX(am.moniker), MAX(combined.moniker), '') AS moniker,
 			SUM(combined.total_blocks) AS total_blocks,
 			SUM(combined.participated_count) AS participated_count,
 			MIN(combined.first_block_height) AS first_block,
@@ -147,8 +147,8 @@ func CalculateRate(db *gorm.DB, chainID, date string) (map[string]ValidatorRate,
 				MIN(dp.block_height), MAX(dp.block_height)
 			FROM daily_participations dp
 			LEFT JOIN daily_participation_agregas dpa
-				ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date = DATE(dp.date)
-			WHERE dp.chain_id = ? AND DATE(dp.date) = ? AND dpa.block_date IS NULL
+				ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date::date = dp.date::date
+			WHERE dp.chain_id = ? AND dp.date::date = ? AND dpa.block_date IS NULL
 			GROUP BY dp.chain_id, dp.addr
 		) combined
 		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr

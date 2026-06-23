@@ -267,7 +267,7 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64, chainID string) ([]Valida
 			v.moniker,
 			v.addr,
 			CASE
-				WHEN s.activate = 1 THEN 'on'
+				WHEN s.activate THEN 'on'
 				ELSE 'off'
 			END AS status
 		FROM v
@@ -393,7 +393,6 @@ func GetStatusofGovdao(db *gorm.DB, chainID string) ([]Govdao, error) {
 			id DESC;`
 
 	err := db.Raw(query, chainID).Scan(&results).Error
-	log.Println(results)
 
 	return results, err
 }
@@ -410,12 +409,11 @@ func GetLastExecute(db *gorm.DB, chainID string) ([]Govdao, error) {
 			chain_id
 		FROM
 			govdaos
-		WHERE chain_id = ? AND status = "ACCEPTED"
+		WHERE chain_id = ? AND status = 'ACCEPTED'
 		ORDER BY
 			id DESC;`
 
 	err := db.Raw(query, chainID).Scan(&results).Error
-	log.Println(results)
 
 	return results, err
 }

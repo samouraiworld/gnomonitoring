@@ -63,7 +63,7 @@ Instead of deploying separate instances per chain, you can configure multiple ch
 
 - Has its own RPC endpoint, GraphQL indexer, and Gnoweb UI
 - Maintains independent validator monitoring loops
-- Stores data isolated by chain ID in SQLite
+- Stores data isolated by chain ID in PostgreSQL
 - Sends alerts and reports scoped to its validators
 - Works seamlessly with webhooks, Telegram bots, and Prometheus metrics
 
@@ -243,7 +243,7 @@ metric_relabel_configs:
 
 2. **Prometheus Memory**: Each (chain × validator × metric) creates a new time series. With 5 chains and 100 validators, expect ~1500 metric series. Monitor Prometheus memory usage; archive old data if needed.
 
-3. **SQLite Scaling**: Suitable for up to 1M records per chain per year. With 5 chains at 200K records/year each, SQLite handles 1M total records. Beyond 5M records, implement data archiving or migrate to PostgreSQL.
+3. **Storage Scaling**: Data is stored in PostgreSQL. Raw per-block participation is bounded by `raw_retention_days` (default 7) and rolled up into daily aggregates, so the dataset stays bounded as chains progress. For very large multi-chain deployments, monitor table/index growth and tune retention accordingly.
 
 ---
 

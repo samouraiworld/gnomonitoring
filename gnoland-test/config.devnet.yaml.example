@@ -1,0 +1,14 @@
+# Example chain entry for the local devnet started via
+# `gnoland-test/bootstrap.sh` + `docker compose up -d`.
+#
+# Copy this block into the `chains:` section of `backend/config.yaml`
+# (and set `default_chain: "local"` or query with `?chain=local`).
+chains:
+  local:
+    rpc_endpoints:
+      - "http://localhost:26658"   # validator (host port from docker-compose)
+    graphqls:
+      - "http://localhost:8546/graphql/query"
+    gnowebs:
+      - "http://localhost:8890"
+    enabled: true

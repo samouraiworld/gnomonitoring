@@ -84,6 +84,24 @@ func (c *ChainConfig) GnowebEndpoint() string {
 	return c.GnowebEndpoints[0]
 }
 
+type DatabaseConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	DBName   string `yaml:"dbname"`
+	SSLMode  string `yaml:"sslmode"` // "disable" for local docker-compose, "require" for managed PG
+}
+
+func (c DatabaseConfig) DSN() string {
+	sslmode := c.SSLMode
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		c.Host, c.Port, c.User, c.Password, c.DBName, sslmode)
+}
+
 type config struct {
 	BackendPort            string                  `yaml:"backend_port"`
 	AllowOrigin            string                  `yaml:"allow_origin"`
@@ -94,6 +112,7 @@ type config struct {
 	TokenTelegramGovdao    string                  `yaml:"token_telegram_govdao"`
 	Chains                 map[string]*ChainConfig `yaml:"chains"`
 	DefaultChain           string                  `yaml:"default_chain"`
+	Database               DatabaseConfig          `yaml:"database"`
 
 	// Parsed at load time from AllowOrigin (comma-separated).
 	AllowedOrigins []string `yaml:"-"`

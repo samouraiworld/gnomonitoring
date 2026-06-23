@@ -5,14 +5,14 @@ import (
 	"log"
 	"time"
 
-	"gorm.io/driver/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 type Govdao struct {
 	Id      int    `gorm:"primaryKey;autoIncrement:false;column:id"`
-	ChainID string `gorm:"column:chain_id;not null;default:betanet"`
+	ChainID string `gorm:"column:chain_id;not null;default:'betanet'"`
 	Url     string `gorm:"column:url;" `
 	Title   string `gorm:"column:title;" `
 	Tx      string `gorm:"column:tx;" `
@@ -21,22 +21,22 @@ type Govdao struct {
 type Telegram struct {
 	ChatID    int64  `gorm:"primaryKey;column:chat_id;"                                           json:"chat_id"`
 	Type      string `gorm:"primaryKey;column:type;not null;check:type IN ('govdao','validator')" json:"chat_type"`
-	ChainID   string `gorm:"column:chain_id;not null;default:betanet"                             json:"chain_id"`
+	ChainID   string `gorm:"column:chain_id;not null;default:'betanet'"                             json:"chain_id"`
 	ChatTitle string `gorm:"column:chat_title;not null;default:''"                                json:"chat_title"`
 }
 type TelegramHourReport struct {
 	ChatID            int64  `gorm:"primaryKey;column:chat_id;"                          json:"chat_id"`
-	ChainID           string `gorm:"primaryKey;column:chain_id;not null;default:betanet" json:"chain_id"`
+	ChainID           string `gorm:"primaryKey;column:chain_id;not null;default:'betanet'" json:"chain_id"`
 	DailyReportHour   int    `gorm:"column:daily_report_hour;default:9"                  json:"daily_report_hour"`
 	DailyReportMinute int    `gorm:"column:daily_report_minute;default:0"                json:"daily_report_minute"`
 	Activate          bool   `gorm:"column:activate;default:true"                        json:"activate"`
-	Timezone          string `gorm:"column:timezone;default:Europe/Paris"                json:"timezone"`
+	Timezone          string `gorm:"column:timezone;default:'Europe/Paris'"                json:"timezone"`
 }
 
 type TelegramValidatorSub struct {
 	ID        uint      `gorm:"primaryKey;autoIncrement"                                                                   json:"ID"`
 	ChatID    int64     `gorm:"index:idx_tvs_chain_addr_chatid,unique,priority:3;not null"                                 json:"chat_id"`
-	ChainID   string    `gorm:"column:chain_id;not null;default:betanet;index:idx_tvs_chain_addr_chatid,unique,priority:1" json:"chain_id"`
+	ChainID   string    `gorm:"column:chain_id;not null;default:'betanet';index:idx_tvs_chain_addr_chatid,unique,priority:1" json:"chain_id"`
 	Moniker   string    `gorm:"size:64;index"                                                                              json:"moniker"`
 	Addr      string    `gorm:"index:idx_tvs_chain_addr_chatid,unique,priority:2;not null"                                 json:"addr"`
 	Activate  bool      `gorm:"default:true;index"                                                                         json:"activate"`
@@ -58,7 +58,7 @@ type HourReport struct {
 	UserID            string `gorm:"primaryKey;column:user_id;not null" `
 	DailyReportHour   int    `gorm:"column:daily_report_hour;default:9" json:"daily_report_hour"`
 	DailyReportMinute int    `gorm:"column:daily_report_minute;default:0" json:"daily_report_minute"`
-	Timezone          string `gorm:"column:timezone;default:Europe/Paris" `
+	Timezone          string `gorm:"column:timezone;default:'Europe/Paris'" `
 }
 
 type AlertContact struct {
@@ -91,9 +91,10 @@ type WebhookValidator struct {
 	ChainID     *string   `gorm:"column:chain_id;default:null"`
 }
 type DailyParticipation struct {
+	ID             uint64    `gorm:"column:id;primaryKey;autoIncrement"`
 	Date           time.Time `gorm:"column:date"`
 	BlockHeight    int64     `gorm:"column:block_height;uniqueIndex:uniq_chain_addr_height,priority:3"`
-	ChainID        string    `gorm:"column:chain_id;not null;default:betanet;uniqueIndex:uniq_chain_addr_height,priority:1"`
+	ChainID        string    `gorm:"column:chain_id;not null;default:'betanet';uniqueIndex:uniq_chain_addr_height,priority:1"`
 	Moniker        string    `gorm:"column:moniker"`
 	Addr           string    `gorm:"column:addr;not null;uniqueIndex:uniq_chain_addr_height,priority:2"`
 	Participated   bool      `gorm:"column:participated;not null"`
@@ -115,7 +116,7 @@ type DailyParticipationAgrega struct {
 
 type AlertLog struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement;column:id"                              json:"ID"`
-	ChainID     string    `gorm:"column:chain_id;not null;default:betanet;index:idx_al_chain_addr,priority:1" json:"chain_id"`
+	ChainID     string    `gorm:"column:chain_id;not null;default:'betanet';index:idx_al_chain_addr,priority:1" json:"chain_id"`
 	Addr        string    `gorm:"column:addr;not null;index:idx_al_chain_addr,priority:2"         json:"addr"`
 	Moniker     string    `gorm:"column:moniker;not null"                                         json:"moniker"`
 	Level       string    `gorm:"column:level;not null"                                           json:"level"`
@@ -128,7 +129,7 @@ type AlertLog struct {
 
 type AddrMoniker struct {
 	ID               uint   `gorm:"primaryKey;autoIncrement;column:id"                                     json:"ID"`
-	ChainID          string `gorm:"column:chain_id;not null;default:betanet;uniqueIndex:uniq_chain_addr,priority:1" json:"chain_id"`
+	ChainID          string `gorm:"column:chain_id;not null;default:'betanet';uniqueIndex:uniq_chain_addr,priority:1" json:"chain_id"`
 	Addr             string `gorm:"column:addr;not null;uniqueIndex:uniq_chain_addr,priority:2"            json:"addr"`
 	Moniker          string `gorm:"column:moniker;not null"                                                json:"moniker"`
 	FirstActiveBlock int64  `gorm:"column:first_active_block;default:-1"                                   json:"first_active_block"`
@@ -185,9 +186,14 @@ func ApplyMultiChainMigrations(db *gorm.DB) error {
 
 	// Check whether chain_id already exists in daily_participations.
 	var count int
-	row := sqlDB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('daily_participations') WHERE name='chain_id'`)
+	row := sqlDB.QueryRow(`
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = current_schema()
+		  AND table_name = 'daily_participations'
+		  AND column_name = 'chain_id'
+	`)
 	if err := row.Scan(&count); err != nil {
-		return fmt.Errorf("ApplyMultiChainMigrations: pragma check: %w", err)
+		return fmt.Errorf("ApplyMultiChainMigrations: information_schema check: %w", err)
 	}
 
 	// If chain_id already present, migrations have already been applied.
@@ -215,31 +221,6 @@ func ApplyMultiChainMigrations(db *gorm.DB) error {
 		}
 	}
 
-	// telegram_hour_reports cannot gain a new PRIMARY KEY column via ALTER TABLE in
-	// SQLite, so we recreate the table and preserve existing rows.
-	recreateStmts := []string{
-		`CREATE TABLE IF NOT EXISTS telegram_hour_reports_new (
-			chat_id              INTEGER NOT NULL,
-			chain_id             TEXT    NOT NULL DEFAULT 'betanet',
-			daily_report_hour    INTEGER NOT NULL DEFAULT 9,
-			daily_report_minute  INTEGER NOT NULL DEFAULT 0,
-			activate             INTEGER NOT NULL DEFAULT 1,
-			timezone             TEXT    NOT NULL DEFAULT 'Europe/Paris',
-			PRIMARY KEY (chat_id, chain_id)
-		)`,
-		`INSERT INTO telegram_hour_reports_new (chat_id, chain_id, daily_report_hour, daily_report_minute, activate, timezone)
-			SELECT chat_id, 'betanet', daily_report_hour, daily_report_minute, activate, timezone
-			FROM telegram_hour_reports`,
-		`DROP TABLE telegram_hour_reports`,
-		`ALTER TABLE telegram_hour_reports_new RENAME TO telegram_hour_reports`,
-	}
-
-	for _, stmt := range recreateStmts {
-		if _, err := sqlDB.Exec(stmt); err != nil {
-			return fmt.Errorf("ApplyMultiChainMigrations: recreate telegram_hour_reports: %w", err)
-		}
-	}
-
 	return nil
 }
 
@@ -252,9 +233,12 @@ func ApplyTelegramChainIDMigration(db *gorm.DB) error {
 	}
 	var count int
 	if err := sqlDB.QueryRow(
-		`SELECT COUNT(*) FROM pragma_table_info('telegrams') WHERE name='chain_id'`,
+		`SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = current_schema()
+		  AND table_name = 'telegrams'
+		  AND column_name = 'chain_id'`,
 	).Scan(&count); err != nil {
-		return fmt.Errorf("ApplyTelegramChainIDMigration: pragma check: %w", err)
+		return fmt.Errorf("ApplyTelegramChainIDMigration: information_schema check: %w", err)
 	}
 	if count > 0 {
 		return nil
@@ -333,38 +317,27 @@ func CreateAggregaIndexes(db *gorm.DB) error {
 	return nil
 }
 
-// InitDB opens the SQLite database, enables performance pragmas, runs
+// InitDB opens the PostgreSQL database, configures the connection pool, runs
 // AutoMigrate, applies multi-chain schema migrations, rebuilds indexes and
 // creates the missing-blocks view.
-func InitDB(dbPath string) (*gorm.DB, error) {
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+func InitDB(dsn string) (*gorm.DB, error) {
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Error),
 	})
 	if err != nil {
-		log.Fatalf("DB opening error: %v", err)
+		return nil, fmt.Errorf("DB opening error: %w", err)
 	}
 
-	// Activate WAL mode
 	sqlDB, err := db.DB()
 	if err != nil {
 		return nil, err
 	}
-	// SQLite allows only one writer at a time. Limiting the pool to a single
-	// connection serialises all access and prevents "database is locked" errors
-	// that arise when multiple goroutines (realtime loop, aggregator, Prometheus
-	// updater, etc.) hold separate connections and race on the write lock.
-	sqlDB.SetMaxOpenConns(1)
-
-	_, err = sqlDB.Exec("PRAGMA journal_mode = WAL;")
-	if err != nil {
-		return nil, fmt.Errorf("failed to enable WAL mode: %w", err)
-	}
-
-	_, _ = sqlDB.Exec("PRAGMA synchronous = NORMAL;")
-	_, _ = sqlDB.Exec("PRAGMA temp_store = MEMORY;")
-	_, _ = sqlDB.Exec("PRAGMA cache_size = -64000;")   // 64 MB page cache
-	_, _ = sqlDB.Exec("PRAGMA mmap_size = 268435456;") // 256 MB memory-mapped I/O
-	_, _ = sqlDB.Exec("PRAGMA busy_timeout = 5000;")   // 5s retry on SQLITE_BUSY
+	// Postgres handles concurrent writers natively (MVCC) — no single-connection
+	// workaround needed. Size the pool for the realtime loop, aggregator,
+	// Prometheus updater, scheduler and HTTP API running concurrently.
+	sqlDB.SetMaxOpenConns(20)
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	err = db.AutoMigrate(
 		&User{}, &AlertContact{}, &WebhookValidator{},
@@ -442,6 +415,15 @@ func SeedAdminConfig(db *gorm.DB) error {
 // as a fallback for recent validators within the 7-day retention window.
 // Idempotent: only updates rows where first_active_block = -1.
 func PopulateFirstActiveBlocks(db *gorm.DB) error {
+	var pending int64
+	if err := db.Model(&AddrMoniker{}).Where("first_active_block = -1").Count(&pending).Error; err != nil {
+		return fmt.Errorf("PopulateFirstActiveBlocks: count: %w", err)
+	}
+	if pending == 0 {
+		return nil
+	}
+
+	start := time.Now()
 	result := db.Exec(`
 		UPDATE addr_monikers
 		SET first_active_block = COALESCE(
@@ -456,7 +438,7 @@ func PopulateFirstActiveBlocks(db *gorm.DB) error {
 			 FROM daily_participations
 			 WHERE addr = addr_monikers.addr
 			   AND chain_id = addr_monikers.chain_id
-			   AND participated = 1)
+			   AND participated = true)
 		)
 		WHERE first_active_block = -1
 	`)
@@ -464,7 +446,7 @@ func PopulateFirstActiveBlocks(db *gorm.DB) error {
 		return result.Error
 	}
 	if result.RowsAffected > 0 {
-		log.Printf("[db] populated first_active_block for %d validators", result.RowsAffected)
+		log.Printf("[db] populated first_active_block for %d validators in %s", result.RowsAffected, time.Since(start).Round(time.Millisecond))
 	}
 	return nil
 }
@@ -473,9 +455,11 @@ func PopulateFirstActiveBlocks(db *gorm.DB) error {
 // validator's first_active_block from both daily_participations and daily_participation_agregas.
 // Idempotent: safe to run on every startup (no-op once all spurious rows are removed).
 func CleanupSpuriousParticipations(db *gorm.DB) error {
+	start := time.Now()
+
 	raw := db.Exec(`
 		DELETE FROM daily_participations
-		WHERE participated = 0
+		WHERE participated = false
 		  AND EXISTS (
 			  SELECT 1 FROM addr_monikers am
 			  WHERE am.addr = daily_participations.addr
@@ -488,7 +472,8 @@ func CleanupSpuriousParticipations(db *gorm.DB) error {
 		return raw.Error
 	}
 	if raw.RowsAffected > 0 {
-		log.Printf("[db] deleted %d spurious participated=false rows from daily_participations", raw.RowsAffected)
+		log.Printf("[db] deleted %d spurious participated=false rows from daily_participations in %s",
+			raw.RowsAffected, time.Since(start).Round(time.Millisecond))
 	}
 
 	agrega := db.Exec(`
@@ -505,7 +490,8 @@ func CleanupSpuriousParticipations(db *gorm.DB) error {
 		return agrega.Error
 	}
 	if agrega.RowsAffected > 0 {
-		log.Printf("[db] deleted %d spurious rows from daily_participation_agregas", agrega.RowsAffected)
+		log.Printf("[db] deleted %d spurious rows from daily_participation_agregas in %s",
+			agrega.RowsAffected, time.Since(start).Round(time.Millisecond))
 	}
 	return nil
 }

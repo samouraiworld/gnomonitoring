@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
@@ -208,7 +207,7 @@ func TestAlertLogChainIsolation(t *testing.T) {
 func TestMissingSeriesCTEChainFilter(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
-	// Use recent timestamps so they fall within the "datetime('now', '-24 hours')"
+	// Use recent timestamps so they fall within the "NOW() - INTERVAL '24 hours'"
 	// window in the CTE query.
 	recent := time.Now().Add(-1 * time.Hour)
 
@@ -261,33 +260,33 @@ func TestMissingSeriesCTEChainFilter(t *testing.T) {
 				block_height,
 				participated,
 				CASE
-					WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) = 1
+					WHEN participated = false AND LAG(participated) OVER (PARTITION BY addr, moniker, date::date ORDER BY block_height) = true
 					THEN 1
-					WHEN participated = 0 AND LAG(participated) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) IS NULL
+					WHEN participated = false AND LAG(participated) OVER (PARTITION BY addr, moniker, date::date ORDER BY block_height) IS NULL
 					THEN 1
 					ELSE 0
 				END AS new_seq
 			FROM daily_participations
-			WHERE chain_id = ? AND date >= datetime('now', '-24 hours')
+			WHERE chain_id = ? AND date >= NOW() - INTERVAL '24 hours'
 		),
 		grouped AS (
 			SELECT
 				*,
-				SUM(new_seq) OVER (PARTITION BY addr, moniker, DATE(date) ORDER BY block_height) AS seq_id
+				SUM(new_seq) OVER (PARTITION BY addr, moniker, date::date ORDER BY block_height) AS seq_id
 			FROM ranked
 		)
 		SELECT
 			addr,
 			moniker,
-			MIN(block_height) OVER (PARTITION BY addr, moniker, DATE(date), seq_id) AS start_height,
+			MIN(block_height) OVER (PARTITION BY addr, moniker, date::date, seq_id) AS start_height,
 			block_height AS end_height,
 			SUM(1) OVER (
-				PARTITION BY addr, moniker, DATE(date), seq_id
+				PARTITION BY addr, moniker, date::date, seq_id
 				ORDER BY block_height
 				ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 			) AS missed
 		FROM grouped
-		WHERE participated = 0
+		WHERE participated = false
 		ORDER BY addr, moniker, date, seq_id, block_height
 	`, "chainA").Rows()
 	require.NoError(t, err)
