@@ -12,7 +12,7 @@ import (
 
 type Govdao struct {
 	Id      int    `gorm:"primaryKey;autoIncrement:false;column:id"`
-	ChainID string `gorm:"column:chain_id;not null;default:'betanet'"`
+	ChainID string `gorm:"primaryKey;column:chain_id;not null;default:'betanet'"`
 	Url     string `gorm:"column:url;" `
 	Title   string `gorm:"column:title;" `
 	Tx      string `gorm:"column:tx;" `
@@ -251,6 +251,59 @@ func ApplyTelegramChainIDMigration(db *gorm.DB) error {
 	return nil
 }
 
+// ApplyGovdaoCompositePrimaryKeyMigration changes the govdaos primary key from
+// id alone to the composite (chain_id, id). Proposal IDs are per-chain
+// sequential counters, so two chains inevitably reuse the same integer id;
+// with id alone as the PK, InsertGovdao's ON CONFLICT DO NOTHING silently
+// dropped every chain's row that collided with another chain's already-stored
+// id. Idempotent: checks whether chain_id is already part of the primary key
+// before altering. Safe on existing data: the old id-only PK already
+// guaranteed at most one row per id, so no row can violate the new
+// (chain_id, id) uniqueness.
+func ApplyGovdaoCompositePrimaryKeyMigration(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("ApplyGovdaoCompositePrimaryKeyMigration: get sql.DB: %w", err)
+	}
+
+	var count int
+	if err := sqlDB.QueryRow(`
+		SELECT COUNT(*)
+		FROM information_schema.key_column_usage kcu
+		JOIN information_schema.table_constraints tc
+		  ON tc.constraint_name = kcu.constraint_name
+		 AND tc.table_schema = kcu.table_schema
+		WHERE tc.table_schema = current_schema()
+		  AND tc.table_name = 'govdaos'
+		  AND tc.constraint_type = 'PRIMARY KEY'
+		  AND kcu.column_name = 'chain_id'
+	`).Scan(&count); err != nil {
+		return fmt.Errorf("ApplyGovdaoCompositePrimaryKeyMigration: check: %w", err)
+	}
+	if count > 0 {
+		// chain_id is already part of the primary key.
+		return nil
+	}
+
+	var pkName string
+	if err := sqlDB.QueryRow(`
+		SELECT constraint_name FROM information_schema.table_constraints
+		WHERE table_schema = current_schema()
+		  AND table_name = 'govdaos'
+		  AND constraint_type = 'PRIMARY KEY'
+	`).Scan(&pkName); err != nil {
+		return fmt.Errorf("ApplyGovdaoCompositePrimaryKeyMigration: find existing pk: %w", err)
+	}
+
+	if _, err := sqlDB.Exec(fmt.Sprintf(`ALTER TABLE govdaos DROP CONSTRAINT %q`, pkName)); err != nil {
+		return fmt.Errorf("ApplyGovdaoCompositePrimaryKeyMigration: drop old pk: %w", err)
+	}
+	if _, err := sqlDB.Exec(`ALTER TABLE govdaos ADD PRIMARY KEY (chain_id, id)`); err != nil {
+		return fmt.Errorf("ApplyGovdaoCompositePrimaryKeyMigration: add composite pk: %w", err)
+	}
+	return nil
+}
+
 // CreateOrReplaceIndexes drops legacy single-chain indexes and creates new
 // compound (chain_id, …) indexes suited for multi-chain queries.
 func CreateOrReplaceIndexes(db *gorm.DB) error {
@@ -355,6 +408,10 @@ func InitDB(dsn string) (*gorm.DB, error) {
 
 	if err := ApplyTelegramChainIDMigration(db); err != nil {
 		return nil, fmt.Errorf("ApplyTelegramChainIDMigration: %w", err)
+	}
+
+	if err := ApplyGovdaoCompositePrimaryKeyMigration(db); err != nil {
+		return nil, fmt.Errorf("ApplyGovdaoCompositePrimaryKeyMigration: %w", err)
 	}
 
 	if err := CreateOrReplaceIndexes(db); err != nil {

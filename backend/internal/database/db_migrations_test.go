@@ -310,6 +310,66 @@ func TestGovdaoWithChainID(t *testing.T) {
 	assert.Equal(t, "Test Proposal", retrieved.Title)
 }
 
+// TestInsertGovdaoAcrossChainsWithSameID is a regression test for a bug where
+// the govdaos table's primary key was `id` alone. Proposal IDs are per-chain
+// sequential counters, so two chains inevitably reuse the same integer ID;
+// InsertGovdao's ON CONFLICT DO NOTHING silently dropped the second chain's
+// row with no error logged. The PK must be (chain_id, id) so both rows survive.
+func TestInsertGovdaoAcrossChainsWithSameID(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	err := database.InsertGovdao(db, 5, "chainA", "https://a.example/5", "Proposal A5", "txA5", "ACTIVE")
+	require.NoError(t, err)
+
+	err = database.InsertGovdao(db, 5, "chainB", "https://b.example/5", "Proposal B5", "txB5", "ACTIVE")
+	require.NoError(t, err)
+
+	var count int64
+	require.NoError(t, db.Model(&database.Govdao{}).Where("id = ?", 5).Count(&count).Error)
+	assert.Equal(t, int64(2), count, "both chains must keep their own proposal with id=5")
+
+	var chainA, chainB database.Govdao
+	require.NoError(t, db.Where("chain_id = ? AND id = ?", "chainA", 5).First(&chainA).Error)
+	require.NoError(t, db.Where("chain_id = ? AND id = ?", "chainB", 5).First(&chainB).Error)
+	assert.Equal(t, "Proposal A5", chainA.Title)
+	assert.Equal(t, "Proposal B5", chainB.Title)
+}
+
+// TestInsertGovdaoDuplicateSameChainIsNoOp verifies that re-processing the same
+// on-chain event for the same chain (e.g. InitGovdao re-fetching full history on
+// every restart) stays idempotent: no error, no duplicate row.
+func TestInsertGovdaoDuplicateSameChainIsNoOp(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	require.NoError(t, database.InsertGovdao(db, 7, "chainA", "https://a.example/7", "First title", "tx7", "ACTIVE"))
+	require.NoError(t, database.InsertGovdao(db, 7, "chainA", "https://a.example/7", "First title", "tx7", "ACTIVE"))
+
+	var count int64
+	require.NoError(t, db.Model(&database.Govdao{}).Where("chain_id = ? AND id = ?", "chainA", 7).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+// TestApplyGovdaoCompositePrimaryKeyMigration verifies chain_id is part of the
+// govdaos primary key after InitDB runs (NewTestDB always runs InitDB fresh).
+func TestApplyGovdaoCompositePrimaryKeyMigration(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	var count int
+	err := db.Raw(`
+		SELECT COUNT(*)
+		FROM information_schema.key_column_usage kcu
+		JOIN information_schema.table_constraints tc
+		  ON tc.constraint_name = kcu.constraint_name
+		 AND tc.table_schema = kcu.table_schema
+		WHERE tc.table_schema = current_schema()
+		  AND tc.table_name = 'govdaos'
+		  AND tc.constraint_type = 'PRIMARY KEY'
+		  AND kcu.column_name = 'chain_id'
+	`).Scan(&count).Error
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "chain_id should be part of the govdaos primary key")
+}
+
 // TestTelegramValidatorSubWithChainID verifies compound index works
 func TestTelegramValidatorSubWithChainID(t *testing.T) {
 	db := testoutils.NewTestDB(t)
