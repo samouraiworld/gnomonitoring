@@ -364,14 +364,6 @@ func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client
 }
 
 func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, checkInterval time.Duration) {
-	type missedWindow struct {
-		Addr        string
-		Moniker     string
-		StartHeight int64
-		EndHeight   int64
-		Missed      int
-	}
-
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -402,54 +394,7 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 			// The NOT EXISTS filter on alert_logs skips sequences already
 			// covered by a RESOLVED, eliminating the dedup check entirely for
 			// those sequences.
-			var windows []missedWindow
-			err := db.Raw(`
-				WITH ranked AS (
-					SELECT
-						addr,
-						moniker,
-						block_height,
-						participated,
-						CASE
-							WHEN participated = false
-							 AND LAG(participated) OVER (PARTITION BY addr, moniker ORDER BY block_height) IS NOT DISTINCT FROM false
-							THEN 0 ELSE 1
-						END AS new_seq
-					FROM daily_participations
-					WHERE chain_id = ? AND date >= NOW() - INTERVAL '30 minutes'
-				),
-				grouped AS (
-					SELECT
-						addr,
-						moniker,
-						block_height,
-						participated,
-						SUM(new_seq) OVER (PARTITION BY addr, moniker ORDER BY block_height) AS seq_id
-					FROM ranked
-				),
-				sequences AS (
-					SELECT
-						addr,
-						moniker,
-						MIN(block_height) AS start_height,
-						MAX(block_height) AS end_height,
-						COUNT(*)          AS missed
-					FROM grouped
-					WHERE participated = false
-					GROUP BY addr, moniker, seq_id
-				)
-				SELECT s.addr, s.moniker, s.start_height, s.end_height, s.missed
-				FROM sequences s
-				WHERE s.missed >= ?
-				  AND NOT EXISTS (
-				      SELECT 1 FROM alert_logs r
-				      WHERE r.chain_id  = ?
-				        AND r.addr      = s.addr
-				        AND r.level     = 'RESOLVED'
-				        AND r.end_height >= s.end_height
-				  )
-				ORDER BY s.addr, s.start_height
-			`, chainID, GetThresholds().WarningThreshold, chainID).Scan(&windows).Error
+			windows, err := database.GetMissedWindows(db, chainID, GetThresholds().WarningThreshold)
 			if err != nil {
 				log.Printf("[validator][%s] error executing missed blocks query: %v", chainID, err)
 				select {
@@ -565,8 +510,13 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 
 	var pending []pendingAlert
 	err := db.Raw(`
-		SELECT DISTINCT ON (al.addr) al.addr, al.moniker, al.start_height, al.end_height
+		SELECT DISTINCT ON (al.addr)
+		       al.addr,
+		       COALESCE(am.moniker, al.moniker, '') AS moniker,
+		       al.start_height,
+		       al.end_height
 		FROM alert_logs al
+		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
 		WHERE al.chain_id = ?
 		  AND al.level IN ('WARNING', 'CRITICAL')
 		  AND al.skipped = true

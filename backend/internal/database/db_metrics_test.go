@@ -481,3 +481,79 @@ func TestGetMissedBlocksLast24h_PrefersAddrMonikers(t *testing.T) {
 	assert.Equal(t, "OtherName", got["g1other"].Moniker, "should fall back to dp.moniker when no addr_monikers row exists")
 	assert.Equal(t, 1, got["g1other"].Missed)
 }
+
+// TestGetMissedWindows_JoinsAddrMonikersAndDoesNotFragment verifies the alert
+// detection query (1) resolves the moniker from addr_monikers rather than the
+// value frozen into daily_participations, and (2) treats a contiguous missed
+// streak as ONE window even when the per-row moniker changes mid-streak (it
+// must group by addr only, not by (addr, moniker)).
+func TestGetMissedWindows_JoinsAddrMonikersAndDoesNotFragment(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now()
+
+	// One contiguous missed streak whose frozen moniker flips "unknown" ->
+	// "samourai-crew-1" partway through. Old code keyed on (addr, moniker) and
+	// would split this into two windows.
+	rows := []database.DailyParticipation{
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 10, Date: now.Add(-20 * time.Minute), Participated: true},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 11, Date: now.Add(-19 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "unknown", BlockHeight: 12, Date: now.Add(-18 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1", BlockHeight: 13, Date: now.Add(-17 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1", BlockHeight: 14, Date: now.Add(-16 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1", BlockHeight: 15, Date: now.Add(-15 * time.Minute), Participated: false},
+		// Second validator: no addr_monikers entry -> falls back to dp moniker.
+		{ChainID: "test13", Addr: "g1other", Moniker: "OtherName", BlockHeight: 20, Date: now.Add(-12 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1other", Moniker: "OtherName", BlockHeight: 21, Date: now.Add(-11 * time.Minute), Participated: false},
+		{ChainID: "test13", Addr: "g1other", Moniker: "OtherName", BlockHeight: 22, Date: now.Add(-10 * time.Minute), Participated: false},
+	}
+	require.NoError(t, db.Create(&rows).Error)
+	require.NoError(t, db.Create(&database.AddrMoniker{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1"}).Error)
+
+	windows, err := database.GetMissedWindows(db, "test13", 3)
+	require.NoError(t, err)
+
+	got := map[string]database.MissedWindow{}
+	for _, w := range windows {
+		got[w.Addr] = w
+	}
+
+	// g1signer: a single un-fragmented window of 5 missed, moniker from addr_monikers.
+	signer, ok := got["g1signer"]
+	require.True(t, ok, "expected a window for g1signer")
+	assert.Equal(t, 5, signer.Missed, "contiguous streak must not fragment on moniker change")
+	assert.Equal(t, "samourai-crew-1", signer.Moniker, "moniker must come from addr_monikers")
+	assert.Equal(t, int64(11), signer.StartHeight)
+	assert.Equal(t, int64(15), signer.EndHeight)
+
+	// g1other: 3 missed, moniker falls back to the dp value.
+	other, ok := got["g1other"]
+	require.True(t, ok, "expected a window for g1other")
+	assert.Equal(t, 3, other.Missed)
+	assert.Equal(t, "OtherName", other.Moniker)
+}
+
+// TestGetAlertLog_PrefersAddrMonikers verifies the alert-history query exposed
+// over the REST API resolves the current moniker from addr_monikers rather than
+// the one frozen into alert_logs when the alert fired.
+func TestGetAlertLog_PrefersAddrMonikers(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	require.NoError(t, db.Create(&database.AlertLog{
+		ChainID: "test13", Addr: "g1signer", Moniker: "unknown", Level: "WARNING",
+		StartHeight: 100, EndHeight: 130, SentAt: time.Now(),
+	}).Error)
+	require.NoError(t, db.Create(&database.AddrMoniker{ChainID: "test13", Addr: "g1signer", Moniker: "samourai-crew-1"}).Error)
+
+	alerts, err := database.GetAlertLog(db, "test13", "current_year")
+	require.NoError(t, err)
+	require.NotEmpty(t, alerts)
+
+	var found bool
+	for _, a := range alerts {
+		if a.Addr == "g1signer" {
+			found = true
+			assert.Equal(t, "samourai-crew-1", a.Moniker, "should resolve from addr_monikers, not frozen alert_logs.moniker")
+		}
+	}
+	assert.True(t, found, "expected the g1signer alert in the result")
+}
