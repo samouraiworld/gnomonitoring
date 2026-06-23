@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
@@ -21,8 +22,89 @@ import (
 )
 
 type Valoper struct {
-	Name    string
+	Name string
+	// Address is the operator address that registered the valoper profile
+	// (the `g1...` linked in the valopers list render).
 	Address string
+	// SigningAddress is the on-chain consensus address that signs blocks and
+	// appears in the `/validators` set and in block precommits. It is exposed
+	// only by the individual profile render, not the list render, and may
+	// differ from Address (validators increasingly use dedicated signing keys
+	// separate from their operator account). Empty if the profile does not
+	// declare one.
+	SigningAddress string
+}
+
+// valoperListRe matches a `[Name](/r/gnops/valopers:operatorAddr)` link in the
+// valopers list render.
+var valoperListRe = regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnops/valopers:([a-z0-9]+)\)`)
+
+// signingAddrRe matches the `Signing Address: g1...` line in an individual
+// valoper profile render.
+var signingAddrRe = regexp.MustCompile(`Signing Address:\s*(g1[a-z0-9]+)`)
+
+// maxValoperProfileConcurrency bounds how many individual profile renders are
+// fetched in parallel when enriching valopers with their signing address.
+const maxValoperProfileConcurrency = 10
+
+// qevalRender evaluates `gno.land/r/gnops/valopers.Render(arg)` over the RPC
+// client and returns the raw rendered output. arg is quoted as a Go string
+// literal, matching what the realm's Render entrypoint expects.
+func qevalRender(client gnoclient.Client, arg string) (string, error) {
+	cmd := fmt.Sprintf("gno.land/r/gnops/valopers.Render(%q)", arg)
+	resp, err := client.RPCClient.ABCIQuery("vm/qeval", []byte(cmd))
+	if err != nil {
+		return "", err
+	}
+	if resp.Response.Error != nil && resp.Response.Error.Error() != "" {
+		return "", errors.New(resp.Response.Error.Error())
+	}
+	return string(resp.Response.Data), nil
+}
+
+// parseSigningAddress extracts the Signing Address from an individual valoper
+// profile render, or "" if the profile does not declare one.
+func parseSigningAddress(markdown string) string {
+	m := signingAddrRe.FindStringSubmatch(markdown)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
+}
+
+// fetchValoperSigningAddress fetches the individual profile render for
+// operatorAddr and returns its declared Signing Address (possibly "").
+func fetchValoperSigningAddress(client gnoclient.Client, operatorAddr string) (string, error) {
+	data, err := qevalRender(client, operatorAddr)
+	if err != nil {
+		return "", err
+	}
+	return parseSigningAddress(data), nil
+}
+
+// enrichValoperSigningAddresses populates the SigningAddress field of each
+// valoper by fetching its individual profile render. Fetches run with bounded
+// concurrency; per-valoper failures are logged and leave SigningAddress empty
+// so a single unreachable profile never fails the whole refresh.
+func enrichValoperSigningAddresses(client gnoclient.Client, valopers []Valoper) {
+	sem := make(chan struct{}, maxValoperProfileConcurrency)
+	var wg sync.WaitGroup
+	for i := range valopers {
+		wg.Add(1)
+		go func(v *Valoper) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			signing, err := fetchValoperSigningAddress(client, v.Address)
+			if err != nil {
+				log.Printf("[valoper] failed to fetch signing address for %s (%s): %v", v.Name, v.Address, err)
+				return
+			}
+			v.SigningAddress = signing
+		}(&valopers[i])
+	}
+	wg.Wait()
 }
 
 func GetValopers(client gnoclient.Client) ([]Valoper, error) {
@@ -30,21 +112,12 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 	page := 1
 
 	for {
-
-		cmd := fmt.Sprintf(`gno.land/r/gnops/valopers.Render("?page=%d")`, page)
-
-		resp, err := client.RPCClient.ABCIQuery("vm/qeval", []byte(cmd))
+		data, err := qevalRender(client, fmt.Sprintf("?page=%d", page))
 		if err != nil {
 			return nil, err
-		} else if resp.Response.Error != nil && resp.Response.Error.Error() != "" {
-			return nil, errors.New(resp.Response.Error.Error())
 		}
 
-		data := string(resp.Response.Data)
-
-		// Extract with regex
-		re := regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnops/valopers:([a-z0-9]+)\)`)
-		matches := re.FindAllStringSubmatch(data, -1)
+		matches := valoperListRe.FindAllStringSubmatch(data, -1)
 
 		// If no result, we stop the loop
 		if len(matches) == 0 {
@@ -57,12 +130,15 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 				Name:    m[1],
 				Address: m[2],
 			})
-			// log.Printf("name %s addr %s", m[1], m[2])
 		}
-
 
 		page++
 	}
+
+	// The list render only exposes operator addresses; fetch each profile to
+	// learn its consensus Signing Address, which is what matches the validator
+	// set and block precommits.
+	enrichValoperSigningAddresses(client, allValopers)
 
 	log.Printf("[valoper] fetched %d valopers", len(allValopers))
 	return allValopers, nil
@@ -300,8 +376,16 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 		log.Printf("⚠️ Failed to get valopers: %v", err)
 	}
 
+	// Key the valoper map by the consensus Signing Address, since that is what
+	// appears in the validator set and block precommits. Also keep an
+	// operator-address entry as a fallback for chains/profiles where the
+	// operator account is itself the signer (or no signing address is
+	// declared yet).
 	valoperMap := make(map[string]string)
 	for _, v := range valopers {
+		if v.SigningAddress != "" {
+			valoperMap[v.SigningAddress] = v.Name
+		}
 		valoperMap[v.Address] = v.Name
 	}
 
