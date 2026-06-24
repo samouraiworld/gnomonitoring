@@ -5,10 +5,16 @@ import (
 	"sort"
 )
 
-// bftMargin summarizes how close a chain is to losing its Byzantine
+// bftMinValidatorsForAlert is the smallest validator-set size for which a BFT
+// margin alert is meaningful. Below it (devnets, bootstrapping chains) every
+// validator is effectively critical, so alerting would just be noise — the
+// margin is still shown in /status and reports, just never alerted on.
+const bftMinValidatorsForAlert = 4
+
+// BFTMargin summarizes how close a chain is to losing its Byzantine
 // fault-tolerance safety threshold, i.e. how many currently-active validators
 // can still go offline before commits stop.
-type bftMargin struct {
+type BFTMargin struct {
 	ActiveCount      int   // validators that participated (rate > 0) and have known power
 	TotalCount       int   // validators in the set
 	TolerableOffline int   // how many more active validators can go offline before quorum is lost
@@ -17,16 +23,16 @@ type bftMargin struct {
 	RequiredPower    int64 // minimum online power needed to keep committing
 }
 
-// computeBFTMargin derives the BFT safety margin from the validator set and
-// yesterday's participation rates. A validator counts as "active" when it has a
-// rate strictly above zero AND its voting power is known from the set.
+// ComputeBFTMargin derives the BFT safety margin from the validator set and a
+// participation-rate map. A validator counts as "active" when it has a rate
+// strictly above zero AND its voting power is known from the set.
 //
 // Tendermint commits a block only when validators representing strictly more
 // than 2/3 of total voting power precommit, so the minimum online power is
 // totalPower*2/3 + 1 (integer arithmetic, matching Tendermint). TolerableOffline
 // is computed worst-case: the highest-power active validators are removed first.
-func computeBFTMargin(set []ValidatorInfo, rates map[string]ValidatorRate) bftMargin {
-	var m bftMargin
+func ComputeBFTMargin(set []ValidatorInfo, rates map[string]ValidatorRate) BFTMargin {
+	var m BFTMargin
 	m.TotalCount = len(set)
 
 	for _, v := range set {
@@ -65,11 +71,11 @@ func computeBFTMargin(set []ValidatorInfo, rates map[string]ValidatorRate) bftMa
 	return m
 }
 
-// formatBFTMarginLine renders the BFT margin as a single report line, or "" when
+// FormatBFTMarginLine renders the BFT margin as a single report line, or "" when
 // no validator-set power is known (so the caller can omit it). The emoji tracks
 // the tolerance: 🔴 when a single further failure would halt the chain, ⚠️ when
 // exactly one more can be lost, 🟢 otherwise.
-func formatBFTMarginLine(m bftMargin) string {
+func FormatBFTMarginLine(m BFTMargin) string {
 	if m.TotalPower <= 0 {
 		return ""
 	}
@@ -83,5 +89,24 @@ func formatBFTMarginLine(m bftMargin) string {
 	default:
 		return fmt.Sprintf("BFT: %d/%d validators active — can tolerate %d more offline 🟢",
 			m.ActiveCount, m.TotalCount, m.TolerableOffline)
+	}
+}
+
+// BFTAlertLevel classifies a BFT margin into an alert level for the chain-level
+// BFT watcher: "CRITICAL" when the next failure would halt the chain, "WARNING"
+// when only one more validator can be lost, or "" when healthy / not alertable.
+// Sets smaller than bftMinValidatorsForAlert, or with unknown power, never
+// alert.
+func BFTAlertLevel(m BFTMargin) string {
+	if m.TotalPower <= 0 || m.TotalCount < bftMinValidatorsForAlert {
+		return ""
+	}
+	switch m.TolerableOffline {
+	case 0:
+		return "CRITICAL"
+	case 1:
+		return "WARNING"
+	default:
+		return ""
 	}
 }

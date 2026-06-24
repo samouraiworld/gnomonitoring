@@ -637,6 +637,7 @@ func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, 
 	WatchNewValidators(ctx, db, chainID, client, chainCfg, t.NewValidatorScan())
 	CollectParticipation(ctx, db, chainID, client)
 	WatchValidatorAlerts(ctx, db, chainID, t.AlertCheckInterval())
+	WatchBFTMargin(ctx, db, chainID, rpcClient, bftCheckInterval)
 }
 
 // Moniker helpers

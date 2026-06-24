@@ -57,6 +57,12 @@ type ChainHealthSnapshot struct {
 	ValidatorSet     []ValidatorInfo
 	ValsetChanges    []ValsetChange
 	PrecommitBitmap  map[string]bool // validator address → is precommitting in current round
+
+	// BFTLine is the pre-rendered BFT safety-margin line (live: live validator
+	// set + recent-blocks participation). Empty when no validator-set power is
+	// known. Pre-rendered so the telegram package can show it without sharing
+	// the BFTMargin type across the package boundary.
+	BFTLine string
 }
 
 func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
@@ -122,20 +128,9 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := rpcClient.Validators(nil)
-			if err != nil || result == nil {
-				log.Printf("[health][%s] Validators() error: %v", chainID, err)
+			infos := fetchValidatorSet(rpcClient, chainID)
+			if infos == nil {
 				return
-			}
-			infos := make([]ValidatorInfo, 0, len(result.Validators))
-			for _, v := range result.Validators {
-				if v == nil {
-					continue
-				}
-				infos = append(infos, ValidatorInfo{
-					Address:     v.Address.String(),
-					VotingPower: v.VotingPower,
-				})
 			}
 			mu.Lock()
 			snap.ValidatorSet = infos
@@ -230,7 +225,40 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 		snap.MissedLast24h = missed
 	}
 
+	// Live BFT safety margin: live validator set (powers) crossed with
+	// participation over the last RecentBlocksWindow blocks (= currently
+	// online), so /status reflects the present state rather than yesterday's.
+	if len(snap.ValidatorSet) > 0 {
+		recentRates, _, _, rerr := CalculateRecentValidatorStatus(db, chainID, GetThresholds().RecentBlocksWindow)
+		if rerr != nil {
+			log.Printf("[health][%s] CalculateRecentValidatorStatus error: %v", chainID, rerr)
+		} else {
+			snap.BFTLine = FormatBFTMarginLine(ComputeBFTMargin(snap.ValidatorSet, recentRates))
+		}
+	}
+
 	return snap
+}
+
+// fetchValidatorSet returns the live validator set (address + voting power) for
+// the chain via the Validators RPC, or nil on error.
+func fetchValidatorSet(rpcClient *FallbackRPCClient, chainID string) []ValidatorInfo {
+	result, err := rpcClient.Validators(nil)
+	if err != nil || result == nil {
+		log.Printf("[health][%s] Validators() error: %v", chainID, err)
+		return nil
+	}
+	infos := make([]ValidatorInfo, 0, len(result.Validators))
+	for _, v := range result.Validators {
+		if v == nil {
+			continue
+		}
+		infos = append(infos, ValidatorInfo{
+			Address:     v.Address.String(),
+			VotingPower: v.VotingPower,
+		})
+	}
+	return infos
 }
 
 // peerStateExposed mirrors the JSON structure emitted by consensus.PeerStateExposed.
@@ -907,7 +935,7 @@ func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates m
 		// BFT safety margin: how many active validators can still go offline
 		// before the chain loses its +2/3 quorum. Computed from the same data
 		// already in scope; omitted when no validator-set power is known.
-		if bftLine := formatBFTMarginLine(computeBFTMargin(snap.ValidatorSet, rates)); bftLine != "" {
+		if bftLine := FormatBFTMarginLine(ComputeBFTMargin(snap.ValidatorSet, rates)); bftLine != "" {
 			sb.WriteString(bftLine + "\n")
 		}
 

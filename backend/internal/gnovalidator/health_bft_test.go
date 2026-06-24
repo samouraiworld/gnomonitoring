@@ -103,7 +103,7 @@ func TestComputeBFTMargin(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			m := computeBFTMargin(tc.set, tc.rates)
+			m := ComputeBFTMargin(tc.set, tc.rates)
 			if m.ActiveCount != tc.wantActive {
 				t.Errorf("ActiveCount = %d, want %d", m.ActiveCount, tc.wantActive)
 			}
@@ -128,25 +128,71 @@ func TestComputeBFTMargin(t *testing.T) {
 
 func TestFormatBFTMarginLine(t *testing.T) {
 	// No validator-set power known -> omit the line entirely.
-	if got := formatBFTMarginLine(bftMargin{TotalPower: 0}); got != "" {
+	if got := FormatBFTMarginLine(BFTMargin{TotalPower: 0}); got != "" {
 		t.Errorf("expected empty line when TotalPower==0, got %q", got)
 	}
 
-	healthy := formatBFTMarginLine(bftMargin{ActiveCount: 5, TotalCount: 5, TolerableOffline: 2, TotalPower: 15, ActivePower: 15, RequiredPower: 11})
+	healthy := FormatBFTMarginLine(BFTMargin{ActiveCount: 5, TotalCount: 5, TolerableOffline: 2, TotalPower: 15, ActivePower: 15, RequiredPower: 11})
 	if !strings.Contains(healthy, "🟢") || !strings.Contains(healthy, "tolerate 2 more") {
 		t.Errorf("healthy line wrong: %q", healthy)
 	}
 
-	warn := formatBFTMarginLine(bftMargin{ActiveCount: 6, TotalCount: 6, TolerableOffline: 1, TotalPower: 6, ActivePower: 6, RequiredPower: 5})
+	warn := FormatBFTMarginLine(BFTMargin{ActiveCount: 6, TotalCount: 6, TolerableOffline: 1, TotalPower: 6, ActivePower: 6, RequiredPower: 5})
 	if !strings.Contains(warn, "⚠️") || !strings.Contains(warn, "tolerate 1 more") {
 		t.Errorf("warn line wrong: %q", warn)
 	}
 
-	danger := formatBFTMarginLine(bftMargin{ActiveCount: 5, TotalCount: 6, TolerableOffline: 0, TotalPower: 6, ActivePower: 5, RequiredPower: 5})
+	danger := FormatBFTMarginLine(BFTMargin{ActiveCount: 5, TotalCount: 6, TolerableOffline: 0, TotalPower: 6, ActivePower: 5, RequiredPower: 5})
 	if !strings.Contains(danger, "🔴") {
 		t.Errorf("danger line should carry 🔴: %q", danger)
 	}
 	if !strings.Contains(danger, "5/6") {
 		t.Errorf("danger line should show active/total: %q", danger)
+	}
+}
+
+func TestBFTAlertLevel(t *testing.T) {
+	cases := []struct {
+		name string
+		m    BFTMargin
+		want string
+	}{
+		{"healthy tolerates two", BFTMargin{TotalCount: 6, TolerableOffline: 2, TotalPower: 6}, ""},
+		{"warning tolerates one", BFTMargin{TotalCount: 6, TolerableOffline: 1, TotalPower: 6}, "WARNING"},
+		{"critical tolerates zero", BFTMargin{TotalCount: 6, TolerableOffline: 0, TotalPower: 6}, "CRITICAL"},
+		{"small set never alerts even at zero", BFTMargin{TotalCount: 3, TolerableOffline: 0, TotalPower: 3}, ""},
+		{"small set at warning margin never alerts", BFTMargin{TotalCount: 3, TolerableOffline: 1, TotalPower: 3}, ""},
+		{"no power never alerts", BFTMargin{TotalCount: 6, TolerableOffline: 0, TotalPower: 0}, ""},
+		{"exactly four validators can alert", BFTMargin{TotalCount: 4, TolerableOffline: 0, TotalPower: 4}, "CRITICAL"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := BFTAlertLevel(tc.m); got != tc.want {
+				t.Errorf("BFTAlertLevel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBFTAlertTransition(t *testing.T) {
+	cases := []struct {
+		prev, current, want string
+	}{
+		{"", "", ""},                  // healthy, stays healthy
+		{"", "WARNING", "alert"},      // entering warning
+		{"", "CRITICAL", "alert"},     // entering critical
+		{"WARNING", "CRITICAL", "alert"}, // escalation
+		{"CRITICAL", "WARNING", "alert"}, // de-escalation still re-notifies
+		{"WARNING", "WARNING", ""},    // unchanged, no spam
+		{"CRITICAL", "CRITICAL", ""},  // unchanged, no spam
+		{"WARNING", "", "resolve"},    // recovered from warning
+		{"CRITICAL", "", "resolve"},   // recovered from critical
+	}
+	for _, tc := range cases {
+		t.Run(tc.prev+"->"+tc.current, func(t *testing.T) {
+			if got := bftAlertTransition(tc.prev, tc.current); got != tc.want {
+				t.Errorf("bftAlertTransition(%q,%q) = %q, want %q", tc.prev, tc.current, got, tc.want)
+			}
+		})
 	}
 }
