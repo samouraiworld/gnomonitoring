@@ -904,6 +904,13 @@ func FormatHealthyReport(chainID, date string, snap ChainHealthSnapshot, rates m
 			return entries[i].addr < entries[j].addr
 		})
 
+		// BFT safety margin: how many active validators can still go offline
+		// before the chain loses its +2/3 quorum. Computed from the same data
+		// already in scope; omitted when no validator-set power is known.
+		if bftLine := formatBFTMarginLine(computeBFTMargin(snap.ValidatorSet, rates)); bftLine != "" {
+			sb.WriteString(bftLine + "\n")
+		}
+
 		headerPower := ""
 		if totalPower > 0 {
 			headerPower = fmt.Sprintf(" — total power: %d", totalPower)
