@@ -99,6 +99,16 @@ func TestComputeBFTMargin(t *testing.T) {
 			},
 			wantActive: 2, wantTotal: 3, wantTolerable: 0, wantTotalPow: 3, wantActivePow: 2, wantRequired: 3,
 		},
+		{
+			// A zero-power validator that is online is counted active but must
+			// not contribute power nor a free removal in the tolerance loop.
+			name: "zero-power active validator does not inflate tolerance",
+			set:  []ValidatorInfo{{Address: "a", VotingPower: 0}, {Address: "b", VotingPower: 3}, {Address: "c", VotingPower: 3}, {Address: "d", VotingPower: 3}, {Address: "e", VotingPower: 3}},
+			rates: map[string]ValidatorRate{
+				"a": {Rate: 100}, "b": {Rate: 100}, "c": {Rate: 100}, "d": {Rate: 100}, "e": {Rate: 100},
+			},
+			wantActive: 5, wantTotal: 5, wantTolerable: 1, wantTotalPow: 12, wantActivePow: 12, wantRequired: 9,
+		},
 	}
 
 	for _, tc := range cases {
@@ -195,4 +205,70 @@ func TestBFTAlertTransition(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBFTAlertStateObserve(t *testing.T) {
+	const k = 3
+
+	t.Run("requires k consecutive cycles before alerting then resolving", func(t *testing.T) {
+		s := &bftAlertState{}
+		// Two CRITICAL observations are not yet enough.
+		if got := s.observe("CRITICAL", k); got != "" {
+			t.Fatalf("cycle 1: got %q, want \"\"", got)
+		}
+		if got := s.observe("CRITICAL", k); got != "" {
+			t.Fatalf("cycle 2: got %q, want \"\"", got)
+		}
+		// Third confirms -> alert.
+		if got := s.observe("CRITICAL", k); got != "alert" {
+			t.Fatalf("cycle 3: got %q, want \"alert\"", got)
+		}
+		// Staying CRITICAL must not re-alert.
+		if got := s.observe("CRITICAL", k); got != "" {
+			t.Fatalf("cycle 4: got %q, want \"\"", got)
+		}
+		// Recovery also needs k consecutive cycles.
+		if got := s.observe("", k); got != "" {
+			t.Fatalf("recover 1: got %q, want \"\"", got)
+		}
+		if got := s.observe("", k); got != "" {
+			t.Fatalf("recover 2: got %q, want \"\"", got)
+		}
+		if got := s.observe("", k); got != "resolve" {
+			t.Fatalf("recover 3: got %q, want \"resolve\"", got)
+		}
+	})
+
+	t.Run("alternating blips never confirm", func(t *testing.T) {
+		s := &bftAlertState{}
+		for i := 0; i < 6; i++ {
+			level := "CRITICAL"
+			if i%2 == 1 {
+				level = ""
+			}
+			if got := s.observe(level, k); got != "" {
+				t.Fatalf("flap cycle %d (%q): got %q, want \"\"", i, level, got)
+			}
+		}
+	})
+
+	t.Run("escalation from warning to critical re-alerts", func(t *testing.T) {
+		s := &bftAlertState{}
+		var last string
+		for i := 0; i < k; i++ {
+			last = s.observe("WARNING", k)
+		}
+		if last != "alert" {
+			t.Fatalf("warning confirm: got %q, want \"alert\"", last)
+		}
+		for i := 0; i < k; i++ {
+			last = s.observe("CRITICAL", k)
+		}
+		if last != "alert" {
+			t.Fatalf("critical escalation: got %q, want \"alert\"", last)
+		}
+		if s.dispatched != "CRITICAL" {
+			t.Fatalf("dispatched = %q, want \"CRITICAL\"", s.dispatched)
+		}
+	})
 }

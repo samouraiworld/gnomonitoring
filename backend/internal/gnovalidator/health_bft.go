@@ -35,11 +35,21 @@ func ComputeBFTMargin(set []ValidatorInfo, rates map[string]ValidatorRate) BFTMa
 	var m BFTMargin
 	m.TotalCount = len(set)
 
+	// Single pass: accumulate total power, and for each active validator (rate
+	// > 0) bump the active count and — only when it actually carries positive
+	// voting power — its active power and the per-validator power list used for
+	// the worst-case removal below. Guarding on VotingPower > 0 keeps a
+	// zero/negative-power validator from being "removed for free" and inflating
+	// the tolerance.
+	activePowers := make([]int64, 0, len(set))
 	for _, v := range set {
 		m.TotalPower += v.VotingPower
 		if r, ok := rates[v.Address]; ok && r.Rate > 0 {
 			m.ActiveCount++
-			m.ActivePower += v.VotingPower
+			if v.VotingPower > 0 {
+				m.ActivePower += v.VotingPower
+				activePowers = append(activePowers, v.VotingPower)
+			}
 		}
 	}
 
@@ -51,12 +61,6 @@ func ComputeBFTMargin(set []ValidatorInfo, rates map[string]ValidatorRate) BFTMa
 	// Worst case: drop the largest-power active validators first and count how
 	// many can be removed while the remaining power stays at or above the
 	// required quorum.
-	activePowers := make([]int64, 0, m.ActiveCount)
-	for _, v := range set {
-		if r, ok := rates[v.Address]; ok && r.Rate > 0 {
-			activePowers = append(activePowers, v.VotingPower)
-		}
-	}
 	sort.Slice(activePowers, func(i, j int) bool { return activePowers[i] > activePowers[j] })
 
 	remaining := m.ActivePower
