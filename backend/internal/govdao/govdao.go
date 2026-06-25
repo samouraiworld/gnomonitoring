@@ -413,56 +413,67 @@ func InitGovdao(db *gorm.DB, chainID string, graphqlEndpoints []string, rpcEndpo
 
 }
 
+// Proposal enrichment fetchers, declared as package variables so tests can
+// override them without a live RPC/GraphQL endpoint.
+var (
+	fetchProposalTitle  = ExtractTitle
+	fetchProposalStatus = ExtractProposalRender
+	fetchTxByHeight     = GetTxsByBlockHeight
+)
+
 func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, graphqlEndpoints []string, rpcEndpoint string, gnowebEndpoint string) {
 	for _, ev := range tx.Response.Events {
-		if ev.Type == "ProposalCreated" {
-			for _, attr := range ev.Attrs {
-				if attr.Key == "id" {
-					// Build Url
-					url := fmt.Sprintf("%s/r/gov/dao:%s", gnowebEndpoint, attr.Value)
+		if ev.Type != "ProposalCreated" {
+			continue
+		}
+		for _, attr := range ev.Attrs {
+			if attr.Key != "id" {
+				continue
+			}
 
-					// Convert ID to Int
-					idInt, err := strconv.Atoi(attr.Value)
-					if err != nil {
-						log.Printf("[govdao][%s] error parsing proposal ID: %v", chainID, err)
-						continue
-					}
+			// Build Url
+			url := fmt.Sprintf("%s/r/gov/dao:%s", gnowebEndpoint, attr.Value)
 
-					// Get Title
-					title, err := ExtractTitle(idInt, rpcEndpoint)
-					if err != nil {
-						log.Printf("[govdao][%s] error fetching title: %v", chainID, err)
-						continue
-					}
+			// Convert ID to Int — the only field we cannot proceed without.
+			idInt, err := strconv.Atoi(attr.Value)
+			if err != nil {
+				log.Printf("[govdao][%s] error parsing proposal ID %q: %v", chainID, attr.Value, err)
+				continue
+			}
 
-					status, err := ExtractProposalRender(idInt, rpcEndpoint)
-					if err != nil {
-						log.Printf("[govdao][%s] error fetching status: %v", chainID, err)
-						continue
-					}
+			// Title/status/tx enrichment is best-effort. Some realm versions
+			// (e.g. test-13) don't expose the same `proposals.GetProposal(id)`
+			// accessor as betanet, so the qeval query can return an error or
+			// panic. A failed enrichment must NOT drop the proposal: the
+			// websocket delivers each ProposalCreated event only once, so an
+			// aborted proposal is never inserted nor announced. Fall back to
+			// sane defaults and still insert + notify.
+			title, err := fetchProposalTitle(idInt, rpcEndpoint)
+			if err != nil {
+				log.Printf("[govdao][%s] title unavailable for proposal %d, using fallback: %v", chainID, idInt, err)
+				title = fmt.Sprintf("Proposal #%d", idInt)
+			}
 
-					// Get hash of transaction
-					txData, err := GetTxsByBlockHeight(tx.BlockHeight, graphqlEndpoints)
-					if err != nil {
-						log.Printf("Error fetching tx hash: %v", err)
-						continue
-					}
+			status, err := fetchProposalStatus(idInt, rpcEndpoint)
+			if err != nil {
+				log.Printf("[govdao][%s] status unavailable for proposal %d: %v", chainID, idInt, err)
+				status = "UNKNOWN"
+			}
 
-					txurl := fmt.Sprintf(
-						"https://gnoscan.io/transactions/details?txhash=%s",
-						txData.Hash,
-					)
+			txurl := ""
+			if txData, err := fetchTxByHeight(tx.BlockHeight, graphqlEndpoints); err != nil {
+				log.Printf("[govdao][%s] tx hash unavailable for proposal %d (block %d): %v", chainID, idInt, tx.BlockHeight, err)
+			} else {
+				txurl = fmt.Sprintf("https://gnoscan.io/transactions/details?txhash=%s", txData.Hash)
+			}
 
-					// Insert to db
-					if err := database.InsertGovdao(db, idInt, chainID, url, title, txurl, status); err != nil {
-						log.Printf("[govdao][%s] InsertGovdao error: %v", chainID, err)
-					}
-					if who == "socket" {
-						if err := internal.MultiSendReportGovdao(chainID, idInt, title, url, txurl, db); err != nil {
-							log.Printf("[govdao][%s] MultiSendReportGovdao error: %v", chainID, err)
-						}
-					}
-
+			// Insert to db
+			if err := database.InsertGovdao(db, idInt, chainID, url, title, txurl, status); err != nil {
+				log.Printf("[govdao][%s] InsertGovdao error: %v", chainID, err)
+			}
+			if who == "socket" {
+				if err := internal.MultiSendReportGovdao(chainID, idInt, title, url, txurl, db); err != nil {
+					log.Printf("[govdao][%s] MultiSendReportGovdao error: %v", chainID, err)
 				}
 			}
 		}
