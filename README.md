@@ -53,6 +53,36 @@ docker compose up -d
 
 ---
 
+## 🧪 Local devnet (end-to-end testing)
+
+The [`gnoland-test/`](gnoland-test/) directory ships a self-contained,
+Docker-based 3-validator Gno.land devnet used to exercise every gnomonitoring
+feature (participation tracking, WARNING/CRITICAL/RESOLVED alerts,
+chain-stagnation and RPC-error alerts, the GovDAO watcher, Prometheus metrics)
+end-to-end before merging.
+
+**Nothing secret or generated is committed** — keys, genesis, `.env` and the
+gnokey keybase are all regenerated from scratch by `bootstrap.sh` on each setup
+(addresses differ every run, which is fine: everything is derived from the same
+fresh keys). Requires a local clone of the
+[gno](https://github.com/gnolang/gno) repo to build the images.
+
+```bash
+cd gnoland-test
+make full-reinit     # build images, regenerate keys/genesis, start the chain
+make scenario1       # onboard a 4th validator via a GovDAO proposal
+make help            # full list of lifecycle + test-scenario targets
+```
+
+Scenarios cover validator downtime (`scenario2`), chain halt/stagnation
+(`scenario3`), total RPC outage (`scenario4`), a rejected GovDAO proposal
+(`scenario5`) and alert resend dedup (`scenario-mute`); `make clean-all` nukes
+all generated state for a fully fresh run. See
+[`gnoland-test/README.md`](gnoland-test/README.md) for the full guide, the
+per-scenario assertions, and how to point the backend at the devnet.
+
+---
+
 ## 🌍 Multi-Chain Support
 
 Gnomonitoring now supports monitoring multiple Gno.land blockchains simultaneously from a single deployment. Each chain runs independently while sharing the same database and REST API.

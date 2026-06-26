@@ -32,7 +32,7 @@ run_gnogenesis generate
 echo "Adding validators..."
 run_gnogenesis "validator add --address $VALIDATOR1_ADDR --pub-key $VALIDATOR1_PUBKEY --name $VALIDATOR1_NAME --power 10 --genesis-path $GENESIS_FILE"
 run_gnogenesis "validator add --address $VALIDATOR2_ADDR --pub-key $VALIDATOR2_PUBKEY --name $VALIDATOR2_NAME --power 10 --genesis-path $GENESIS_FILE"
-run_gnogenesis "validator add --address $VALIDATOR3_ADDR --pub-key $VALIDATOR3_PUBKEY --name $VALIDATOR3_NAME --power 11 --genesis-path $GENESIS_FILE"
+run_gnogenesis "validator add --address $VALIDATOR3_ADDR --pub-key $VALIDATOR3_PUBKEY --name $VALIDATOR3_NAME --power 10 --genesis-path $GENESIS_FILE"
 
 if [ ! -f "$BALANCE_FILE" ]; then
   echo "genesis_balances.txt not found" >&2
