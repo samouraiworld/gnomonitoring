@@ -1,0 +1,12 @@
+// init-govdao.gno.tmpl - rendered to init-govdao.gno by bootstrap.sh.
+// The placeholder below is replaced with the freshly generated `dev` account
+// address, so this script stays correct even though keys are regenerated.
+package main
+
+import (
+	govdaoinit "gno.land/r/gov/dao/v3/init"
+)
+
+func main(cur realm) {
+	govdaoinit.InitWithUsers(cross(cur), address("__DEV_ADDR__"))
+}
