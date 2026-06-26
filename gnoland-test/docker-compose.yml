@@ -1,7 +1,8 @@
 services:
   validator:
-    image: "gno-validator:local"
+    image: "${GNO_IMAGE:-gno-validator:local}"
     restart: on-failure
+    user: "${DOCKER_USER:-1000:1000}"
     ports:
       - 127.0.0.1:26658:26657
     volumes:
@@ -17,8 +18,9 @@ services:
       PEX: "true"
 
   validator2:
-    image: "gno-validator:local"
+    image: "${GNO_IMAGE:-gno-validator:local}"
     restart: on-failure
+    user: "${DOCKER_USER:-1000:1000}"
     ports:
       - 127.0.0.1:26659:26657
     volumes:
@@ -34,8 +36,9 @@ services:
       PEX: "true"
 
   validator3:
-    image: "gno-validator:local"
+    image: "${GNO_IMAGE:-gno-validator:local}"
     restart: on-failure
+    user: "${DOCKER_USER:-1000:1000}"
     ports:
       - 127.0.0.1:26660:26657
     volumes:
@@ -55,8 +58,9 @@ services:
   # via GovDAO" scenario:
   #   docker compose --profile phase2 up -d validator4
   validator4:
-    image: "gno-validator:local"
+    image: "${GNO_IMAGE:-gno-validator:local}"
     restart: on-failure
+    user: "${DOCKER_USER:-1000:1000}"
     profiles: ["phase2"]
     ports:
       - 127.0.0.1:26661:26657

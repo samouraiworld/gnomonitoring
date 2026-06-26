@@ -1,20 +1,24 @@
-validator/gnoland-data/config/
-validator/gnoland-data/db/
-validator/gnoland-data/wal/
-validator/gnoland-data/genesis.json
-validator/gnoland-data/secrets/priv_validator_state.json
-validator2/gnoland-data/config/
-validator2/gnoland-data/db/
-validator2/gnoland-data/wal/
-validator2/gnoland-data/genesis.json
-validator2/gnoland-data/secrets/priv_validator_state.json
-validator3/gnoland-data/config/
-validator3/gnoland-data/db/
-validator3/gnoland-data/wal/
-validator3/gnoland-data/genesis.json
-validator3/gnoland-data/secrets/priv_validator_state.json
-validator4/gnoland-data/config/
-validator4/gnoland-data/db/
-validator4/gnoland-data/wal/
-validator4/gnoland-data/genesis.json
-validator4/gnoland-data/secrets/priv_validator_state.json
+# Generated devnet state - NOTHING here is committed. bootstrap.sh regenerates
+# keys, gnokey accounts, genesis, balances and config from scratch on every
+# fresh setup (see 'make clean-all' / 'make full-reinit'). Addresses therefore
+# change between setups, which is fine: the genesis, .env and the rendered .gno
+# scripts are all derived from the same freshly generated keys.
+
+# Per-node runtime state + identities (BFT keys, db, wal, config/genesis copies)
+*/gnoland-data/
+*/genesis.json
+*/config.toml
+
+# Top-level generated artifacts
+genesis.json
+genesis_balances.txt
+config.toml
+.env
+.devaddrs.mk
+
+# Throwaway gnokey dev keybase (dev + v4op accounts)
+.gnokey-dev/
+
+# GovDAO scripts rendered from the committed *.tmpl files
+init-govdao.gno
+propose-validator4.gno
