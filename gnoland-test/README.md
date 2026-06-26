@@ -248,8 +248,11 @@ does under the hood.
 > delivered via the **GovDAO Telegram bot** only (no `webhook_gov_daos` row for
 > `dev`). For **scenario5**, voting NO does **not** reject the proposal
 > immediately — it stays "open for votes" (`NO PERCENT: 100%`) until its voting
-> deadline elapses; `govdaos.status` only flips to `REJECTED` after that, on the
-> next 5-minute `CheckProposalStatus` cycle.
+> deadline elapses. Note that gnomonitoring currently emits **no alert for a
+> REJECTED/expired proposal and never updates `govdaos.status` to `REJECTED`**:
+> `CheckProposalStatus` only handles the `ACCEPTED` transition (see issue #112).
+> So scenario5's only observable is the "New Proposal" creation alert + the
+> on-chain `NO PERCENT: 100%` render.
 
 ### Scenario 1 — New validator via GovDAO
 
