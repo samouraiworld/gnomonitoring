@@ -14,6 +14,7 @@ import Chains from './pages/Chains'
 import AlertConfig from './pages/AlertConfig'
 import AlertHistory from './pages/AlertHistory'
 import Monikers from './pages/Monikers'
+import Reports from './pages/Reports'
 import Users from './pages/Users'
 import Webhooks from './pages/Webhooks'
 import Telegram from './pages/Telegram'
@@ -43,6 +44,7 @@ function ProtectedRoutes() {
             <Route path="config" element={<AlertConfig />} />
             <Route path="alerts" element={<AlertHistory />} />
             <Route path="monikers" element={<Monikers />} />
+            <Route path="reports" element={<Reports />} />
             <Route path="users" element={<Users />} />
             <Route path="webhooks" element={<Webhooks />} />
             <Route path="telegram" element={<Telegram />} />
@@ -69,6 +71,7 @@ function DevRoutes() {
         <Route path="config" element={<AlertConfig />} />
         <Route path="alerts" element={<AlertHistory />} />
         <Route path="monikers" element={<Monikers />} />
+        <Route path="reports" element={<Reports />} />
         <Route path="users" element={<Users />} />
         <Route path="webhooks" element={<Webhooks />} />
         <Route path="telegram" element={<Telegram />} />
