@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { api } from '../lib/api'
 import { useToast } from '../hooks/useToast'
 import { ConfirmModal } from '../components/ConfirmModal'
@@ -12,6 +12,7 @@ export default function AlertHistory() {
   const [chain, setChain] = useState('')
   const [level, setLevel] = useState('')
   const [limit, setLimit] = useState(100)
+  const [validatorFilter, setValidatorFilter] = useState('')
   const [confirmPurge, setConfirmPurge] = useState(false)
   const [purging, setPurging] = useState(false)
   const toast = useToast()
@@ -37,6 +38,28 @@ export default function AlertHistory() {
 
   useEffect(() => { fetchAlerts() }, [chain, level, limit])
 
+  const validatorOptions = useMemo(() => {
+    const seen = new Map<string, string>() // addr -> moniker
+    for (const a of alerts) {
+      if (!seen.has(a.addr)) seen.set(a.addr, a.moniker)
+    }
+    return Array.from(seen.entries())
+      .map(([addr, moniker]) => ({
+        addr,
+        label: addr === 'all' ? 'System' : moniker || truncateAddr(addr),
+      }))
+      .sort((x, y) => x.label.localeCompare(y.label, undefined, { sensitivity: 'base' }))
+  }, [alerts])
+
+  // Reset the validator filter if the selected validator is absent from the new result set.
+  useEffect(() => {
+    if (validatorFilter && !alerts.some(a => a.addr === validatorFilter)) {
+      setValidatorFilter('')
+    }
+  }, [alerts, validatorFilter])
+
+  const visibleAlerts = validatorFilter ? alerts.filter(a => a.addr === validatorFilter) : alerts
+
   const handlePurge = async () => {
     if (!chain) return
     setPurging(true)
@@ -57,7 +80,7 @@ export default function AlertHistory() {
       <div className="page-header flex-between">
         <div>
           <h1 className="page-title">Alert History</h1>
-          <p className="page-subtitle">{alerts.length} alerts shown</p>
+          <p className="page-subtitle">{visibleAlerts.length} alerts shown</p>
         </div>
         {chain && (
           <button className="btn btn-danger" onClick={() => setConfirmPurge(true)}>
@@ -86,6 +109,10 @@ export default function AlertHistory() {
             <option value={200}>200</option>
             <option value={500}>500</option>
           </select>
+          <select className="form-input" value={validatorFilter} onChange={e => setValidatorFilter(e.target.value)} style={{ width: 200 }}>
+            <option value="">All Validators</option>
+            {validatorOptions.map(v => <option key={v.addr} value={v.addr}>{v.label}</option>)}
+          </select>
         </div>
       </div>
 
@@ -105,9 +132,9 @@ export default function AlertHistory() {
               </tr>
             </thead>
             <tbody>
-              {alerts.length === 0 ? (
+              {visibleAlerts.length === 0 ? (
                 <tr><td colSpan={6}><div className="empty-state"><div className="empty-state-title">No alerts found</div></div></td></tr>
-              ) : alerts.map(a => (
+              ) : visibleAlerts.map(a => (
                 <tr key={a.ID}>
                   <td><span className={`badge ${levelBadgeClass(a.level)}`}>{a.level}</span></td>
                   <td className="mono">{a.chain_id}</td>
