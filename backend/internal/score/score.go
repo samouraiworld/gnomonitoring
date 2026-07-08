@@ -3,6 +3,8 @@
 // so the scoring policy can be unit-tested in isolation.
 package score
 
+import "strconv"
+
 // Tier is the human-readable band a score falls into.
 type Tier string
 
@@ -73,4 +75,35 @@ func tierFor(s int) Tier {
 	default:
 		return TierCritical
 	}
+}
+
+// admin_config keys for the tunable scoring weights.
+const (
+	KeyCriticalWeight         = "report_score_critical_weight"
+	KeyCriticalCap            = "report_score_critical_cap"
+	KeyDowntimeBlocksPerPoint = "report_score_downtime_blocks_per_point"
+	KeyDowntimeCap            = "report_score_downtime_cap"
+)
+
+// WeightsFromConfig builds Weights from an admin_config key/value map, using
+// DefaultWeights() for any missing or non-integer value.
+func WeightsFromConfig(cfg map[string]string) Weights {
+	w := DefaultWeights()
+	w.CriticalWeight = intOr(cfg, KeyCriticalWeight, w.CriticalWeight)
+	w.CriticalCap = intOr(cfg, KeyCriticalCap, w.CriticalCap)
+	w.DowntimeBlocksPerPoint = intOr(cfg, KeyDowntimeBlocksPerPoint, w.DowntimeBlocksPerPoint)
+	w.DowntimeCap = intOr(cfg, KeyDowntimeCap, w.DowntimeCap)
+	return w
+}
+
+func intOr(cfg map[string]string, key string, fallback int) int {
+	v, ok := cfg[key]
+	if !ok {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
