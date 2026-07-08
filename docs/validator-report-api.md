@@ -109,29 +109,29 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
     "moniker": "Validator Alpha",
     "periods": {
       "last_24h": {
-        "score": 94,
+        "score": 100,
         "tier": "Excellent",
         "critical_count": 0,
         "warning_count": 1,
         "downtime_blocks": 0
       },
       "current_week": {
-        "score": 88,
+        "score": 100,
         "tier": "Excellent",
         "critical_count": 0,
         "warning_count": 2,
         "downtime_blocks": 0
       },
       "current_month": {
-        "score": 70,
+        "score": 82,
         "tier": "Good",
         "critical_count": 3,
         "warning_count": 5,
         "downtime_blocks": 250
       },
       "current_year": {
-        "score": 65,
-        "tier": "Good",
+        "score": 50,
+        "tier": "Watch",
         "critical_count": 8,
         "warning_count": 15,
         "downtime_blocks": 1200
@@ -164,7 +164,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
         "downtime_blocks": 0
       },
       "current_year": {
-        "score": 82,
+        "score": 81,
         "tier": "Good",
         "critical_count": 3,
         "warning_count": 4,
