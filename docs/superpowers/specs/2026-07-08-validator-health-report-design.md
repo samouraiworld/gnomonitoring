@@ -40,6 +40,9 @@ Out of scope:
   power at the time of a past outage; deliberately excluded).
 - Historical persistence of computed scores (scores are computed on demand from
   `alert_logs`).
+- Participation-rate column in v1 (needs a separate per-period aggregation over
+  `daily_participations`; the v1 query reads `alert_logs` only). May be added
+  later.
 
 ## Scoring model
 
@@ -63,7 +66,11 @@ secondary signal.
 | Component | Raw metric | Penalty (starting weights, tunable) |
 |---|---|---|
 | Severity (primary) | `critical_count` = number of `CRITICAL` alert **rows** in period, resends included | `−6` per alert, capped at `−60` |
-| Downtime (secondary) | `downtime_ratio` = Σ(`end_height − start_height`) / blocks in period | `−(downtime_ratio × k)`, capped at `−20` |
+| Downtime (secondary) | `downtime_blocks` = Σ(`end_height − start_height`) over `CRITICAL` rows | `−(downtime_blocks / blocks_per_point)`, capped at `−20` |
+
+`blocks_per_point` (default `500`) is an `admin_config` constant: every 500 blocks
+of cumulative downtime costs 1 point, up to the `−20` cap. This keeps the score a
+pure function of the raw metrics with no dependency on total period block counts.
 
 `score = max(0, round(100 − total_penalty))`
 
@@ -94,8 +101,9 @@ redundant with the raw critical count.
 - Only **dispatched** alerts should count. Suppressed (deduped) alerts are not
   stored as rows, so counting `alert_logs` rows already excludes them; `RESOLVED`
   rows are not penalties and must be excluded from `critical_count`.
-- Starting weights (`6`, `k`, the caps) are placeholders to calibrate. They are
-  stored in `admin_config` so they can be tuned without recompiling.
+- Starting weights (`6` per critical, `500` blocks-per-point, the caps) are
+  placeholders to calibrate. They are stored in `admin_config` so they can be
+  tuned without recompiling.
 
 ## Backend components
 
@@ -103,12 +111,11 @@ redundant with the raw critical count.
 
 ```go
 type ValidatorScoreRaw struct {
-    Addr              string
-    Moniker           string
-    CriticalCount     int   // raw CRITICAL rows in period, resends included
-    WarningCount      int   // raw WARNING rows in period (informational only)
-    DowntimeBlocks    int64
-    ParticipationRate float64
+    Addr           string
+    Moniker        string
+    CriticalCount  int   // raw CRITICAL rows in period, resends included
+    WarningCount   int   // raw WARNING rows in period (informational only)
+    DowntimeBlocks int64 // Σ(end_height − start_height) over CRITICAL rows
 }
 
 func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRaw, error)
@@ -151,8 +158,8 @@ Response shape (per validator):
   "addr": "g1...",
   "moniker": "example",
   "periods": {
-    "last_24h":      { "score": 92, "tier": "Excellent", "critical_count": 0, "warning_count": 1, "downtime_blocks": 0,   "participation_rate": 99.8 },
-    "current_week":  { "score": 76, "tier": "Good",      "critical_count": 1, "warning_count": 3, "downtime_blocks": 120, "participation_rate": 98.1 },
+    "last_24h":      { "score": 92, "tier": "Excellent", "critical_count": 0, "warning_count": 1, "downtime_blocks": 0   },
+    "current_week":  { "score": 76, "tier": "Good",      "critical_count": 1, "warning_count": 3, "downtime_blocks": 120 },
     "current_month": { "...": "..." },
     "current_year":  { "...": "..." }
   }
