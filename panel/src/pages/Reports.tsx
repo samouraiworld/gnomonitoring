@@ -26,6 +26,12 @@ const TIER_RANK: Record<string, number> = {
   Critical: 0,
 }
 
+const PERIOD_ORDER: ReportPeriod[] = ['last_24h', 'current_week', 'current_month', 'current_year']
+
+function csvEscape(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
+}
+
 export default function Reports() {
   const [chains, setChains] = useState<ChainInfo[]>([])
   const [chain, setChain] = useState('')
@@ -79,6 +85,35 @@ export default function Reports() {
     } finally {
       setToggling(false)
     }
+  }
+
+  const handleExportCsv = () => {
+    const headers = ['moniker', 'address']
+    for (const per of PERIOD_ORDER) {
+      headers.push(`${per}_score`, `${per}_tier`, `${per}_critical`, `${per}_warning`, `${per}_downtime`)
+    }
+    const lines = sorted.map(r => {
+      const cells = [r.moniker, r.addr]
+      for (const per of PERIOD_ORDER) {
+        const p = r.periods[per]
+        if (p) {
+          cells.push(String(p.score), p.tier, String(p.critical_count), String(p.warning_count), String(p.downtime_blocks))
+        } else {
+          cells.push('', '', '', '', '')
+        }
+      }
+      return cells.map(csvEscape).join(',')
+    })
+    const csv = [headers.join(','), ...lines].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `validator-report-${chain}-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   const filtered = reports.filter(r => {
@@ -153,9 +188,14 @@ export default function Reports() {
           <p className="page-subtitle">{filtered.length} validators shown</p>
         </div>
         {chain && (
-          <button className={`btn ${reportEnabled ? 'btn-primary' : 'btn-secondary'}`} onClick={handleToggle} disabled={toggling}>
-            {toggling ? <span className="spinner" /> : null} Reports {reportEnabled ? 'Enabled' : 'Disabled'} for {chain}
-          </button>
+          <div className="flex-gap" style={{ gap: 12 }}>
+            <button className="btn btn-secondary" onClick={handleExportCsv} disabled={loading || sorted.length === 0}>
+              Export CSV
+            </button>
+            <button className={`btn ${reportEnabled ? 'btn-primary' : 'btn-secondary'}`} onClick={handleToggle} disabled={toggling}>
+              {toggling ? <span className="spinner" /> : null} Reports {reportEnabled ? 'Enabled' : 'Disabled'} for {chain}
+            </button>
+          </div>
         )}
       </div>
 
