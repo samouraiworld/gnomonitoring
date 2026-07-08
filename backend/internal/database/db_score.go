@@ -1,0 +1,73 @@
+package database
+
+import (
+	"fmt"
+	"time"
+
+	"gorm.io/gorm"
+)
+
+// ValidatorScoreRaw holds the raw per-validator alert metrics for one period.
+type ValidatorScoreRaw struct {
+	Addr           string `json:"addr"`
+	Moniker        string `json:"moniker"`
+	CriticalCount  int    `json:"critical_count"`
+	WarningCount   int    `json:"warning_count"`
+	DowntimeBlocks int64  `json:"downtime_blocks"`
+}
+
+// periodBounds returns [start,end) for a report period. Mirrors GetAlertLog.
+func periodBounds(period string, now time.Time) (time.Time, time.Time, error) {
+	switch period {
+	case "last_24h":
+		return now.Add(-24 * time.Hour), now, nil
+	case "current_week":
+		weekday := int(now.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, -weekday+1)
+		return start, start.AddDate(0, 0, 7), nil
+	case "current_month":
+		start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(0, 1, 0), nil
+	case "current_year":
+		start := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+		return start, start.AddDate(1, 0, 0), nil
+	default:
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid period: %s", period)
+	}
+}
+
+// GetValidatorScores returns per-validator CRITICAL/WARNING counts and summed
+// downtime blocks for the given chain and period. Ongoing outages
+// (end_height = 0) contribute 0 downtime. Scoped to chain_id.
+func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRaw, error) {
+	start, end, err := periodBounds(period, time.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	var rows []ValidatorScoreRaw
+	err = db.Raw(`
+		SELECT al.addr AS addr,
+		       COALESCE(MAX(am.moniker), MAX(al.moniker), '') AS moniker,
+		       COUNT(*) FILTER (WHERE al.level = 'CRITICAL') AS critical_count,
+		       COUNT(*) FILTER (WHERE al.level = 'WARNING')  AS warning_count,
+		       COALESCE(SUM(
+		           CASE WHEN al.level = 'CRITICAL' AND al.end_height > al.start_height
+		                THEN al.end_height - al.start_height ELSE 0 END
+		       ), 0) AS downtime_blocks
+		FROM alert_logs al
+		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
+		WHERE al.chain_id = ?
+		  AND al.level IN ('CRITICAL','WARNING')
+		  AND al.sent_at >= ? AND al.sent_at < ?
+		GROUP BY al.addr
+		ORDER BY al.addr
+	`, chainID, start, end).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("GetValidatorScores(%s,%s): %w", chainID, period, err)
+	}
+	return rows, nil
+}
