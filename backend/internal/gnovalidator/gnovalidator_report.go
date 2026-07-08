@@ -20,6 +20,24 @@ type ValidatorRate struct {
 	Moniker string
 }
 
+// reportLinkLine returns the daily-report link line for a chain when the
+// per-chain report toggle is on and a base URL is configured, else "".
+func reportLinkLine(db *gorm.DB, chainID string) string {
+	enabled, err := database.GetAdminConfig(db, "validator_report_enabled."+chainID)
+	if err != nil || strings.ToLower(strings.TrimSpace(enabled)) != "true" {
+		return ""
+	}
+	base, err := database.GetAdminConfig(db, "report_base_url")
+	if err != nil {
+		return ""
+	}
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	if base == "" {
+		return ""
+	}
+	return fmt.Sprintf("\n📊 Validator report: %s/reports/%s", base, chainID)
+}
+
 func SheduleUserReport(userID string, hour, minute int, timezone string, db *gorm.DB, reload <-chan struct{}) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
@@ -106,6 +124,8 @@ func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *
 		}
 		msg = FormatHealthyReport(chainID, yesterday, snap, rates, minBlock, maxBlock)
 	}
+
+	msg += reportLinkLine(db, chainID)
 
 	switch {
 	case userID != nil:
