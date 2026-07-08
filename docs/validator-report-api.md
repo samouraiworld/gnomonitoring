@@ -180,4 +180,4 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
 - All validators in the response have all four period keys populated, even if they have no alerts in a given period (in which case score = 100, tier = "Excellent").
 - The `addr` filter returns only matching validators; if no validators match, the response is an empty array.
 - Invalid chain IDs return HTTP 400.
-- The endpoint does not require authentication in `dev_mode = true`. In production, Clerk authentication is required.
+- This is a **public read endpoint**: it is not behind Clerk authentication in either `dev_mode` or production, consistent with the other read-only metric endpoints (`/uptime`, `/Participation`, `/missing_block`, etc.). Do not expose data through it that you would not expose on those endpoints. (The `/admin/*` configuration routes, including the report toggle, remain Clerk-protected.)
