@@ -32,10 +32,8 @@ func flushBatch(db *gorm.DB, rows []dpRow) error {
 		return nil
 	}
 	const cols = 7
-	const maxVars = 990 // conservative chunk size
-	// Postgres allows up to 65535 bind parameters per statement; we stay well below.
-	maxRows := maxVars / cols
-	// len(rows) nbr rows
+	const maxVars = 30_000 // Postgres supports up to 65535 bind parameters per statement; stay well below.
+	maxRows := maxVars / cols // = 4285 rows per INSERT
 
 	for start := 0; start < len(rows); start += maxRows {
 		end := start + maxRows
