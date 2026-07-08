@@ -139,7 +139,7 @@ export default function AlertHistory() {
                   <td><span className={`badge ${levelBadgeClass(a.level)}`}>{a.level}</span></td>
                   <td className="mono">{a.chain_id}</td>
                   <td>
-                    <div>{a.moniker === 'all' ? 'System' : a.moniker}</div>
+                    <div>{a.addr === 'all' ? 'System' : a.moniker}</div>
                     {a.addr !== 'all' && <div className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>{truncateAddr(a.addr)}</div>}
                   </td>
                   <td className="mono">{a.start_height.toLocaleString()} → {a.end_height.toLocaleString()}</td>
