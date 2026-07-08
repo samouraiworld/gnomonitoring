@@ -25,6 +25,7 @@ export default function Reports() {
   const [period, setPeriod] = useState<ReportPeriod>('current_month')
   const [reports, setReports] = useState<ValidatorReport[]>([])
   const [filter, setFilter] = useState('')
+  const [tierFilter, setTierFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [thresholds, setThresholds] = useState<Record<string, string>>({})
   const [toggling, setToggling] = useState(false)
@@ -72,9 +73,15 @@ export default function Reports() {
   }
 
   const filtered = reports.filter(r => {
-    if (!filter) return true
-    const q = filter.toLowerCase()
-    return r.addr.toLowerCase().includes(q) || r.moniker.toLowerCase().includes(q)
+    const p = r.periods[period]
+    if (filter) {
+      const q = filter.toLowerCase()
+      if (!r.addr.toLowerCase().includes(q) && !r.moniker.toLowerCase().includes(q)) return false
+    }
+    if (tierFilter) {
+      if (!p || p.tier !== tierFilter) return false
+    }
+    return true
   })
 
   return (
@@ -99,6 +106,13 @@ export default function Reports() {
           </select>
           <select className="form-input" value={period} onChange={e => setPeriod(e.target.value as ReportPeriod)} style={{ width: 160 }}>
             {REPORT_PERIODS.map(p => <option key={p} value={p}>{PERIOD_LABELS[p]}</option>)}
+          </select>
+          <select className="form-input" value={tierFilter} onChange={e => setTierFilter(e.target.value)} style={{ width: 150 }}>
+            <option value="">All Tiers</option>
+            <option value="Excellent">Excellent</option>
+            <option value="Good">Good</option>
+            <option value="Watch">Watch</option>
+            <option value="Critical">Critical</option>
           </select>
           <input
             className="form-input"
