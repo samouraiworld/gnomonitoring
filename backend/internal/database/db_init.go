@@ -319,6 +319,12 @@ func CreateOrReplaceIndexes(db *gorm.DB) error {
 		"DROP INDEX IF EXISTS idx_dp_addr_participated",
 		"DROP INDEX IF EXISTS idx_dp_addr_date",
 		"DROP INDEX IF EXISTS idx_tvs_addr_chatid",
+		// Redundant with the unique index / covered by wider prefixes — see the
+		// 2026-07-08 Postgres CPU plan. Dropping them cuts per-write index
+		// maintenance without losing query coverage.
+		"DROP INDEX IF EXISTS idx_dp_chain_addr_blockheight", // exact duplicate of the (chain_id, addr, block_height) unique index
+		"DROP INDEX IF EXISTS idx_dp_chain_addr",             // left-prefix of the unique index and of idx_dp_chain_addr_participated
+		"DROP INDEX IF EXISTS idx_dp_chain_date",             // left-prefix of idx_dp_chain_date_addr
 	}
 	for _, stmt := range drops {
 		if _, err := sqlDB.Exec(stmt); err != nil {
@@ -328,14 +334,12 @@ func CreateOrReplaceIndexes(db *gorm.DB) error {
 
 	creates := []string{
 		"CREATE INDEX IF NOT EXISTS idx_dp_chain_block_height ON daily_participations(chain_id, block_height)",
-		"CREATE INDEX IF NOT EXISTS idx_dp_chain_addr ON daily_participations(chain_id, addr)",
-		"CREATE INDEX IF NOT EXISTS idx_dp_chain_date ON daily_participations(chain_id, date)",
 		"CREATE INDEX IF NOT EXISTS idx_dp_chain_addr_participated ON daily_participations(chain_id, addr, participated)",
 		"CREATE INDEX IF NOT EXISTS idx_al_chain_addr ON alert_logs(chain_id, addr)",
 		"CREATE UNIQUE INDEX IF NOT EXISTS idx_tvs_chain_addr_chatid ON telegram_validator_subs(chain_id, addr, chat_id)",
-		// Covering index for consecutive-missed and uptime queries (block_height range + addr grouping)
-		"CREATE INDEX IF NOT EXISTS idx_dp_chain_addr_blockheight ON daily_participations(chain_id, addr, block_height)",
-		// Index for date-range queries with addr grouping (TxContrib, MissingBlock, ParticipationRate)
+		// Index for date-range queries with addr grouping (TxContrib, MissingBlock, ParticipationRate).
+		// The (chain_id, addr, block_height) covering index is redundant with the unique
+		// index of the same columns, so it is intentionally not (re)created here.
 		"CREATE INDEX IF NOT EXISTS idx_dp_chain_date_addr ON daily_participations(chain_id, date, addr)",
 		// Index for alert_logs sent_at ordering (used by GetActiveAlertCount CTE)
 		"CREATE INDEX IF NOT EXISTS idx_al_chain_addr_sentat ON alert_logs(chain_id, addr, sent_at)",
@@ -343,6 +347,32 @@ func CreateOrReplaceIndexes(db *gorm.DB) error {
 	for _, stmt := range creates {
 		if _, err := sqlDB.Exec(stmt); err != nil {
 			return fmt.Errorf("CreateOrReplaceIndexes: create: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// CreatePartialIndexes adds Postgres partial indexes for the frequent filtered
+// scans on daily_participations (missed vs. active). Partial indexes are smaller
+// than full indexes and faster for the alert/metric queries that always filter
+// on participated. Idempotent.
+func CreatePartialIndexes(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("CreatePartialIndexes: get sql.DB: %w", err)
+	}
+
+	creates := []string{
+		// Serves GetMissedWindows, GetMissedBlocksWindow, MissingBlock, GetMissedBlocksLast24h.
+		"CREATE INDEX IF NOT EXISTS idx_dp_chain_addr_missed ON daily_participations(chain_id, addr, date) WHERE participated = false",
+		// Serves the dead-validator silence check in WatchValidatorAlerts and the
+		// resume-height lookup in SendResolveAlerts.
+		"CREATE INDEX IF NOT EXISTS idx_dp_chain_addr_active ON daily_participations(chain_id, addr, date) WHERE participated = true",
+	}
+	for _, stmt := range creates {
+		if _, err := sqlDB.Exec(stmt); err != nil {
+			return fmt.Errorf("CreatePartialIndexes: create: %w", err)
 		}
 	}
 
@@ -416,6 +446,10 @@ func InitDB(dsn string) (*gorm.DB, error) {
 
 	if err := CreateOrReplaceIndexes(db); err != nil {
 		return nil, fmt.Errorf("CreateOrReplaceIndexes: %w", err)
+	}
+
+	if err := CreatePartialIndexes(db); err != nil {
+		return nil, fmt.Errorf("CreatePartialIndexes: %w", err)
 	}
 
 	if err := CreateAggregaIndexes(db); err != nil {
