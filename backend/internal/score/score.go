@@ -35,7 +35,9 @@ func DefaultWeights() Weights {
 // Compute returns the score (0-100) and its tier for a validator over one
 // period. criticalCount is the raw number of CRITICAL alert rows (resends
 // included); downtimeBlocks is the summed (end-start) block span of those
-// outages.
+// outages. Precondition: criticalCount >= 0 and downtimeBlocks >= 0; the score
+// is nonetheless clamped to the 0-100 range as defense-in-depth against
+// negative-input callers.
 func Compute(criticalCount int, downtimeBlocks int64, w Weights) (int, Tier) {
 	critPenalty := criticalCount * w.CriticalWeight
 	if critPenalty > w.CriticalCap {
@@ -53,6 +55,9 @@ func Compute(criticalCount int, downtimeBlocks int64, w Weights) (int, Tier) {
 	s := 100 - critPenalty - downPenalty
 	if s < 0 {
 		s = 0
+	}
+	if s > 100 {
+		s = 100
 	}
 	return s, tierFor(s)
 }
