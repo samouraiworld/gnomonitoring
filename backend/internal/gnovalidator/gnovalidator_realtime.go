@@ -573,51 +573,38 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 }
 
 func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participating map[string]Participation, monikerMap map[string]string, timeStp time.Time) error {
-	// today := time.Now().UTC().Format("2006-01-02 15:04:05")
-
-	tx := db.Begin()
-	if tx.Error != nil {
-		log.Printf("[monitor][%s] error starting transaction: %v", chainID, tx.Error)
-		return tx.Error
-	}
-
-	stmt := `
-		INSERT INTO daily_participations
-		(chain_id, date, block_height, moniker, addr, participated, tx_contribution)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (chain_id, block_height, addr) DO UPDATE SET
-		  date            = excluded.date,
-		  moniker         = excluded.moniker,
-		  participated    = excluded.participated,
-		  tx_contribution = excluded.tx_contribution
-	`
-
+	rows := make([]dpRow, 0, len(monikerMap))
 	for valAddr, moniker := range monikerMap {
-		participated := participating[valAddr] // false if not found
+		participated := participating[valAddr] // zero value => not participated
 
 		if participated.Participated {
-			// Dynamic detection: record first_active_block when first seen
+			// Dynamic detection: record first_active_block when first seen.
 			if GetFirstActiveBlock(chainID, valAddr) == -1 {
 				SetFirstActiveBlock(chainID, valAddr, blockHeight)
-				_ = database.UpsertFirstActiveBlock(tx, chainID, valAddr, blockHeight)
+				_ = database.UpsertFirstActiveBlock(db, chainID, valAddr, blockHeight)
 			}
 		} else {
-			// Guard: skip rows before the validator's activation block
+			// Guard: skip rows before the validator's activation block.
 			if fab := GetFirstActiveBlock(chainID, valAddr); fab > 0 && blockHeight < fab {
 				continue
 			}
 		}
 
-		if err := tx.Exec(stmt, chainID, timeStp, blockHeight, moniker, valAddr, participated.Participated, participated.TxContribution).Error; err != nil {
-			log.Printf("[monitor][%s] error saving participation for %s: %v", chainID, valAddr, err)
-			tx.Rollback()
-			return err
-		}
-
+		rows = append(rows, dpRow{
+			ChainID:        chainID,
+			Date:           timeStp,
+			BlockHeight:    blockHeight,
+			Moniker:        moniker,
+			Addr:           valAddr,
+			Participated:   participated.Participated,
+			TxContribution: participated.TxContribution,
+		})
 	}
 
-	if err := tx.Commit().Error; err != nil {
-		log.Printf("[monitor][%s] commit error: %v", chainID, err)
+	// One multi-VALUES INSERT (chunked by flushBatch) instead of one Exec per
+	// validator — removes per-row parse/plan cost on the realtime hot path.
+	if err := flushBatch(db, rows); err != nil {
+		log.Printf("[monitor][%s] failed to save participation at height %d: %v", chainID, blockHeight, err)
 		return err
 	}
 
