@@ -57,13 +57,22 @@ base of 100. Periods reuse the exact bounds already implemented in
 Source data: `alert_logs` rows (`level`, `addr`, `start_height`, `end_height`,
 `sent_at`) plus block-count context for the period.
 
+Two components only. Severity is the primary driver; downtime is a capped
+secondary signal.
+
 | Component | Raw metric | Penalty (starting weights, tunable) |
 |---|---|---|
-| Severity | `critical_count` = number of `CRITICAL` alert rows in period | `−6` per alert, capped at `−40` |
-| Flapping | `distinct_episodes` = number of distinct outage episodes | `−4` per episode beyond the first, capped at `−20` |
-| Downtime | `downtime_ratio` = Σ(`end_height − start_height`) / blocks in period | `−(downtime_ratio × k)`, capped at `−40` |
+| Severity (primary) | `critical_count` = number of `CRITICAL` alert **rows** in period, resends included | `−6` per alert, capped at `−60` |
+| Downtime (secondary) | `downtime_ratio` = Σ(`end_height − start_height`) / blocks in period | `−(downtime_ratio × k)`, capped at `−20` |
 
 `score = max(0, round(100 − total_penalty))`
+
+**No grouping into "episodes" and no separate flapping component** — this is
+intentional. A validator down for a long time re-triggers a `CRITICAL` alert
+every `alert_critical_resend_hours` (~24h), so a longer outage produces more
+`CRITICAL` rows and a lower score. This is the desired incentive: maintenance
+should be planned ahead and kept short. A separate flapping metric would be
+redundant with the raw critical count.
 
 ### Tiers
 
@@ -81,8 +90,8 @@ Source data: `alert_logs` rows (`level`, `addr`, `start_height`, `end_height`,
 - Only **dispatched** alerts should count. Suppressed (deduped) alerts are not
   stored as rows, so counting `alert_logs` rows already excludes them; `RESOLVED`
   rows are not penalties and must be excluded from `critical_count`.
-- Starting weights (`6`, `4`, `k`, the caps) are placeholders to calibrate. They
-  are stored in `admin_config` so they can be tuned without recompiling.
+- Starting weights (`6`, `k`, the caps) are placeholders to calibrate. They are
+  stored in `admin_config` so they can be tuned without recompiling.
 
 ## Backend components
 
@@ -92,8 +101,7 @@ Source data: `alert_logs` rows (`level`, `addr`, `start_height`, `end_height`,
 type ValidatorScoreRaw struct {
     Addr              string
     Moniker           string
-    CriticalCount     int
-    DistinctEpisodes  int
+    CriticalCount     int   // raw CRITICAL rows in period, resends included
     DowntimeBlocks    int64
     ParticipationRate float64
 }
@@ -127,9 +135,9 @@ func Compute(raw database.ValidatorScoreRaw, periodBlocks int64, w Weights) (int
 - `GET /api/reports/validators?chain=X&addr=Z` → same shape filtered to one
   validator (selection).
 - Reject unknown chains with 400 via `Config.ValidateChainID`.
-- If the feature is disabled for the chain, the route still returns data (the
-  toggle only gates the daily-report link and panel visibility, not the API) —
-  confirm during planning whether the API should also be gated.
+- **The API is always available**, regardless of the per-chain toggle. The toggle
+  gates only the daily-report link injection (see below). The panel Reports page
+  is also always available (admin-only surface).
 
 Response shape (per validator):
 
@@ -138,8 +146,8 @@ Response shape (per validator):
   "addr": "g1...",
   "moniker": "example",
   "periods": {
-    "last_24h":      { "score": 92, "tier": "Excellent", "critical_count": 0, "distinct_episodes": 0, "downtime_blocks": 0, "participation_rate": 99.8 },
-    "current_week":  { "score": 71, "tier": "Good", "critical_count": 1, "distinct_episodes": 1, "downtime_blocks": 120, "participation_rate": 98.1 },
+    "last_24h":      { "score": 92, "tier": "Excellent", "critical_count": 0, "downtime_blocks": 0, "participation_rate": 99.8 },
+    "current_week":  { "score": 76, "tier": "Good", "critical_count": 1, "downtime_blocks": 120, "participation_rate": 98.1 },
     "current_month": { "...": "..." },
     "current_year":  { "...": "..." }
   }
@@ -196,11 +204,14 @@ A doc under `docs/` describing:
    daily-report link injection, memba API doc.
 3. **Panel** — Reports page + toggle UI + optional export.
 
-## Open questions to resolve during planning
+## Resolved decisions
 
-- Should the JSON API itself be gated by `validator_report_enabled`, or only the
-  daily-report link and panel visibility? (Leaning: gate link + panel only.)
-- Exact starting values for the scoring weights and `k`, and their `admin_config`
-  key names.
-- Whether "distinct episodes" is derived by counting `CRITICAL` rows directly or
-  by grouping overlapping `start_height..end_height` ranges.
+- **API gating:** the JSON API is always available. The `validator_report_enabled`
+  toggle gates only the daily-report link injection. The panel Reports page is
+  always available (admin-only).
+- **Scoring source:** raw `CRITICAL` row count (resends included), no grouping
+  into episodes, no separate flapping component. Severity primary, downtime a
+  capped secondary. Rationale: incentivize planned, short maintenance.
+- **Weights:** stored in `admin_config` (tunable without recompiling); starting
+  values `−6` per critical (cap `−60`) and downtime cap `−20` are placeholders to
+  calibrate. Exact `admin_config` key names to be finalized in the plan.
