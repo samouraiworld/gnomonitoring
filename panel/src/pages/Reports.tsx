@@ -19,6 +19,13 @@ const TIER_BADGE_CLASS: Record<string, string> = {
   Critical: 'badge-critical',
 }
 
+const TIER_RANK: Record<string, number> = {
+  Excellent: 3,
+  Good: 2,
+  Watch: 1,
+  Critical: 0,
+}
+
 export default function Reports() {
   const [chains, setChains] = useState<ChainInfo[]>([])
   const [chain, setChain] = useState('')
@@ -26,6 +33,8 @@ export default function Reports() {
   const [reports, setReports] = useState<ValidatorReport[]>([])
   const [filter, setFilter] = useState('')
   const [tierFilter, setTierFilter] = useState('')
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [loading, setLoading] = useState(true)
   const [thresholds, setThresholds] = useState<Record<string, string>>({})
   const [toggling, setToggling] = useState(false)
@@ -84,6 +93,58 @@ export default function Reports() {
     return true
   })
 
+  const handleSort = (key: string) => {
+    if (sortKey !== key) {
+      setSortKey(key)
+      setSortDir('asc')
+      return
+    }
+    if (sortDir === 'asc') {
+      setSortDir('desc')
+      return
+    }
+    setSortKey(null) // third click clears back to default (score desc)
+  }
+
+  const sortIndicator = (key: string) => (sortKey === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '')
+
+  const sorted = [...filtered].sort((a, b) => {
+    const pa = a.periods[period]
+    const pb = b.periods[period]
+    // Validators without data for the selected period always sort to the end.
+    if (!pa && !pb) return 0
+    if (!pa) return 1
+    if (!pb) return -1
+
+    const key = sortKey ?? 'score'
+    const dir = sortKey === null ? 'desc' : sortDir
+    let cmp = 0
+    switch (key) {
+      case 'moniker':
+        cmp = a.moniker.localeCompare(b.moniker, undefined, { sensitivity: 'base' })
+        break
+      case 'addr':
+        cmp = a.addr.localeCompare(b.addr)
+        break
+      case 'tier':
+        cmp = (TIER_RANK[pa.tier] ?? -1) - (TIER_RANK[pb.tier] ?? -1)
+        break
+      case 'score':
+        cmp = pa.score - pb.score
+        break
+      case 'critical':
+        cmp = pa.critical_count - pb.critical_count
+        break
+      case 'warning':
+        cmp = pa.warning_count - pb.warning_count
+        break
+      case 'downtime':
+        cmp = pa.downtime_blocks - pb.downtime_blocks
+        break
+    }
+    return dir === 'asc' ? cmp : -cmp
+  })
+
   return (
     <>
       <div className="page-header flex-between">
@@ -132,19 +193,19 @@ export default function Reports() {
           <table>
             <thead>
               <tr>
-                <th>Moniker</th>
-                <th>Address</th>
-                <th>Score</th>
-                <th>Tier</th>
-                <th>Critical</th>
-                <th>Warning</th>
-                <th>Downtime Blocks</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('moniker')}>Moniker{sortIndicator('moniker')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('addr')}>Address{sortIndicator('addr')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('score')}>Score{sortIndicator('score')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('tier')}>Tier{sortIndicator('tier')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('critical')}>Critical{sortIndicator('critical')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('warning')}>Warning{sortIndicator('warning')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('downtime')}>Downtime Blocks{sortIndicator('downtime')}</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr><td colSpan={7}><div className="empty-state"><div className="empty-state-title">No data</div></div></td></tr>
-              ) : filtered.map(r => {
+              ) : sorted.map(r => {
                 const p = r.periods[period]
                 return (
                   <tr key={r.addr}>
