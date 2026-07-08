@@ -423,6 +423,39 @@ func GetMissedBlocksWindow(db *gorm.DB, chainID string, since time.Time) ([]Miss
 	return results, nil
 }
 
+// MissedMultiWindow holds missed-block counts for one validator across the 1h,
+// 24h and 7d windows, computed in a single scan.
+type MissedMultiWindow struct {
+	Addr      string `gorm:"column:addr"`
+	Moniker   string `gorm:"column:moniker"`
+	Missed1h  int    `gorm:"column:missed_1h"`
+	Missed24h int    `gorm:"column:missed_24h"`
+	Missed7d  int    `gorm:"column:missed_7d"`
+}
+
+// GetMissedBlocksMultiWindow returns per-validator missed-block counts for the
+// 1h, 24h and 7d windows in one query, replacing three separate
+// GetMissedBlocksWindow scans. The outer WHERE bounds the scan to the widest
+// (7d) window; the per-window counts use FILTER so narrower windows are exact.
+func GetMissedBlocksMultiWindow(db *gorm.DB, chainID string) ([]MissedMultiWindow, error) {
+	var results []MissedMultiWindow
+	query := `
+		SELECT
+			dp.addr,
+			MAX(COALESCE(am.moniker, dp.addr)) AS moniker,
+			COUNT(*) FILTER (WHERE dp.participated = false AND dp.date >= NOW() - INTERVAL '1 hour')   AS missed_1h,
+			COUNT(*) FILTER (WHERE dp.participated = false AND dp.date >= NOW() - INTERVAL '24 hours') AS missed_24h,
+			COUNT(*) FILTER (WHERE dp.participated = false AND dp.date >= NOW() - INTERVAL '7 days')   AS missed_7d
+		FROM daily_participations dp
+		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		WHERE dp.chain_id = ? AND dp.date >= NOW() - INTERVAL '7 days'
+		GROUP BY dp.addr`
+	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in GetMissedBlocksMultiWindow: %w", err)
+	}
+	return results, nil
+}
+
 // ====================================== ADDR MONIKER =============================
 
 func InsertAddrMoniker(db *gorm.DB, addr, moniker string) error {
