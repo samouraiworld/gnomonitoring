@@ -67,6 +67,10 @@ secondary signal.
 
 `score = max(0, round(100 − total_penalty))`
 
+`WARNING` alerts are **not** part of the score (only `CRITICAL` drives it), but
+`warning_count` is surfaced in the report and API as an informational detail
+alongside `critical_count`, `downtime_blocks`, and the final `score`/`tier`.
+
 **No grouping into "episodes" and no separate flapping component** — this is
 intentional. A validator down for a long time re-triggers a `CRITICAL` alert
 every `alert_critical_resend_hours` (~24h), so a longer outage produces more
@@ -102,6 +106,7 @@ type ValidatorScoreRaw struct {
     Addr              string
     Moniker           string
     CriticalCount     int   // raw CRITICAL rows in period, resends included
+    WarningCount      int   // raw WARNING rows in period (informational only)
     DowntimeBlocks    int64
     ParticipationRate float64
 }
@@ -146,8 +151,8 @@ Response shape (per validator):
   "addr": "g1...",
   "moniker": "example",
   "periods": {
-    "last_24h":      { "score": 92, "tier": "Excellent", "critical_count": 0, "downtime_blocks": 0, "participation_rate": 99.8 },
-    "current_week":  { "score": 76, "tier": "Good", "critical_count": 1, "downtime_blocks": 120, "participation_rate": 98.1 },
+    "last_24h":      { "score": 92, "tier": "Excellent", "critical_count": 0, "warning_count": 1, "downtime_blocks": 0,   "participation_rate": 99.8 },
+    "current_week":  { "score": 76, "tier": "Good",      "critical_count": 1, "warning_count": 3, "downtime_blocks": 120, "participation_rate": 98.1 },
     "current_month": { "...": "..." },
     "current_year":  { "...": "..." }
   }
@@ -182,7 +187,9 @@ it is just a link.
   (`panel/src/components/Sidebar.tsx`).
 - New page `panel/src/pages/Reports.tsx`:
   - Chain selector.
-  - Table of validators: moniker, address, score + tier per period.
+  - Table of validators showing, per period, the **metric breakdown**: score,
+    tier, `critical_count`, `warning_count`, `downtime_blocks`, and
+    `participation_rate` — not just the final score.
   - Filter / select a single validator.
   - Per-chain enable toggle (writes the `admin_config` key).
   - Optional client-side CSV/XLSX export of the table.
