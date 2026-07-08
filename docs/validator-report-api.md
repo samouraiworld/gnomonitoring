@@ -177,6 +177,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
 
 ## Notes
 
+- The response includes every validator that participated on the chain during the current calendar year (the active-validator roster), not only validators that have alerted. Perfectly healthy validators appear with score 100 / tier "Excellent".
 - All validators in the response have all four period keys populated, even if they have no alerts in a given period (in which case score = 100, tier = "Excellent").
 - The `addr` filter returns only matching validators; if no validators match, the response is an empty array.
 - Invalid chain IDs return HTTP 400.
