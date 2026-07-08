@@ -39,6 +39,43 @@ func periodBounds(period string, now time.Time) (time.Time, time.Time, error) {
 	}
 }
 
+// ValidatorIdentity is a validator's address and resolved moniker.
+type ValidatorIdentity struct {
+	Addr    string `json:"addr"`
+	Moniker string `json:"moniker"`
+}
+
+// GetChainValidators returns the distinct set of validators that participated
+// on the chain during the current calendar year, with monikers resolved from
+// addr_monikers (falling back to the moniker stored on the participation rows).
+// It unions the aggregated and raw participation tables so validators whose raw
+// rows have been pruned are still included. Scoped to chain_id.
+func GetChainValidators(db *gorm.DB, chainID string) ([]ValidatorIdentity, error) {
+	yearStart := fmt.Sprintf("%d-01-01", time.Now().Year())
+
+	var rows []ValidatorIdentity
+	err := db.Raw(`
+		SELECT combined.addr AS addr,
+		       COALESCE(MAX(am.moniker), MAX(combined.moniker), '') AS moniker
+		FROM (
+			SELECT chain_id, addr, moniker
+			FROM daily_participation_agregas
+			WHERE chain_id = ? AND block_date >= ?
+			UNION ALL
+			SELECT chain_id, addr, moniker
+			FROM daily_participations
+			WHERE chain_id = ? AND date >= ?
+		) combined
+		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
+		GROUP BY combined.addr
+		ORDER BY combined.addr
+	`, chainID, yearStart, chainID, yearStart).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("GetChainValidators(%s): %w", chainID, err)
+	}
+	return rows, nil
+}
+
 // GetValidatorScores returns per-validator CRITICAL/WARNING counts and summed
 // downtime blocks for the given chain and period. Ongoing outages
 // (end_height = 0) contribute 0 downtime. Scoped to chain_id.

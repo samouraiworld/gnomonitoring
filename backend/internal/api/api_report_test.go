@@ -19,6 +19,11 @@ func TestGetValidatorReportHandler(t *testing.T) {
 		ChainID: "test12", Addr: "g1aaa", Level: "CRITICAL",
 		StartHeight: 100, EndHeight: 130, Moniker: "alpha", SentAt: now,
 	})
+	// healthy validator: participates, no alerts.
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon",
+		BlockHeight: 200, Date: now, Participated: true, TxContribution: true,
+	})
 
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"test12": {
@@ -47,18 +52,42 @@ func TestGetValidatorReportHandler(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
 	}
-	if len(out) != 1 || out[0].Addr != "g1aaa" {
+	if len(out) != 2 {
 		t.Fatalf("unexpected payload: %+v", out)
 	}
-	p := out[0].Periods["current_month"]
+	byAddr := make(map[string]validatorReport, len(out))
+	for _, rep := range out {
+		byAddr[rep.Addr] = rep
+	}
+
+	alerting, ok := byAddr["g1aaa"]
+	if !ok {
+		t.Fatalf("missing alerting validator g1aaa in payload: %+v", out)
+	}
+	p := alerting.Periods["current_month"]
 	if p.CriticalCount != 1 || p.DowntimeBlocks != 30 {
 		t.Fatalf("current_month wrong: %+v", p)
 	}
 	if p.Score != 94 || p.Tier != "Excellent" {
 		t.Fatalf("score wrong: got (%d,%s), want (94,Excellent)", p.Score, p.Tier)
 	}
-	if _, ok := out[0].Periods["last_24h"]; !ok {
+	if _, ok := alerting.Periods["last_24h"]; !ok {
 		t.Fatalf("missing last_24h period")
+	}
+
+	healthy, ok := byAddr["g1healthy"]
+	if !ok {
+		t.Fatalf("missing healthy validator g1healthy in payload: %+v", out)
+	}
+	if healthy.Moniker != "healthy-mon" {
+		t.Fatalf("want moniker healthy-mon, got %q", healthy.Moniker)
+	}
+	hp := healthy.Periods["current_month"]
+	if hp.Score != 100 || hp.Tier != "Excellent" {
+		t.Fatalf("healthy score wrong: got (%d,%s), want (100,Excellent)", hp.Score, hp.Tier)
+	}
+	if hp.CriticalCount != 0 || hp.WarningCount != 0 || hp.DowntimeBlocks != 0 {
+		t.Fatalf("healthy validator should have clean counts: %+v", hp)
 	}
 }
 

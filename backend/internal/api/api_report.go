@@ -59,6 +59,23 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	byAddr := map[string]*validatorReport{}
 	order := []string{}
 
+	// Seed the full active-validator roster so healthy validators (no alerts)
+	// appear with a clean score, not just validators that have alerted.
+	roster, err := database.GetChainValidators(db, chainID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, v := range roster {
+		if addrFilter != "" && v.Addr != addrFilter {
+			continue
+		}
+		if _, ok := byAddr[v.Addr]; !ok {
+			byAddr[v.Addr] = &validatorReport{Addr: v.Addr, Moniker: v.Moniker, Periods: map[string]periodScore{}}
+			order = append(order, v.Addr)
+		}
+	}
+
 	for _, period := range reportPeriods {
 		rows, err := database.GetValidatorScores(db, chainID, period)
 		if err != nil {
