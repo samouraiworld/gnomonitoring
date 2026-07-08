@@ -1371,6 +1371,18 @@ func StartWebhookAPI(db *gorm.DB) {
 
 	})
 
+	mux.HandleFunc("/api/reports/validators", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			GetValidatorReportHandler(w, r, db)
+		case http.MethodOptions:
+			EnableCORS(w, r)
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
