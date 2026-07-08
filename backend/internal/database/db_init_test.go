@@ -1,6 +1,7 @@
 package database_test
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
@@ -42,6 +43,23 @@ func TestIndexMigration(t *testing.T) {
 	// Added (partial):
 	require.True(t, present["idx_dp_chain_addr_missed"])
 	require.True(t, present["idx_dp_chain_addr_active"])
+}
+
+func TestDailyParticipationsVacuumTuning(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	var reloptions sql.NullString
+	// Scope to the test's own schema: pg_class is not schema-qualified, so under
+	// the parallel suite multiple schemas each have a daily_participations table.
+	err := db.Raw(`
+		SELECT array_to_string(c.reloptions, ',')
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relname = 'daily_participations' AND n.nspname = current_schema()
+	`).Scan(&reloptions).Error
+	require.NoError(t, err)
+	require.True(t, reloptions.Valid)
+	require.Contains(t, reloptions.String, "autovacuum_vacuum_scale_factor=0.02")
 }
 
 func TestApplyMultiChainMigrations_SchemaScoped(t *testing.T) {

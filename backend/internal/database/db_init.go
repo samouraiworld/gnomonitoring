@@ -400,6 +400,27 @@ func CreateAggregaIndexes(db *gorm.DB) error {
 	return nil
 }
 
+// ApplyDailyParticipationsVacuumTuning sets an aggressive per-table autovacuum
+// policy on the hot, high-churn daily_participations table so vacuums run more
+// often on smaller batches instead of rare, CPU-bursty full passes. The table
+// takes continuous inserts and a periodic 7-day prune, so the default 0.2 scale
+// factor lets dead tuples pile up before a heavy vacuum. Idempotent.
+func ApplyDailyParticipationsVacuumTuning(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("ApplyDailyParticipationsVacuumTuning: get sql.DB: %w", err)
+	}
+	if _, err := sqlDB.Exec(`
+		ALTER TABLE daily_participations SET (
+			autovacuum_vacuum_scale_factor  = 0.02,
+			autovacuum_vacuum_threshold     = 5000,
+			autovacuum_analyze_scale_factor = 0.02
+		)`); err != nil {
+		return fmt.Errorf("ApplyDailyParticipationsVacuumTuning: alter: %w", err)
+	}
+	return nil
+}
+
 // InitDB opens the PostgreSQL database, configures the connection pool, runs
 // AutoMigrate, applies multi-chain schema migrations, rebuilds indexes and
 // creates the missing-blocks view.
@@ -454,6 +475,10 @@ func InitDB(dsn string) (*gorm.DB, error) {
 
 	if err := CreateAggregaIndexes(db); err != nil {
 		return nil, fmt.Errorf("CreateAggregaIndexes: %w", err)
+	}
+
+	if err := ApplyDailyParticipationsVacuumTuning(db); err != nil {
+		return nil, fmt.Errorf("ApplyDailyParticipationsVacuumTuning: %w", err)
 	}
 
 	if err := CreateMissingBlocksView(db); err != nil {
