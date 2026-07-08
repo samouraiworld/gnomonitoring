@@ -488,7 +488,7 @@ func SeedAdminConfig(db *gorm.DB) error {
 		"stagnation_repeat_minutes":        "30",
 		"rpc_error_cooldown_minutes":       "10",
 		"new_validator_scan_minutes":       "5",
-		"alert_check_interval_seconds":     "20",
+		"alert_check_interval_seconds":     "30",
 		"raw_retention_days":               "7",
 		"aggregator_period_minutes":        "60",
 	}
