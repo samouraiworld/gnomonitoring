@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: '/config', icon: '⚙', label: 'Alert Config' },
   { to: '/alerts', icon: '🔔', label: 'Alert History' },
   { to: '/monikers', icon: '🏷', label: 'Monikers' },
+  { to: '/reports', icon: '📊', label: 'Reports' },
   { section: 'Users & Integrations' },
   { to: '/users', icon: '👤', label: 'Users' },
   { to: '/webhooks', icon: '🔗', label: 'Webhooks' },
