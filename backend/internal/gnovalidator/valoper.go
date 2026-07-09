@@ -432,12 +432,23 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 
 	log.Printf("[valoper][%s] moniker map initialized: %d validators", chainID, len(tempMonikers))
 
-	// Sync MonikerMap to addr_monikers table
+	// Sync MonikerMap to addr_monikers table. Never persist the "unknown"
+	// placeholder: a stored "unknown" pollutes every COALESCE(am.moniker, …)
+	// read (it wins over the frozen row moniker) and absence is the clean
+	// "re-resolve next run" signal resolveMoniker already understands.
+	resolved, unresolved := 0, 0
 	for addr, moniker := range tempMonikers {
+		if !isResolvedMoniker(moniker) {
+			unresolved++
+			continue
+		}
+		resolved++
 		if err := database.UpsertAddrMoniker(db, chainID, addr, moniker); err != nil {
 			log.Printf("[valoper][%s] failed to upsert moniker for %s: %v", chainID, addr, err)
 		}
 	}
+	log.Printf("[valoper][%s] moniker sync: %d resolved persisted, %d unresolved (not persisted)",
+		chainID, resolved, unresolved)
 }
 func doWithRetry(attempts int, sleep time.Duration, fn func() error) error {
 	var err error
