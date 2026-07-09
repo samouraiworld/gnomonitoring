@@ -76,6 +76,79 @@ func GetChainValidators(db *gorm.DB, chainID string) ([]ValidatorIdentity, error
 	return rows, nil
 }
 
+// ParticipationRaw holds summed signing (and proposer) activity for one
+// validator over one period. Scoped to chain_id.
+type ParticipationRaw struct {
+	Addr           string `json:"addr"`
+	SignedBlocks   int64  `json:"signed_blocks"`
+	TotalBlocks    int64  `json:"total_blocks"`
+	ProposedBlocks int64  `json:"proposed_blocks"`
+}
+
+// GetValidatorParticipation returns per-validator signed/total (and proposed)
+// block counts for the period. It reads durable daily aggregates for complete
+// past days and raw rows for the current day, partitioned at today 00:00 UTC to
+// avoid double counting. last_24h reads only raw rows (block granularity).
+func GetValidatorParticipation(db *gorm.DB, chainID, period string) ([]ParticipationRaw, error) {
+	start, end, err := periodBounds(period, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+
+	// Raw window: for last_24h use the whole period; otherwise only today.
+	rawStart := todayStart
+	if period == "last_24h" {
+		rawStart = start
+	}
+	if rawStart.Before(start) {
+		rawStart = start
+	}
+
+	// Aggregate window (day strings, exclusive upper bound at today).
+	agregaStart := start.Format("2006-01-02")
+	agregaEnd := todayStart.Format("2006-01-02") // exclusive: block_date < today
+	includeAgrega := period != "last_24h" && todayStart.After(start)
+
+	var rows []ParticipationRaw
+	q := `
+		SELECT combined.addr AS addr,
+		       SUM(combined.signed) AS signed_blocks,
+		       SUM(combined.total)  AS total_blocks,
+		       SUM(combined.proposed) AS proposed_blocks
+		FROM (
+			SELECT addr,
+			       CASE WHEN participated THEN 1 ELSE 0 END AS signed,
+			       1 AS total,
+			       0 AS proposed
+			FROM daily_participations
+			WHERE chain_id = ? AND date >= ? AND date < ?
+	`
+	args := []any{chainID, rawStart, end}
+	if includeAgrega {
+		q += `
+			UNION ALL
+			SELECT addr,
+			       participated_count AS signed,
+			       total_blocks       AS total,
+			       0                  AS proposed
+			FROM daily_participation_agregas
+			WHERE chain_id = ? AND block_date >= ? AND block_date < ?
+		`
+		args = append(args, chainID, agregaStart, agregaEnd)
+	}
+	q += `
+		) combined
+		GROUP BY combined.addr
+		ORDER BY combined.addr
+	`
+	if err := db.Raw(q, args...).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("GetValidatorParticipation(%s,%s): %w", chainID, period, err)
+	}
+	return rows, nil
+}
+
 // GetValidatorScores returns per-validator CRITICAL/WARNING counts and summed
 // downtime blocks for the given chain and period. Ongoing outages
 // (end_height = 0) contribute 0 downtime. Scoped to chain_id.

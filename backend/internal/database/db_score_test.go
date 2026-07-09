@@ -95,3 +95,69 @@ func TestGetChainValidators(t *testing.T) {
 		t.Fatalf("want moniker override beta-override, got %q", rows[1].Moniker)
 	}
 }
+
+func TestGetValidatorParticipation_UnionAgregaAndToday(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test13"
+
+	// Aggregated complete day (yesterday): 80 signed / 100 total for addrA.
+	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	if err := db.Exec(`INSERT INTO daily_participation_agregas
+		(chain_id, addr, block_date, moniker, participated_count, missed_count,
+		 tx_contribution_count, total_blocks, first_block_height, last_block_height)
+		VALUES (?, 'addrA', ?, 'A', 80, 20, 0, 100, 1, 100)`,
+		chain, yesterday).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Today's raw rows for addrA: 2 blocks, 1 signed.
+	now := time.Now().UTC()
+	today0 := time.Date(now.Year(), now.Month(), now.Day(), 0, 5, 0, 0, time.UTC)
+	if err := db.Exec(`INSERT INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated, tx_contribution)
+		VALUES (?, ?, 201, 'A', 'addrA', true, false),
+		       (?, ?, 202, 'A', 'addrA', false, false)`,
+		chain, today0, chain, today0).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := database.GetValidatorParticipation(db, chain, "current_month")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *database.ParticipationRaw
+	for i := range rows {
+		if rows[i].Addr == "addrA" {
+			got = &rows[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("addrA missing from results")
+	}
+	// 80 + 1 signed, 100 + 2 total.
+	if got.SignedBlocks != 81 || got.TotalBlocks != 102 {
+		t.Fatalf("signed/total = %d/%d, want 81/102", got.SignedBlocks, got.TotalBlocks)
+	}
+}
+
+func TestGetValidatorParticipation_Last24hRawOnly(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test13"
+	now := time.Now().UTC()
+	recent := now.Add(-1 * time.Hour)
+	if err := db.Exec(`INSERT INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated, tx_contribution)
+		VALUES (?, ?, 301, 'B', 'addrB', true, false),
+		       (?, ?, 302, 'B', 'addrB', true, false),
+		       (?, ?, 303, 'B', 'addrB', false, false)`,
+		chain, recent, chain, recent, chain, recent).Error; err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.GetValidatorParticipation(db, chain, "last_24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].SignedBlocks != 2 || rows[0].TotalBlocks != 3 {
+		t.Fatalf("got %+v, want one row 2/3", rows)
+	}
+}
