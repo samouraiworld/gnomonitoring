@@ -90,16 +90,16 @@ export default function Reports() {
   const handleExportCsv = () => {
     const headers = ['moniker', 'address']
     for (const per of PERIOD_ORDER) {
-      headers.push(`${per}_score`, `${per}_tier`, `${per}_sign`, `${per}_vp`, `${per}_critical`, `${per}_warning`, `${per}_downtime`)
+      headers.push(`${per}_score`, `${per}_tier`, `${per}_sign`, `${per}_vp`, `${per}_proposer`, `${per}_critical`, `${per}_warning`, `${per}_downtime`)
     }
     const lines = sorted.map(r => {
       const cells = [r.moniker, r.addr]
       for (const per of PERIOD_ORDER) {
         const p = r.periods[per]
         if (p) {
-          cells.push(String(p.score), p.tier, p.sign_rate.toFixed(1), String(p.voting_power), String(p.critical_count), String(p.warning_count), String(p.downtime_blocks))
+          cells.push(String(p.score), p.tier, p.sign_rate.toFixed(1), String(p.voting_power), p.proposer_reliability != null ? p.proposer_reliability.toFixed(1) : '', String(p.critical_count), String(p.warning_count), String(p.downtime_blocks))
         } else {
-          cells.push('', '', '', '', '', '', '')
+          cells.push('', '', '', '', '', '', '', '')
         }
       }
       return cells.map(csvEscape).join(',')
@@ -169,6 +169,9 @@ export default function Reports() {
         break
       case 'vp':
         cmp = pa.voting_power - pb.voting_power
+        break
+      case 'proposer':
+        cmp = (pa.proposer_reliability ?? -1) - (pb.proposer_reliability ?? -1)
         break
       case 'score':
         cmp = pa.score - pb.score
@@ -245,6 +248,7 @@ export default function Reports() {
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('tier')}>Tier{sortIndicator('tier')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('sign')}>Sign %{sortIndicator('sign')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('vp')}>VP{sortIndicator('vp')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('proposer')}>Proposer %{sortIndicator('proposer')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('critical')}>Critical{sortIndicator('critical')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('warning')}>Warning{sortIndicator('warning')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('downtime')}>Downtime Blocks{sortIndicator('downtime')}</th>
@@ -252,7 +256,7 @@ export default function Reports() {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={9}><div className="empty-state"><div className="empty-state-title">No data</div></div></td></tr>
+                <tr><td colSpan={10}><div className="empty-state"><div className="empty-state-title">No data</div></div></td></tr>
               ) : sorted.map(r => {
                 const p = r.periods[period]
                 return (
@@ -263,6 +267,7 @@ export default function Reports() {
                     <td>{p ? <span className={`badge ${TIER_BADGE_CLASS[p.tier] || 'badge-muted'}`}>{p.tier}</span> : '—'}</td>
                     <td>{p ? `${p.sign_rate.toFixed(1)}%` : '—'}</td>
                     <td>{p ? p.voting_power.toLocaleString() : '—'}</td>
+                    <td>{p && p.proposer_reliability != null ? `${p.proposer_reliability.toFixed(1)}%` : '—'}</td>
                     <td>{p ? p.critical_count : '—'}</td>
                     <td>{p ? p.warning_count : '—'}</td>
                     <td>{p ? p.downtime_blocks : '—'}</td>
