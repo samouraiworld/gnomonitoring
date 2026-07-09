@@ -97,6 +97,64 @@ func TestGetValidatorReportHandler(t *testing.T) {
 	}
 }
 
+// TestGetValidatorReportHandlerAlertOnlyNoParticipation covers the new
+// sign-base behavior: a validator with an alert row but no participation
+// rows for a period has TotalBlocks == 0, so signRate (and therefore the
+// score base) is 0 — the validator scores 0 and lands in tier "Critical"
+// for that period, regardless of the alert penalty itself.
+func TestGetValidatorReportHandlerAlertOnlyNoParticipation(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now().UTC()
+	db.Create(&database.AlertLog{
+		ChainID: "test12", Addr: "g1alertonly", Level: "CRITICAL",
+		StartHeight: 100, EndHeight: 130, Moniker: "alertonly-mon", SentAt: now,
+	})
+
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"test12": {
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
+			Enabled:          true,
+		},
+	}
+	internal.EnabledChains = []string{"test12"}
+	internal.Config.DefaultChain = "test12"
+	defer func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/reports/validators?chain=test12", nil)
+	rec := httptest.NewRecorder()
+	GetValidatorReportHandler(rec, req, db)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out []validatorReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+	}
+	byAddr := make(map[string]validatorReport, len(out))
+	for _, rep := range out {
+		byAddr[rep.Addr] = rep
+	}
+
+	rep, ok := byAddr["g1alertonly"]
+	if !ok {
+		t.Fatalf("missing alert-only validator g1alertonly in payload: %+v", out)
+	}
+	p := rep.Periods["current_month"]
+	if p.Score != 0 || p.Tier != "Critical" {
+		t.Fatalf("alert-only score wrong: got (%d,%s), want (0,Critical)", p.Score, p.Tier)
+	}
+	if p.SignRate != 0 {
+		t.Fatalf("want sign_rate 0 (no participation rows), got %v", p.SignRate)
+	}
+}
+
 func TestGetValidatorReportHandlerInvalidChain(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 

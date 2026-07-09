@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
@@ -124,7 +125,14 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 			}
 		}
 
-		for addr, in := range inputs {
+		addrs := make([]string, 0, len(inputs))
+		for addr := range inputs {
+			addrs = append(addrs, addr)
+		}
+		sort.Strings(addrs)
+
+		for _, addr := range addrs {
+			in := inputs[addr]
 			rep, ok := byAddr[addr]
 			if !ok {
 				rep = &validatorReport{Addr: addr, Moniker: monikers[addr], Periods: map[string]periodScore{}}
