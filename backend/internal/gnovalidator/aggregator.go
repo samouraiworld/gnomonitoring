@@ -84,7 +84,7 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 	query := `
 		INSERT INTO daily_participation_agregas
 		  (chain_id, addr, block_date, moniker,
-		   participated_count, missed_count, tx_contribution_count,
+		   participated_count, missed_count, tx_contribution_count, proposed_count,
 		   total_blocks, first_block_height, last_block_height)
 		SELECT
 		  chain_id,
@@ -94,6 +94,7 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 		  SUM(CASE WHEN participated     THEN 1 ELSE 0 END)    AS participated_count,
 		  SUM(CASE WHEN NOT participated THEN 1 ELSE 0 END)    AS missed_count,
 		  SUM(CASE WHEN tx_contribution  THEN 1 ELSE 0 END)    AS tx_contribution_count,
+		  SUM(CASE WHEN proposed         THEN 1 ELSE 0 END)    AS proposed_count,
 		  COUNT(*)                                             AS total_blocks,
 		  MIN(block_height)                                    AS first_block_height,
 		  MAX(block_height)                                    AS last_block_height
@@ -105,6 +106,7 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 		  participated_count    = excluded.participated_count,
 		  missed_count          = excluded.missed_count,
 		  tx_contribution_count = excluded.tx_contribution_count,
+		  proposed_count        = excluded.proposed_count,
 		  total_blocks          = excluded.total_blocks,
 		  first_block_height    = excluded.first_block_height,
 		  last_block_height     = excluded.last_block_height`
