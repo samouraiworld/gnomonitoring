@@ -557,3 +557,84 @@ func TestGetAlertLog_PrefersAddrMonikers(t *testing.T) {
 	}
 	assert.True(t, found, "expected the g1signer alert in the result")
 }
+
+// ── Moniker frozen-fallback (the 2026-07-08 blank-names incident) ─────────────
+//
+// /Participation resolved names as COALESCE(am.moniker, addr): whenever
+// addr_monikers was empty or stale for a chain, EVERY validator name collapsed
+// to a bare address — even though the correct name was frozen into the
+// participation rows themselves. These tests pin the symmetric fallback chain:
+// live addr_monikers ('unknown' excluded) → frozen row moniker → address last.
+
+func TestGetCurrentPeriodParticipationRate_MonikerFrozenFallback(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain, addr, frozen = "test-13", "g15sysvwpves", "gfanton-1"
+
+	// Today's raw rows carry the moniker; addr_monikers has NO row at all.
+	rows := []database.DailyParticipation{
+		{ChainID: chain, Addr: addr, Moniker: frozen, BlockHeight: 1, Date: time.Now(), Participated: true},
+		{ChainID: chain, Addr: addr, Moniker: frozen, BlockHeight: 2, Date: time.Now(), Participated: true},
+	}
+	require.NoError(t, db.Create(&rows).Error)
+
+	rates, err := database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	require.NoError(t, err)
+	require.Len(t, rates, 1)
+	assert.Equal(t, frozen, rates[0].Moniker,
+		"empty addr_monikers must fall back to the frozen row moniker, NEVER the address")
+
+	// A persisted 'unknown' placeholder must not beat the frozen moniker either.
+	require.NoError(t, db.Create(&database.AddrMoniker{ChainID: chain, Addr: addr, Moniker: "unknown"}).Error)
+	rates, err = database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	require.NoError(t, err)
+	require.Len(t, rates, 1)
+	assert.Equal(t, frozen, rates[0].Moniker, "'unknown' in addr_monikers must not mask the frozen moniker")
+
+	// A REAL addr_monikers row still wins (live resolution stays authoritative).
+	require.NoError(t, db.Model(&database.AddrMoniker{}).
+		Where("chain_id = ? AND addr = ?", chain, addr).
+		Update("moniker", "gfanton-live").Error)
+	rates, err = database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	require.NoError(t, err)
+	require.Len(t, rates, 1)
+	assert.Equal(t, "gfanton-live", rates[0].Moniker, "a real live moniker takes precedence over the frozen one")
+}
+
+func TestGetCurrentPeriodParticipationRate_MonikerFrozenFallback_AgregaLeg(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain, addr, frozen = "test-13", "g1agregaaddr", "agrega-val"
+
+	// A past complete day lives only in the aggregate table (fast path).
+	agrega := database.DailyParticipationAgrega{
+		ChainID: chain, Addr: addr, Moniker: frozen,
+		BlockDate:         time.Now().AddDate(0, 0, -2).Format("2006-01-02"),
+		ParticipatedCount: 10, TotalBlocks: 10,
+	}
+	require.NoError(t, db.Create(&agrega).Error)
+
+	rates, err := database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	require.NoError(t, err)
+	require.Len(t, rates, 1)
+	assert.Equal(t, frozen, rates[0].Moniker, "the agrega leg must thread its frozen moniker too")
+}
+
+func TestUptimeAndMissingBlock_MonikerFrozenFallback(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain, addr, frozen = "test-13", "g1uptimeaddr", "uptime-val"
+
+	rows := []database.DailyParticipation{
+		{ChainID: chain, Addr: addr, Moniker: frozen, BlockHeight: 1, Date: time.Now(), Participated: true},
+		{ChainID: chain, Addr: addr, Moniker: frozen, BlockHeight: 2, Date: time.Now(), Participated: false},
+	}
+	require.NoError(t, db.Create(&rows).Error)
+
+	up, err := database.UptimeMetricsaddr(db, chain)
+	require.NoError(t, err)
+	require.Len(t, up, 1)
+	assert.Equal(t, frozen, up[0].Moniker, "uptime must use the frozen moniker when addr_monikers is empty")
+
+	missing, err := database.MissingBlock(db, chain, "all_time")
+	require.NoError(t, err)
+	require.Len(t, missing, 1)
+	assert.Equal(t, frozen, missing[0].Moniker, "missing-block must use the frozen moniker when addr_monikers is empty")
+}

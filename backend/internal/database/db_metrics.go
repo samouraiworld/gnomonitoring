@@ -83,7 +83,7 @@ func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 	// than formatting to strings.
 	err := db.Raw(`
 		SELECT DISTINCT
-		       COALESCE(am.moniker, al.moniker, '') AS moniker,
+		       COALESCE(NULLIF(am.moniker, 'unknown'), al.moniker, '') AS moniker,
 		       al.level, al.addr, al.start_height, al.end_height, al.msg, al.sent_at
 		FROM alert_logs al
 		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
@@ -149,7 +149,7 @@ func GetMissedWindows(db *gorm.DB, chainID string, threshold int) ([]MissedWindo
 			GROUP BY addr, seq_id
 		)
 		SELECT s.addr,
-		       COALESCE(am.moniker, s.dp_moniker, '') AS moniker,
+		       COALESCE(NULLIF(am.moniker, 'unknown'), s.dp_moniker, '') AS moniker,
 		       s.start_height,
 		       s.end_height,
 		       s.missed
@@ -197,16 +197,23 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string) ([]P
 	//   1. Agrega — past complete days (fast path, production)
 	//   2. Raw fallback — past days not yet in agrega (tests + new chains + today if agrega lags)
 	//   3. Raw today — current day always from raw (never aggregated yet)
+	// Moniker fallback chain (symmetric with the streak query): live
+	// addr_monikers ('unknown' placeholder excluded) → the moniker frozen into
+	// the participation rows themselves → the address only as a last resort.
+	// The old MAX(COALESCE(am.moniker, addr)) collapsed EVERY name to a bare
+	// address whenever addr_monikers was empty/stale for the chain, even though
+	// the correct name was sitting in daily_participation(_agrega)s.
 	query := `
 		SELECT combined.addr,
-			MAX(COALESCE(am.moniker, combined.addr)) AS moniker,
+			MAX(COALESCE(NULLIF(am.moniker, 'unknown'), NULLIF(combined.moniker, ''), combined.addr)) AS moniker,
 			ROUND(SUM(combined.participated_count) * 100.0 / NULLIF(SUM(combined.total_blocks), 0), 1) AS participation_rate
 		FROM (
-			SELECT chain_id, addr, participated_count, total_blocks
+			SELECT chain_id, addr, moniker, participated_count, total_blocks
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date >= ? AND block_date::date < CURRENT_DATE
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
+				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END),
 				COUNT(*)
 			FROM daily_participations dp
@@ -216,6 +223,7 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string) ([]P
 			GROUP BY dp.chain_id, dp.addr
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
+				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END),
 				COUNT(*)
 			FROM daily_participations dp
@@ -262,16 +270,24 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 			) GROUP BY chain_id, addr
 		)
 		SELECT
-			COALESCE(am.moniker, ld.addr) AS moniker,
+			COALESCE(NULLIF(am.moniker, 'unknown'), fm.moniker, ld.addr) AS moniker,
 			ld.addr,
 			ld.last_down_date,
 			lu.last_up_date,
 			ROUND(EXTRACT(EPOCH FROM (lu.last_up_date::timestamp - ld.last_down_date::timestamp)) / 86400.0, 1) AS days_diff
 		FROM last_down ld
 		LEFT JOIN last_up lu ON lu.chain_id = ld.chain_id AND lu.addr = ld.addr
-		LEFT JOIN addr_monikers am ON am.chain_id = ld.chain_id AND am.addr = ld.addr`
+		LEFT JOIN addr_monikers am ON am.chain_id = ld.chain_id AND am.addr = ld.addr
+		LEFT JOIN (
+			-- Frozen-moniker fallback (symmetric with the other metric queries):
+			-- the aggregate table is small, so this stays cheap.
+			SELECT addr, MAX(NULLIF(moniker, '')) AS moniker
+			FROM daily_participation_agregas
+			WHERE chain_id = ?
+			GROUP BY addr
+		) fm ON fm.addr = ld.addr`
 
-	if err := db.Raw(query, chainID, chainID, chainID, chainID).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, chainID, chainID, chainID, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
 
@@ -279,16 +295,19 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 }
 func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 	var results []UptimeMetrics
+	// Same symmetric moniker fallback as the participation query: live
+	// addr_monikers → frozen row moniker → address last.
 	query := `
 		SELECT combined.addr,
-			MAX(COALESCE(am.moniker, combined.addr)) AS moniker,
+			MAX(COALESCE(NULLIF(am.moniker, 'unknown'), NULLIF(combined.moniker, ''), combined.addr)) AS moniker,
 			100.0 * SUM(combined.participated_count) / NULLIF(SUM(combined.total_blocks), 0) AS uptime
 		FROM (
-			SELECT chain_id, addr, participated_count, total_blocks
+			SELECT chain_id, addr, moniker, participated_count, total_blocks
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date::date >= CURRENT_DATE - INTERVAL '30 days' AND block_date::date < CURRENT_DATE
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
+				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END),
 				COUNT(*)
 			FROM daily_participations dp
@@ -299,6 +318,7 @@ func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 			GROUP BY dp.chain_id, dp.addr
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
+				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END),
 				COUNT(*)
 			FROM daily_participations dp
@@ -323,13 +343,15 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 		return nil, err
 	}
 
+	// Same symmetric moniker fallback as the participation query.
 	query := `
 		WITH combined AS (
-			SELECT chain_id, addr, tx_contribution_count
+			SELECT chain_id, addr, moniker, tx_contribution_count
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date >= ? AND block_date::date < CURRENT_DATE
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
+				MAX(dp.moniker),
 				SUM(CASE WHEN dp.tx_contribution THEN 1 ELSE 0 END)
 			FROM daily_participations dp
 			LEFT JOIN daily_participation_agregas dpa
@@ -338,6 +360,7 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 			GROUP BY dp.chain_id, dp.addr
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
+				MAX(dp.moniker),
 				SUM(CASE WHEN dp.tx_contribution THEN 1 ELSE 0 END)
 			FROM daily_participations dp
 			WHERE dp.chain_id = ? AND dp.date >= CURRENT_DATE AND dp.date < CURRENT_DATE + INTERVAL '1 day'
@@ -345,7 +368,7 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 		),
 		total AS (SELECT NULLIF(SUM(tx_contribution_count), 0) AS total_tx FROM combined)
 		SELECT combined.addr,
-			MAX(COALESCE(am.moniker, combined.addr)) AS moniker,
+			MAX(COALESCE(NULLIF(am.moniker, 'unknown'), NULLIF(combined.moniker, ''), combined.addr)) AS moniker,
 			ROUND(SUM(combined.tx_contribution_count) * 100.0 / (SELECT total_tx FROM total), 1) AS tx_contrib
 		FROM combined
 		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
@@ -368,16 +391,18 @@ func MissingBlock(db *gorm.DB, chainID, period string) ([]MissingBlockMetrics, e
 		return nil, err
 	}
 
+	// Same symmetric moniker fallback as the participation query.
 	query := `
 		SELECT combined.addr,
-			MAX(COALESCE(am.moniker, combined.addr)) AS moniker,
+			MAX(COALESCE(NULLIF(am.moniker, 'unknown'), NULLIF(combined.moniker, ''), combined.addr)) AS moniker,
 			SUM(combined.missed_count) AS missing_block
 		FROM (
-			SELECT chain_id, addr, missed_count
+			SELECT chain_id, addr, moniker, missed_count
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date >= ? AND block_date::date < CURRENT_DATE
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
+				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated = false THEN 1 ELSE 0 END)
 			FROM daily_participations dp
 			LEFT JOIN daily_participation_agregas dpa
@@ -386,6 +411,7 @@ func MissingBlock(db *gorm.DB, chainID, period string) ([]MissingBlockMetrics, e
 			GROUP BY dp.chain_id, dp.addr
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
+				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated = false THEN 1 ELSE 0 END)
 			FROM daily_participations dp
 			WHERE dp.chain_id = ? AND dp.date >= CURRENT_DATE AND dp.date < CURRENT_DATE + INTERVAL '1 day'
