@@ -100,6 +100,7 @@ type DailyParticipation struct {
 	Addr           string    `gorm:"column:addr;not null;uniqueIndex:uniq_chain_addr_height,priority:2"`
 	Participated   bool      `gorm:"column:participated;not null"`
 	TxContribution bool      `gorm:"column:tx_contribution;not null"`
+	Proposed       bool      `gorm:"column:proposed;not null;default:false"`
 }
 
 type DailyParticipationAgrega struct {
@@ -113,6 +114,7 @@ type DailyParticipationAgrega struct {
 	TotalBlocks         int    `gorm:"column:total_blocks;not null"`
 	FirstBlockHeight    int64  `gorm:"column:first_block_height;not null"`
 	LastBlockHeight     int64  `gorm:"column:last_block_height;not null"`
+	ProposedCount       int    `gorm:"column:proposed_count;not null;default:0"`
 }
 
 type AlertLog struct {
@@ -439,6 +441,16 @@ func InitDB(dsn string) (*gorm.DB, error) {
 	if err := addColumnIfMissing(sqlDB, "addr_monikers", "voting_power",
 		"ALTER TABLE addr_monikers ADD COLUMN voting_power BIGINT NOT NULL DEFAULT 0"); err != nil {
 		return nil, fmt.Errorf("addColumnIfMissing(addr_monikers.voting_power): %w", err)
+	}
+
+	// Idempotent: proposed / proposed_count (score v2 proposer metric).
+	if err := addColumnIfMissing(sqlDB, "daily_participations", "proposed",
+		"ALTER TABLE daily_participations ADD COLUMN proposed BOOLEAN NOT NULL DEFAULT false"); err != nil {
+		return nil, fmt.Errorf("addColumnIfMissing(daily_participations.proposed): %w", err)
+	}
+	if err := addColumnIfMissing(sqlDB, "daily_participation_agregas", "proposed_count",
+		"ALTER TABLE daily_participation_agregas ADD COLUMN proposed_count INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return nil, fmt.Errorf("addColumnIfMissing(daily_participation_agregas.proposed_count): %w", err)
 	}
 
 	if err := CreateOrReplaceIndexes(db); err != nil {
