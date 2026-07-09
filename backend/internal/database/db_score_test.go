@@ -184,3 +184,26 @@ func TestGetValidatorVP(t *testing.T) {
 		t.Fatalf("perAddr=%v sum=%d max=%d, want b=300 sum=400 max=300", perAddr, sum, max)
 	}
 }
+
+func TestGetChainTotalBlocks(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test13"
+	now := time.Now().UTC()
+	rec := now.Add(-30 * time.Minute)
+	if err := db.Exec(`INSERT INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated, tx_contribution, proposed)
+		VALUES (?, ?, 1, 'A', 'a', true, false, true),
+		       (?, ?, 1, 'B', 'b', true, false, false),
+		       (?, ?, 2, 'A', 'a', true, false, false)`,
+		chain, rec, chain, rec, chain, rec).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Two distinct block heights in the window.
+	n, err := database.GetChainTotalBlocks(db, chain, "last_24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("chain blocks = %d, want 2 (distinct heights)", n)
+	}
+}

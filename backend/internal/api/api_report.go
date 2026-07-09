@@ -97,6 +97,11 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		chainBlocks, err := database.GetChainTotalBlocks(db, chainID, period)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		// Merge both sources into one Inputs per addr.
 		inputs := map[string]*score.Inputs{}
@@ -142,6 +147,7 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 			in.VotingPower = vpByAddr[addr]
 			in.SumVotingPower = vpSum
 			in.MaxVotingPower = vpMax
+			in.ChainBlocks = chainBlocks
 			rep, ok := byAddr[addr]
 			if !ok {
 				rep = &validatorReport{Addr: addr, Moniker: monikers[addr], Periods: map[string]periodScore{}}
