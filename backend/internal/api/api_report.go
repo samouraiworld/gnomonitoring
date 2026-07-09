@@ -59,6 +59,12 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	}
 	weights := score.WeightsFromConfig(cfg)
 
+	vpByAddr, vpSum, vpMax, err := database.GetValidatorVP(db, chainID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// addr -> report, preserving discovery order.
 	byAddr := map[string]*validatorReport{}
 	order := []string{}
@@ -133,6 +139,9 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 
 		for _, addr := range addrs {
 			in := inputs[addr]
+			in.VotingPower = vpByAddr[addr]
+			in.SumVotingPower = vpSum
+			in.MaxVotingPower = vpMax
 			rep, ok := byAddr[addr]
 			if !ok {
 				rep = &validatorReport{Addr: addr, Moniker: monikers[addr], Periods: map[string]periodScore{}}

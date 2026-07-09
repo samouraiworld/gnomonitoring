@@ -181,3 +181,30 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 	}
 	return rows, nil
 }
+
+// GetValidatorVP returns the current voting power per validator plus the sum
+// and max across the chain, used for score severity and proposer-share. Scoped
+// to chain_id.
+func GetValidatorVP(db *gorm.DB, chainID string) (map[string]int64, int64, int64, error) {
+	type row struct {
+		Addr        string
+		VotingPower int64
+	}
+	var rows []row
+	if err := db.Raw(`
+		SELECT addr, voting_power FROM addr_monikers
+		WHERE chain_id = ? AND voting_power > 0
+	`, chainID).Scan(&rows).Error; err != nil {
+		return nil, 0, 0, fmt.Errorf("GetValidatorVP(%s): %w", chainID, err)
+	}
+	perAddr := make(map[string]int64, len(rows))
+	var sum, max int64
+	for _, r := range rows {
+		perAddr[r.Addr] = r.VotingPower
+		sum += r.VotingPower
+		if r.VotingPower > max {
+			max = r.VotingPower
+		}
+	}
+	return perAddr, sum, max, nil
+}

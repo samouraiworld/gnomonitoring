@@ -161,3 +161,26 @@ func TestGetValidatorParticipation_Last24hRawOnly(t *testing.T) {
 		t.Fatalf("got %+v, want one row 2/3", rows)
 	}
 }
+
+func TestGetValidatorVP(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test13"
+	for _, r := range []struct {
+		addr string
+		vp   int64
+	}{{"a", 100}, {"b", 300}, {"c", 0}} {
+		if err := database.UpsertAddrMoniker(db, chain, r.addr, r.addr); err != nil {
+			t.Fatal(err)
+		}
+		if err := database.UpsertAddrMonikerVP(db, chain, r.addr, r.vp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	perAddr, sum, max, err := database.GetValidatorVP(db, chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perAddr["b"] != 300 || sum != 400 || max != 300 {
+		t.Fatalf("perAddr=%v sum=%d max=%d, want b=300 sum=400 max=300", perAddr, sum, max)
+	}
+}
