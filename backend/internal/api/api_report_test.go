@@ -19,6 +19,12 @@ func TestGetValidatorReportHandler(t *testing.T) {
 		ChainID: "test12", Addr: "g1aaa", Level: "CRITICAL",
 		StartHeight: 100, EndHeight: 130, Moniker: "alpha", SentAt: now,
 	})
+	// g1aaa also signs blocks (full sign rate) so the alert penalty is the
+	// only thing pulling its score down from 100.
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1aaa", Moniker: "alpha",
+		BlockHeight: 199, Date: now, Participated: true, TxContribution: true,
+	})
 	// healthy validator: participates, no alerts.
 	db.Create(&database.DailyParticipation{
 		ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon",
