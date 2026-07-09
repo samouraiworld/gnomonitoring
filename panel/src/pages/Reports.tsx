@@ -90,16 +90,16 @@ export default function Reports() {
   const handleExportCsv = () => {
     const headers = ['moniker', 'address']
     for (const per of PERIOD_ORDER) {
-      headers.push(`${per}_score`, `${per}_tier`, `${per}_critical`, `${per}_warning`, `${per}_downtime`)
+      headers.push(`${per}_score`, `${per}_tier`, `${per}_sign`, `${per}_critical`, `${per}_warning`, `${per}_downtime`)
     }
     const lines = sorted.map(r => {
       const cells = [r.moniker, r.addr]
       for (const per of PERIOD_ORDER) {
         const p = r.periods[per]
         if (p) {
-          cells.push(String(p.score), p.tier, String(p.critical_count), String(p.warning_count), String(p.downtime_blocks))
+          cells.push(String(p.score), p.tier, p.sign_rate.toFixed(1), String(p.critical_count), String(p.warning_count), String(p.downtime_blocks))
         } else {
-          cells.push('', '', '', '', '')
+          cells.push('', '', '', '', '', '')
         }
       }
       return cells.map(csvEscape).join(',')
@@ -163,6 +163,9 @@ export default function Reports() {
         break
       case 'tier':
         cmp = (TIER_RANK[pa.tier] ?? -1) - (TIER_RANK[pb.tier] ?? -1)
+        break
+      case 'sign':
+        cmp = pa.sign_rate - pb.sign_rate
         break
       case 'score':
         cmp = pa.score - pb.score
@@ -237,6 +240,7 @@ export default function Reports() {
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('addr')}>Address{sortIndicator('addr')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('score')}>Score{sortIndicator('score')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('tier')}>Tier{sortIndicator('tier')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('sign')}>Sign %{sortIndicator('sign')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('critical')}>Critical{sortIndicator('critical')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('warning')}>Warning{sortIndicator('warning')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('downtime')}>Downtime Blocks{sortIndicator('downtime')}</th>
@@ -244,7 +248,7 @@ export default function Reports() {
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={7}><div className="empty-state"><div className="empty-state-title">No data</div></div></td></tr>
+                <tr><td colSpan={8}><div className="empty-state"><div className="empty-state-title">No data</div></div></td></tr>
               ) : sorted.map(r => {
                 const p = r.periods[period]
                 return (
@@ -253,6 +257,7 @@ export default function Reports() {
                     <td className="mono">{truncateAddr(r.addr)}</td>
                     <td>{p ? p.score : '—'}</td>
                     <td>{p ? <span className={`badge ${TIER_BADGE_CLASS[p.tier] || 'badge-muted'}`}>{p.tier}</span> : '—'}</td>
+                    <td>{p ? `${p.sign_rate.toFixed(1)}%` : '—'}</td>
                     <td>{p ? p.critical_count : '—'}</td>
                     <td>{p ? p.warning_count : '—'}</td>
                     <td>{p ? p.downtime_blocks : '—'}</td>

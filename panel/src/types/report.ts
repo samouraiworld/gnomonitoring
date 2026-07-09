@@ -7,6 +7,9 @@
 export interface PeriodScore {
   score: number
   tier: 'Excellent' | 'Good' | 'Watch' | 'Critical'
+  sign_rate: number
+  proposer_reliability: number | null
+  voting_power: number
   critical_count: number
   warning_count: number
   downtime_blocks: number
