@@ -354,6 +354,16 @@ func UpsertAddrMoniker(db *gorm.DB, chainID, addr, moniker string) error {
 	`, chainID, addr, moniker).Error
 }
 
+// UpsertAddrMonikerVP writes the latest voting power for a validator, inserting
+// a row (with empty moniker) if none exists yet. Scoped to chain_id.
+func UpsertAddrMonikerVP(db *gorm.DB, chainID, addr string, votingPower int64) error {
+	return db.Exec(`
+		INSERT INTO addr_monikers (chain_id, addr, moniker, voting_power)
+		VALUES (?, ?, '', ?)
+		ON CONFLICT(chain_id, addr) DO UPDATE SET voting_power = excluded.voting_power
+	`, chainID, addr, votingPower).Error
+}
+
 // GetMonikerByAddr returns the moniker for a given validator address.
 // Returns an empty string (no error) if the address is not found.
 func GetMonikerByAddr(db *gorm.DB, chainID, addr string) (string, error) {
