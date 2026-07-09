@@ -16,8 +16,12 @@ type ValidatorScoreRaw struct {
 	DowntimeBlocks int64  `json:"downtime_blocks"`
 }
 
-// periodBounds returns [start,end) for a report period. Mirrors GetAlertLog.
+// periodBounds returns [start,end) for a report period. All bounds are derived
+// in UTC (independent of the process's local timezone) so they line up with the
+// UTC block timestamps stored in daily_participations and the UTC-formatted
+// block_date boundaries used by the raw/aggregate partition below.
 func periodBounds(period string, now time.Time) (time.Time, time.Time, error) {
+	now = now.UTC()
 	switch period {
 	case "last_24h":
 		return now.Add(-24 * time.Hour), now, nil
@@ -26,7 +30,7 @@ func periodBounds(period string, now time.Time) (time.Time, time.Time, error) {
 		if weekday == 0 {
 			weekday = 7
 		}
-		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, -weekday+1)
+		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -weekday+1)
 		return start, start.AddDate(0, 0, 7), nil
 	case "current_month":
 		start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
