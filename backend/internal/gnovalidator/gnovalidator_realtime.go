@@ -124,6 +124,7 @@ type Participation struct {
 	Participated   bool
 	Timestamp      time.Time
 	TxContribution bool
+	Proposed       bool
 }
 
 func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client) {
@@ -314,6 +315,7 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 							Participated:   true,
 							Timestamp:      timeStp,
 							TxContribution: tx,
+							Proposed:       precommit.ValidatorAddress.String() == txProposer,
 						}
 
 					}
@@ -583,13 +585,14 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 
 	stmt := `
 		INSERT INTO daily_participations
-		(chain_id, date, block_height, moniker, addr, participated, tx_contribution)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		(chain_id, date, block_height, moniker, addr, participated, tx_contribution, proposed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (chain_id, block_height, addr) DO UPDATE SET
 		  date            = excluded.date,
 		  moniker         = excluded.moniker,
 		  participated    = excluded.participated,
-		  tx_contribution = excluded.tx_contribution
+		  tx_contribution = excluded.tx_contribution,
+		  proposed        = excluded.proposed
 	`
 
 	for valAddr, moniker := range monikerMap {
@@ -608,7 +611,7 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 			}
 		}
 
-		if err := tx.Exec(stmt, chainID, timeStp, blockHeight, moniker, valAddr, participated.Participated, participated.TxContribution).Error; err != nil {
+		if err := tx.Exec(stmt, chainID, timeStp, blockHeight, moniker, valAddr, participated.Participated, participated.TxContribution, participated.Proposed).Error; err != nil {
 			log.Printf("[monitor][%s] error saving participation for %s: %v", chainID, valAddr, err)
 			tx.Rollback()
 			return err

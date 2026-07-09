@@ -17,6 +17,7 @@ type dpRow struct {
 	Addr           string
 	Participated   bool
 	TxContribution bool
+	Proposed       bool
 }
 
 type job struct{ H int64 }
@@ -31,7 +32,7 @@ func flushBatch(db *gorm.DB, rows []dpRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	const cols = 7
+	const cols = 8
 	const maxVars = 990 // conservative chunk size
 	// Postgres allows up to 65535 bind parameters per statement; we stay well below.
 	maxRows := maxVars / cols
@@ -55,22 +56,23 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 
 	q := `
       INSERT INTO daily_participations
-        (chain_id, date, block_height, moniker, addr, participated, tx_contribution)
+        (chain_id, date, block_height, moniker, addr, participated, tx_contribution, proposed)
       VALUES `
-	args := make([]any, 0, len(rows)*7)
+	args := make([]any, 0, len(rows)*8)
 	for i, r := range rows {
 		if i > 0 {
 			q += ","
 		}
-		q += "(?, ?, ?, ?, ?, ?, ?)"
-		args = append(args, r.ChainID, r.Date, r.BlockHeight, r.Moniker, r.Addr, r.Participated, r.TxContribution)
+		q += "(?, ?, ?, ?, ?, ?, ?, ?)"
+		args = append(args, r.ChainID, r.Date, r.BlockHeight, r.Moniker, r.Addr, r.Participated, r.TxContribution, r.Proposed)
 	}
 	q += `
 	  ON CONFLICT(chain_id, block_height, addr) DO UPDATE SET
 	    date = excluded.date,
 	    moniker = excluded.moniker,
 	    participated = excluded.participated,
-	    tx_contribution = excluded.tx_contribution
+	    tx_contribution = excluded.tx_contribution,
+	    proposed = excluded.proposed
 	`
 
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -126,6 +128,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 						Participated:   true,
 						Timestamp:      timeStp,
 						TxContribution: tx,
+						Proposed:       precommit.ValidatorAddress.String() == txProposer,
 					}
 
 				}
@@ -155,6 +158,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 					Addr:           valAddr,
 					Participated:   participated.Participated,
 					TxContribution: participated.TxContribution,
+					Proposed:       participated.Proposed,
 				})
 				if len(buf) >= flushThreshold {
 					if err := flushBatch(db, buf); err != nil {
@@ -230,6 +234,7 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 						Addr:           addr,
 						Participated:   true,
 						TxContribution: hasTx && (addr == txProp),
+						Proposed:       addr == txProp,
 					})
 				}
 				// participated false
