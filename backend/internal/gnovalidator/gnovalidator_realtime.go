@@ -294,6 +294,9 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					txProposer = block.Block.Header.ProposerAddress.String()
 
 				}
+				// Actual block proposer, unconditional (a block always has a proposer,
+				// independent of whether it contains transactions).
+				proposerAddr := block.Block.Header.ProposerAddress.String()
 				// === Get Timestamp ==
 
 				timeStp := block.Block.Header.Time
@@ -315,7 +318,7 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 							Participated:   true,
 							Timestamp:      timeStp,
 							TxContribution: tx,
-							Proposed:       precommit.ValidatorAddress.String() == txProposer,
+							Proposed:       precommit.ValidatorAddress.String() == proposerAddr,
 						}
 
 					}

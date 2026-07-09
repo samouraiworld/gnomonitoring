@@ -110,6 +110,9 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 				txProposer = block.Block.Header.ProposerAddress.String()
 
 			}
+			// Actual block proposer, unconditional (a block always has a proposer,
+			// independent of whether it contains transactions).
+			proposerAddr := block.Block.Header.ProposerAddress.String()
 			// === Get Timestamp ==
 
 			timeStp := block.Block.Header.Time
@@ -128,7 +131,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 						Participated:   true,
 						Timestamp:      timeStp,
 						TxContribution: tx,
-						Proposed:       precommit.ValidatorAddress.String() == txProposer,
+						Proposed:       precommit.ValidatorAddress.String() == proposerAddr,
 					}
 
 				}
@@ -208,6 +211,9 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 				if hasTx {
 					txProp = b.Block.Header.ProposerAddress.String()
 				}
+				// Actual block proposer, unconditional (a block always has a proposer,
+				// independent of whether it contains transactions).
+				proposerAddr := b.Block.Header.ProposerAddress.String()
 
 				tStr := b.Block.Header.Time
 
@@ -234,7 +240,7 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 						Addr:           addr,
 						Participated:   true,
 						TxContribution: hasTx && (addr == txProp),
-						Proposed:       addr == txProp,
+						Proposed:       addr == proposerAddr,
 					})
 				}
 				// participated false
