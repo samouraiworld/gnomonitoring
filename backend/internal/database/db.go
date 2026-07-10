@@ -364,6 +364,45 @@ func UpsertAddrMonikerVP(db *gorm.DB, chainID, addr string, votingPower int64) e
 	`, chainID, addr, votingPower).Error
 }
 
+// AddrVP pairs a validator address with its voting power for batch upserts.
+type AddrVP struct {
+	Addr        string
+	VotingPower int64
+}
+
+// UpsertAddrMonikerVPBatch writes voting power for many validators in chunked
+// multi-row upserts, inserting a row (empty moniker) when none exists. Same
+// per-row semantics as UpsertAddrMonikerVP. Scoped to chain_id.
+func UpsertAddrMonikerVPBatch(db *gorm.DB, chainID string, rows []AddrVP) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const perRowBinds = 3 // chain_id, addr, voting_power (moniker is a literal '')
+	const maxBinds = 990
+	maxRows := maxBinds / perRowBinds
+	for i := 0; i < len(rows); i += maxRows {
+		j := i + maxRows
+		if j > len(rows) {
+			j = len(rows)
+		}
+		chunk := rows[i:j]
+		q := `INSERT INTO addr_monikers (chain_id, addr, moniker, voting_power) VALUES `
+		args := make([]any, 0, len(chunk)*perRowBinds)
+		for k, r := range chunk {
+			if k > 0 {
+				q += ","
+			}
+			q += "(?, ?, '', ?)"
+			args = append(args, chainID, r.Addr, r.VotingPower)
+		}
+		q += ` ON CONFLICT(chain_id, addr) DO UPDATE SET voting_power = excluded.voting_power`
+		if err := db.Exec(q, args...).Error; err != nil {
+			return fmt.Errorf("UpsertAddrMonikerVPBatch(%s): %w", chainID, err)
+		}
+	}
+	return nil
+}
+
 // GetMonikerByAddr returns the moniker for a given validator address.
 // Returns an empty string (no error) if the address is not found.
 func GetMonikerByAddr(db *gorm.DB, chainID, addr string) (string, error) {
