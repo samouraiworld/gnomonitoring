@@ -174,39 +174,31 @@ const (
 // DefaultWeights() for any missing or non-numeric value.
 func WeightsFromConfig(cfg map[string]string) Weights {
 	w := DefaultWeights()
-	w.CriticalWeight = intOr(cfg, KeyCriticalWeight, w.CriticalWeight)
-	w.CriticalCap = intOr(cfg, KeyCriticalCap, w.CriticalCap)
-	w.DowntimeBlocksPerPoint = intOr(cfg, KeyDowntimeBlocksPerPoint, w.DowntimeBlocksPerPoint)
-	w.DowntimeCap = intOr(cfg, KeyDowntimeCap, w.DowntimeCap)
-	w.WarningWeight = intOr(cfg, KeyWarningWeight, w.WarningWeight)
-	w.WarningCap = intOr(cfg, KeyWarningCap, w.WarningCap)
-	w.ProposerMinExpected = intOr(cfg, KeyProposerMinExpected, w.ProposerMinExpected)
-	w.SignWeight = floatOr(cfg, KeySignWeight, w.SignWeight)
-	w.ProposerWeight = floatOr(cfg, KeyProposerWeight, w.ProposerWeight)
-	w.VpSeverityFactor = floatOr(cfg, KeyVpSeverityFactor, w.VpSeverityFactor)
+	w.CriticalWeight = numOr(cfg, KeyCriticalWeight, w.CriticalWeight, strconv.Atoi)
+	w.CriticalCap = numOr(cfg, KeyCriticalCap, w.CriticalCap, strconv.Atoi)
+	w.DowntimeBlocksPerPoint = numOr(cfg, KeyDowntimeBlocksPerPoint, w.DowntimeBlocksPerPoint, strconv.Atoi)
+	w.DowntimeCap = numOr(cfg, KeyDowntimeCap, w.DowntimeCap, strconv.Atoi)
+	w.WarningWeight = numOr(cfg, KeyWarningWeight, w.WarningWeight, strconv.Atoi)
+	w.WarningCap = numOr(cfg, KeyWarningCap, w.WarningCap, strconv.Atoi)
+	w.ProposerMinExpected = numOr(cfg, KeyProposerMinExpected, w.ProposerMinExpected, strconv.Atoi)
+	w.SignWeight = numOr(cfg, KeySignWeight, w.SignWeight, parseFloat64)
+	w.ProposerWeight = numOr(cfg, KeyProposerWeight, w.ProposerWeight, parseFloat64)
+	w.VpSeverityFactor = numOr(cfg, KeyVpSeverityFactor, w.VpSeverityFactor, parseFloat64)
 	return w
 }
 
-func intOr(cfg map[string]string, key string, fallback int) int {
+// numOr returns the parsed config value for key, or fallback when the key is
+// absent or unparseable.
+func numOr[T any](cfg map[string]string, key string, fallback T, parse func(string) (T, error)) T {
 	v, ok := cfg[key]
 	if !ok {
 		return fallback
 	}
-	n, err := strconv.Atoi(v)
+	n, err := parse(v)
 	if err != nil {
 		return fallback
 	}
 	return n
 }
 
-func floatOr(cfg map[string]string, key string, fallback float64) float64 {
-	v, ok := cfg[key]
-	if !ok {
-		return fallback
-	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		return fallback
-	}
-	return f
-}
+func parseFloat64(s string) (float64, error) { return strconv.ParseFloat(s, 64) }
