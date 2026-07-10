@@ -92,12 +92,7 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		partRows, err := database.GetValidatorParticipation(db, chainID, period)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		chainBlocks, err := database.GetChainTotalBlocks(db, chainID, period)
+		partRows, chainBlocks, err := database.GetValidatorParticipation(db, chainID, period)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

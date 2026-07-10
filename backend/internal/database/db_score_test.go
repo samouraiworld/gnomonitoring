@@ -121,7 +121,7 @@ func TestGetValidatorParticipation_UnionAgregaAndToday(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := database.GetValidatorParticipation(db, chain, "current_month")
+	rows, _, err := database.GetValidatorParticipation(db, chain, "current_month")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestGetValidatorParticipation_Last24hRawOnly(t *testing.T) {
 		chain, recent, chain, recent, chain, recent).Error; err != nil {
 		t.Fatal(err)
 	}
-	rows, err := database.GetValidatorParticipation(db, chain, "last_24h")
+	rows, _, err := database.GetValidatorParticipation(db, chain, "last_24h")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestGetValidatorVP(t *testing.T) {
 	}
 }
 
-func TestGetChainTotalBlocks(t *testing.T) {
+func TestGetValidatorParticipation_ChainBlocks(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	chain := "test13"
 	now := time.Now().UTC()
@@ -199,11 +199,11 @@ func TestGetChainTotalBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Two distinct block heights in the window.
-	n, err := database.GetChainTotalBlocks(db, chain, "last_24h")
+	_, chainBlocks, err := database.GetValidatorParticipation(db, chain, "last_24h")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 2 {
-		t.Fatalf("chain blocks = %d, want 2 (distinct heights)", n)
+	if chainBlocks != 2 {
+		t.Fatalf("chain blocks = %d, want 2 (distinct heights)", chainBlocks)
 	}
 }

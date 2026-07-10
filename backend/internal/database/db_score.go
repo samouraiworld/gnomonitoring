@@ -127,51 +127,86 @@ type ParticipationRaw struct {
 }
 
 // GetValidatorParticipation returns per-validator signed/total (and proposed)
-// block counts for the period. It reads durable daily aggregates for complete
-// past days and raw rows for the current day, partitioned at today 00:00 UTC to
-// avoid double counting. last_24h reads only raw rows (block granularity).
-func GetValidatorParticipation(db *gorm.DB, chainID, period string) ([]ParticipationRaw, error) {
+// block counts for the period, plus the chain's total block count over the same
+// period (used to size expected proposal counts). It reads durable daily
+// aggregates for complete past days and raw rows for the current day,
+// partitioned at today 00:00 UTC to avoid double counting. last_24h reads only
+// raw rows (block granularity). Scoped to chain_id.
+func GetValidatorParticipation(db *gorm.DB, chainID, period string) ([]ParticipationRaw, int64, error) {
 	p, err := computePartition(period, time.Now())
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	var rows []ParticipationRaw
-	q := `
-		SELECT combined.addr AS addr,
-		       SUM(combined.signed) AS signed_blocks,
-		       SUM(combined.total)  AS total_blocks,
-		       SUM(combined.proposed) AS proposed_blocks
-		FROM (
-			SELECT addr,
-			       CASE WHEN participated THEN 1 ELSE 0 END AS signed,
-			       1 AS total,
-			       CASE WHEN proposed THEN 1 ELSE 0 END AS proposed
-			FROM daily_participations
-			WHERE chain_id = ? AND date >= ? AND date < ?
-	`
+	// Participation arms: raw current-day rows, plus aggregate past days.
+	combined := `
+		SELECT addr,
+		       CASE WHEN participated THEN 1 ELSE 0 END AS signed,
+		       1 AS total,
+		       CASE WHEN proposed THEN 1 ELSE 0 END AS proposed
+		FROM daily_participations
+		WHERE chain_id = ? AND date >= ? AND date < ?`
 	args := []any{chainID, p.rawStart, p.end}
 	if p.includeAgrega {
-		q += `
-			UNION ALL
-			SELECT addr,
-			       participated_count AS signed,
-			       total_blocks       AS total,
-			       proposed_count     AS proposed
-			FROM daily_participation_agregas
-			WHERE chain_id = ? AND block_date >= ? AND block_date < ?
-		`
+		combined += `
+		UNION ALL
+		SELECT addr, participated_count AS signed, total_blocks AS total, proposed_count AS proposed
+		FROM daily_participation_agregas
+		WHERE chain_id = ? AND block_date >= ? AND block_date < ?`
 		args = append(args, chainID, p.agregaStart, p.agregaEnd)
 	}
-	q += `
-		) combined
-		GROUP BY combined.addr
-		ORDER BY combined.addr
-	`
-	if err := db.Raw(q, args...).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("GetValidatorParticipation(%s,%s): %w", chainID, period, err)
+
+	// Chain-block scalar: distinct raw heights, plus (only when the aggregate
+	// window applies) the per-day chain block count summed over past days. This
+	// matches the semantics of the former GetChainTotalBlocks exactly.
+	cb := `SELECT (SELECT COUNT(DISTINCT block_height) FROM daily_participations
+	               WHERE chain_id = ? AND date >= ? AND date < ?)`
+	args = append(args, chainID, p.rawStart, p.end)
+	if p.includeAgrega {
+		cb += ` + COALESCE((SELECT SUM(day_blocks) FROM (
+		            SELECT MAX(total_blocks) AS day_blocks
+		            FROM daily_participation_agregas
+		            WHERE chain_id = ? AND block_date >= ? AND block_date < ?
+		            GROUP BY block_date) t), 0)`
+		args = append(args, chainID, p.agregaStart, p.agregaEnd)
 	}
-	return rows, nil
+	cb += ` AS chain_blocks`
+
+	q := `
+		SELECT combined.addr AS addr,
+		       SUM(combined.signed)   AS signed_blocks,
+		       SUM(combined.total)    AS total_blocks,
+		       SUM(combined.proposed) AS proposed_blocks,
+		       cb.chain_blocks        AS chain_blocks
+		FROM (` + combined + `) combined
+		CROSS JOIN (` + cb + `) cb
+		GROUP BY combined.addr, cb.chain_blocks
+		ORDER BY combined.addr`
+
+	type scanRow struct {
+		Addr           string
+		SignedBlocks   int64
+		TotalBlocks    int64
+		ProposedBlocks int64
+		ChainBlocks    int64
+	}
+	var scanned []scanRow
+	if err := db.Raw(q, args...).Scan(&scanned).Error; err != nil {
+		return nil, 0, fmt.Errorf("GetValidatorParticipation(%s,%s): %w", chainID, period, err)
+	}
+
+	rows := make([]ParticipationRaw, len(scanned))
+	var chainBlocks int64
+	for i, s := range scanned {
+		rows[i] = ParticipationRaw{
+			Addr:           s.Addr,
+			SignedBlocks:   s.SignedBlocks,
+			TotalBlocks:    s.TotalBlocks,
+			ProposedBlocks: s.ProposedBlocks,
+		}
+		chainBlocks = s.ChainBlocks // identical on every row (grouped scalar)
+	}
+	return rows, chainBlocks, nil
 }
 
 // GetValidatorScores returns per-validator CRITICAL/WARNING counts and summed
@@ -205,48 +240,6 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 		return nil, fmt.Errorf("GetValidatorScores(%s,%s): %w", chainID, period, err)
 	}
 	return rows, nil
-}
-
-// GetChainTotalBlocks returns the number of blocks produced on the chain during
-// the period, used to size expected proposal counts. Scoped to chain_id.
-func GetChainTotalBlocks(db *gorm.DB, chainID, period string) (int64, error) {
-	start, end, err := periodBounds(period, time.Now())
-	if err != nil {
-		return 0, err
-	}
-	now := time.Now().UTC()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	rawStart := todayStart
-	if period == "last_24h" {
-		rawStart = start
-	}
-	if rawStart.Before(start) {
-		rawStart = start
-	}
-
-	var rawCount int64
-	if err := db.Raw(`
-		SELECT COUNT(DISTINCT block_height) FROM daily_participations
-		WHERE chain_id = ? AND date >= ? AND date < ?
-	`, chainID, rawStart, end).Scan(&rawCount).Error; err != nil {
-		return 0, fmt.Errorf("GetChainTotalBlocks raw(%s,%s): %w", chainID, period, err)
-	}
-
-	var agregaCount int64
-	if period != "last_24h" && todayStart.After(start) {
-		// Per day, the chain's block count = MAX(total_blocks) over validators.
-		if err := db.Raw(`
-			SELECT COALESCE(SUM(day_blocks), 0) FROM (
-				SELECT MAX(total_blocks) AS day_blocks
-				FROM daily_participation_agregas
-				WHERE chain_id = ? AND block_date >= ? AND block_date < ?
-				GROUP BY block_date
-			) t
-		`, chainID, start.Format("2006-01-02"), todayStart.Format("2006-01-02")).Scan(&agregaCount).Error; err != nil {
-			return 0, fmt.Errorf("GetChainTotalBlocks agrega(%s,%s): %w", chainID, period, err)
-		}
-	}
-	return rawCount + agregaCount, nil
 }
 
 // GetValidatorVP returns the current voting power per validator plus the sum
