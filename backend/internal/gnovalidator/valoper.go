@@ -422,7 +422,9 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 		SetMoniker(chainID, addr, moniker)
 	}
 
-	// Persist current voting power for score severity weighting (best-effort).
+	// Persist current voting power for score severity weighting (best-effort),
+	// in a single batched upsert rather than one round-trip per validator.
+	vpRows := make([]database.AddrVP, 0, len(validatorsResp.Result.Validators))
 	for _, val := range validatorsResp.Result.Validators {
 		if val.VotingPower == "" {
 			continue
@@ -431,9 +433,10 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 		if err != nil {
 			continue
 		}
-		if err := database.UpsertAddrMonikerVP(db, chainID, val.Address, vp); err != nil {
-			log.Printf("[valoper][%s] failed to persist voting power for %s: %v", chainID, val.Address, err)
-		}
+		vpRows = append(vpRows, database.AddrVP{Addr: val.Address, VotingPower: vp})
+	}
+	if err := database.UpsertAddrMonikerVPBatch(db, chainID, vpRows); err != nil {
+		log.Printf("[valoper][%s] failed to persist voting power batch: %v", chainID, err)
 	}
 
 	// Load first_active_block from DB into FirstActiveBlockMap
