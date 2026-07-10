@@ -4,6 +4,8 @@ import { useToast } from '../hooks/useToast'
 import { truncateAddr } from '../lib/format'
 import type { ChainInfo, ApiStatus } from '../types/api'
 import { REPORT_PERIODS, type ReportPeriod, type ValidatorReport } from '../types/report'
+import ScoreLegend from '../components/ScoreLegend'
+import HeaderTip from '../components/HeaderTip'
 
 const PERIOD_LABELS: Record<ReportPeriod, string> = {
   last_24h: 'Last 24h',
@@ -214,6 +216,8 @@ export default function Reports() {
         )}
       </div>
 
+      <ScoreLegend thresholds={thresholds} />
+
       {/* Filters */}
       <div className="card" style={{ marginBottom: 20, padding: 16 }}>
         <div className="flex-gap" style={{ flexWrap: 'wrap', gap: 12 }}>
@@ -248,18 +252,18 @@ export default function Reports() {
           <table>
             <thead>
               <tr>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('moniker')}>Moniker{sortIndicator('moniker')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('addr')}>Address{sortIndicator('addr')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('lastalert')}>Last alert (d){sortIndicator('lastalert')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('score')}>Score{sortIndicator('score')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('tier')}>Tier{sortIndicator('tier')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('sign')}>Sign %{sortIndicator('sign')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('vp')}>VP{sortIndicator('vp')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('proposer')}>Proposer %{sortIndicator('proposer')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('critical')}>Critical{sortIndicator('critical')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('warning')}>Warning{sortIndicator('warning')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('downtime')}>Downtime Blocks{sortIndicator('downtime')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('missed')}>Missed{sortIndicator('missed')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('moniker')}><HeaderTip tip="Validator display name (from the monikers table).">Moniker{sortIndicator('moniker')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('addr')}><HeaderTip tip="Validator bech32 address.">Address{sortIndicator('addr')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('lastalert')}><HeaderTip tip="Full days since the validator's most recent WARNING/CRITICAL alert; “—” if it never alerted.">Last alert (d){sortIndicator('lastalert')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('score')}><HeaderTip tip="Health score 0–100 = presence − VP-weighted penalties, clamped.">Score{sortIndicator('score')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('tier')}><HeaderTip tip="Score band: Excellent ≥85, Good ≥60, Watch ≥30, Critical <30.">Tier{sortIndicator('tier')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('sign')}><HeaderTip tip="Share of blocks the validator signed this period (participated / total). The base of the score.">Sign %{sortIndicator('sign')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('vp')}><HeaderTip tip="Current voting power (latest snapshot).">VP{sortIndicator('vp')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('proposer')}><HeaderTip align="right" tip="Proposer reliability: proposed vs expected proposals (by VP share); “—” when too few proposals are expected to be meaningful.">Proposer %{sortIndicator('proposer')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('critical')}><HeaderTip align="right" tip="Number of CRITICAL alerts in the period (includes resends).">Critical{sortIndicator('critical')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('warning')}><HeaderTip align="right" tip="Number of WARNING alerts in the period (includes resends).">Warning{sortIndicator('warning')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('downtime')}><HeaderTip align="right" tip="Blocks of downtime summed over CRITICAL outages (CRITICAL only).">Downtime Blocks{sortIndicator('downtime')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('missed')}><HeaderTip align="right" tip="Blocks not signed this period (total − signed). Already reflected in Sign % and Score.">Missed{sortIndicator('missed')}</HeaderTip></th>
               </tr>
             </thead>
             <tbody>
