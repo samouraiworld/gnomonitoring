@@ -34,17 +34,17 @@ func TestUpsertAddrMonikerVPBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 300 rows crosses the chunk boundary (>247).
-	rows := make([]database.AddrVP, 0, 300)
+	// 350 rows spans two chunks (chunk size = 990/3 = 330).
+	rows := make([]database.AddrVP, 0, 350)
 	rows = append(rows, database.AddrVP{Addr: "a", VotingPower: 100})
-	for i := 1; i < 300; i++ {
+	for i := 1; i < 350; i++ {
 		rows = append(rows, database.AddrVP{Addr: fmt.Sprintf("v%03d", i), VotingPower: int64(i)})
 	}
 	if err := database.UpsertAddrMonikerVPBatch(db, "test13", rows); err != nil {
 		t.Fatal(err)
 	}
 
-	var vpA, vp299 int64
+	var vpA, vp349 int64
 	var monA string
 	if err := db.Raw(`SELECT voting_power, moniker FROM addr_monikers WHERE chain_id=? AND addr=?`,
 		"test13", "a").Row().Scan(&vpA, &monA); err != nil {
@@ -54,10 +54,10 @@ func TestUpsertAddrMonikerVPBatch(t *testing.T) {
 		t.Fatalf("addr a: vp=%d moniker=%q, want 100/alpha", vpA, monA)
 	}
 	if err := db.Raw(`SELECT voting_power FROM addr_monikers WHERE chain_id=? AND addr=?`,
-		"test13", "v299").Scan(&vp299).Error; err != nil {
+		"test13", "v349").Scan(&vp349).Error; err != nil {
 		t.Fatal(err)
 	}
-	if vp299 != 299 {
-		t.Fatalf("addr v299: vp=%d, want 299 (chunk boundary)", vp299)
+	if vp349 != 349 {
+		t.Fatalf("addr v349: vp=%d, want 349 (second chunk)", vp349)
 	}
 }
