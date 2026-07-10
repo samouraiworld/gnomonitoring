@@ -29,6 +29,50 @@ type validatorReport struct {
 	Periods map[string]periodScore `json:"periods"`
 }
 
+// merged carries one validator's score inputs plus the moniker discovered while
+// joining participation and alert rows for a period.
+type merged struct {
+	in      score.Inputs
+	moniker string
+}
+
+// mergeParticipationAndAlerts joins per-validator participation and alert rows
+// into one map keyed by address, honoring an optional address filter. Moniker is
+// taken from alert rows (participation rows carry no moniker here).
+func mergeParticipationAndAlerts(partRows []database.ParticipationRaw, alertRows []database.ValidatorScoreRaw, addrFilter string) map[string]*merged {
+	out := map[string]*merged{}
+	ensure := func(addr string) *merged {
+		m, ok := out[addr]
+		if !ok {
+			m = &merged{}
+			out[addr] = m
+		}
+		return m
+	}
+	for _, p := range partRows {
+		if addrFilter != "" && p.Addr != addrFilter {
+			continue
+		}
+		m := ensure(p.Addr)
+		m.in.SignedBlocks = p.SignedBlocks
+		m.in.TotalBlocks = p.TotalBlocks
+		m.in.ProposedBlocks = p.ProposedBlocks
+	}
+	for _, a := range alertRows {
+		if addrFilter != "" && a.Addr != addrFilter {
+			continue
+		}
+		m := ensure(a.Addr)
+		m.in.CriticalCount = a.CriticalCount
+		m.in.WarningCount = a.WarningCount
+		m.in.DowntimeBlocks = a.DowntimeBlocks
+		if a.Moniker != "" {
+			m.moniker = a.Moniker
+		}
+	}
+	return out
+}
+
 // GetValidatorReportHandler serves GET /api/reports/validators?chain=X[&addr=Z].
 // It is always available regardless of the per-chain report toggle.
 func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
@@ -98,61 +142,33 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 			return
 		}
 
-		// Merge both sources into one Inputs per addr.
-		inputs := map[string]*score.Inputs{}
-		monikers := map[string]string{}
-		ensure := func(addr string) *score.Inputs {
-			in, ok := inputs[addr]
-			if !ok {
-				in = &score.Inputs{}
-				inputs[addr] = in
-			}
-			return in
-		}
-		for _, p := range partRows {
-			if addrFilter != "" && p.Addr != addrFilter {
-				continue
-			}
-			in := ensure(p.Addr)
-			in.SignedBlocks = p.SignedBlocks
-			in.TotalBlocks = p.TotalBlocks
-			in.ProposedBlocks = p.ProposedBlocks
-		}
-		for _, a := range alertRows {
-			if addrFilter != "" && a.Addr != addrFilter {
-				continue
-			}
-			in := ensure(a.Addr)
-			in.CriticalCount = a.CriticalCount
-			in.WarningCount = a.WarningCount
-			in.DowntimeBlocks = a.DowntimeBlocks
-			if a.Moniker != "" {
-				monikers[a.Addr] = a.Moniker
-			}
-		}
+		byAddrMerged := mergeParticipationAndAlerts(partRows, alertRows, addrFilter)
 
-		addrs := make([]string, 0, len(inputs))
-		for addr := range inputs {
+		addrs := make([]string, 0, len(byAddrMerged))
+		for addr := range byAddrMerged {
 			addrs = append(addrs, addr)
 		}
 		sort.Strings(addrs)
 
 		for _, addr := range addrs {
-			in := inputs[addr]
+			m := byAddrMerged[addr]
+			in := m.in
 			in.VotingPower = vpByAddr[addr]
 			in.SumVotingPower = vpSum
 			in.MaxVotingPower = vpMax
 			in.ChainBlocks = chainBlocks
+
 			rep, ok := byAddr[addr]
 			if !ok {
-				rep = &validatorReport{Addr: addr, Moniker: monikers[addr], Periods: map[string]periodScore{}}
+				rep = &validatorReport{Addr: addr, Moniker: m.moniker, Periods: map[string]periodScore{}}
 				byAddr[addr] = rep
 				order = append(order, addr)
 			}
 			if rep.Moniker == "" {
-				rep.Moniker = monikers[addr]
+				rep.Moniker = m.moniker
 			}
-			res := score.Compute(*in, weights)
+
+			res := score.Compute(in, weights)
 			ps := periodScore{
 				Score: res.Score, Tier: string(res.Tier),
 				SignRate:       res.SignRate,
