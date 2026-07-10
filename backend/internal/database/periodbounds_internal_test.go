@@ -68,3 +68,44 @@ func TestPeriodBounds_UsesUTCCalendarDay(t *testing.T) {
 		t.Errorf("current_month start = %s, want %s (UTC calendar day, not local)", start, want)
 	}
 }
+
+func TestComputePartition(t *testing.T) {
+	// 2026-07-09T02:30:00Z, expressed in UTC-5 (still Jul 8 locally).
+	minus5 := time.FixedZone("UTC-5", -5*3600)
+	now := time.Date(2026, 7, 8, 21, 30, 0, 0, minus5)
+	todayUTC := "2026-07-09"
+
+	t.Run("current_month includes agrega, raw starts today UTC", func(t *testing.T) {
+		p, err := computePartition("current_month", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !p.includeAgrega {
+			t.Fatalf("current_month should include agrega")
+		}
+		if p.agregaEnd != todayUTC {
+			t.Fatalf("agregaEnd = %q, want %q", p.agregaEnd, todayUTC)
+		}
+		if p.agregaStart != "2026-07-01" {
+			t.Fatalf("agregaStart = %q, want 2026-07-01", p.agregaStart)
+		}
+		wantRaw := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
+		if !p.rawStart.Equal(wantRaw) {
+			t.Fatalf("rawStart = %s, want %s", p.rawStart, wantRaw)
+		}
+	})
+
+	t.Run("last_24h excludes agrega, raw is full window", func(t *testing.T) {
+		p, err := computePartition("last_24h", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.includeAgrega {
+			t.Fatalf("last_24h must not include agrega")
+		}
+		wantRaw := time.Date(2026, 7, 9, 2, 30, 0, 0, time.UTC).Add(-24 * time.Hour)
+		if !p.rawStart.Equal(wantRaw) {
+			t.Fatalf("rawStart = %s, want %s", p.rawStart, wantRaw)
+		}
+	})
+}

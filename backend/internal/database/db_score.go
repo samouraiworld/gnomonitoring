@@ -43,6 +43,43 @@ func periodBounds(period string, now time.Time) (time.Time, time.Time, error) {
 	}
 }
 
+// periodPartition describes how a report period splits across the durable daily
+// aggregate (complete past days) and the raw current-day rows, with the seam
+// fixed at today 00:00 UTC to avoid double counting.
+type periodPartition struct {
+	rawStart, end          time.Time // raw window [rawStart, end)
+	agregaStart, agregaEnd string    // aggregate window [agregaStart, agregaEnd) as YYYY-MM-DD
+	includeAgrega          bool
+}
+
+// computePartition derives the raw/aggregate windows for a report period. All
+// bounds are UTC so they line up with the UTC block timestamps and block_date
+// day strings.
+func computePartition(period string, now time.Time) (periodPartition, error) {
+	start, end, err := periodBounds(period, now)
+	if err != nil {
+		return periodPartition{}, err
+	}
+	nowUTC := now.UTC()
+	todayStart := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
+
+	rawStart := todayStart
+	if period == "last_24h" {
+		rawStart = start
+	}
+	if rawStart.Before(start) {
+		rawStart = start
+	}
+
+	return periodPartition{
+		rawStart:      rawStart,
+		end:           end,
+		agregaStart:   start.Format("2006-01-02"),
+		agregaEnd:     todayStart.Format("2006-01-02"),
+		includeAgrega: period != "last_24h" && todayStart.After(start),
+	}, nil
+}
+
 // ValidatorIdentity is a validator's address and resolved moniker.
 type ValidatorIdentity struct {
 	Addr    string `json:"addr"`
@@ -94,26 +131,10 @@ type ParticipationRaw struct {
 // past days and raw rows for the current day, partitioned at today 00:00 UTC to
 // avoid double counting. last_24h reads only raw rows (block granularity).
 func GetValidatorParticipation(db *gorm.DB, chainID, period string) ([]ParticipationRaw, error) {
-	start, end, err := periodBounds(period, time.Now())
+	p, err := computePartition(period, time.Now())
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-
-	// Raw window: for last_24h use the whole period; otherwise only today.
-	rawStart := todayStart
-	if period == "last_24h" {
-		rawStart = start
-	}
-	if rawStart.Before(start) {
-		rawStart = start
-	}
-
-	// Aggregate window (day strings, exclusive upper bound at today).
-	agregaStart := start.Format("2006-01-02")
-	agregaEnd := todayStart.Format("2006-01-02") // exclusive: block_date < today
-	includeAgrega := period != "last_24h" && todayStart.After(start)
 
 	var rows []ParticipationRaw
 	q := `
@@ -129,8 +150,8 @@ func GetValidatorParticipation(db *gorm.DB, chainID, period string) ([]Participa
 			FROM daily_participations
 			WHERE chain_id = ? AND date >= ? AND date < ?
 	`
-	args := []any{chainID, rawStart, end}
-	if includeAgrega {
+	args := []any{chainID, p.rawStart, p.end}
+	if p.includeAgrega {
 		q += `
 			UNION ALL
 			SELECT addr,
@@ -140,7 +161,7 @@ func GetValidatorParticipation(db *gorm.DB, chainID, period string) ([]Participa
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date >= ? AND block_date < ?
 		`
-		args = append(args, chainID, agregaStart, agregaEnd)
+		args = append(args, chainID, p.agregaStart, p.agregaEnd)
 	}
 	q += `
 		) combined
