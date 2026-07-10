@@ -104,15 +104,13 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 				continue
 			}
 
-			// == IF in json return section Data, have a tx and get proposer of tx
+			// Actual block proposer, resolved once. txProposer is the same value,
+			// meaningful only when the block carries transactions.
+			proposerAddr := block.Block.Header.ProposerAddress.String()
 			var txProposer string
 			if len(block.Block.Data.Txs) > 0 {
-				txProposer = block.Block.Header.ProposerAddress.String()
-
+				txProposer = proposerAddr
 			}
-			// Actual block proposer, unconditional (a block always has a proposer,
-			// independent of whether it contains transactions).
-			proposerAddr := block.Block.Header.ProposerAddress.String()
 			// === Get Timestamp ==
 
 			timeStp := block.Block.Header.Time
@@ -206,14 +204,14 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 					outs <- out{Err: err}
 					continue
 				}
+				// Actual block proposer, resolved once; txProp is the same value,
+				// meaningful only when the block carries transactions.
 				hasTx := len(b.Block.Data.Txs) > 0
-				var txProp string
-				if hasTx {
-					txProp = b.Block.Header.ProposerAddress.String()
-				}
-				// Actual block proposer, unconditional (a block always has a proposer,
-				// independent of whether it contains transactions).
 				proposerAddr := b.Block.Header.ProposerAddress.String()
+				txProp := ""
+				if hasTx {
+					txProp = proposerAddr
+				}
 
 				tStr := b.Block.Header.Time
 

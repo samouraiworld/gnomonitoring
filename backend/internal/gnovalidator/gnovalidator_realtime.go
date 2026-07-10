@@ -288,15 +288,14 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 
 				// ================================ Get Participation and date ==================== //
 
-				// == IF in json return section Data, have a tx and get proposer of tx
+				// Actual block proposer, resolved once. A block always has a
+				// proposer; txProposer is the same value, meaningful only when
+				// the block carries transactions.
+				proposerAddr := block.Block.Header.ProposerAddress.String()
 				var txProposer string
 				if len(block.Block.Data.Txs) > 0 {
-					txProposer = block.Block.Header.ProposerAddress.String()
-
+					txProposer = proposerAddr
 				}
-				// Actual block proposer, unconditional (a block always has a proposer,
-				// independent of whether it contains transactions).
-				proposerAddr := block.Block.Header.ProposerAddress.String()
 				// === Get Timestamp ==
 
 				timeStp := block.Block.Header.Time
