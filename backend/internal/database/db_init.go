@@ -1,7 +1,6 @@
 package database
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 	"time"
@@ -308,25 +307,6 @@ func ApplyGovdaoCompositePrimaryKeyMigration(db *gorm.DB) error {
 	return nil
 }
 
-// addColumnIfMissing runs alterSQL only when table.column does not yet exist.
-func addColumnIfMissing(sqlDB *sql.DB, table, column, alterSQL string) error {
-	var count int
-	row := sqlDB.QueryRow(`
-		SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_schema = current_schema()
-		  AND table_name = $1 AND column_name = $2`, table, column)
-	if err := row.Scan(&count); err != nil {
-		return fmt.Errorf("addColumnIfMissing(%s.%s): check: %w", table, column, err)
-	}
-	if count > 0 {
-		return nil
-	}
-	if _, err := sqlDB.Exec(alterSQL); err != nil {
-		return fmt.Errorf("addColumnIfMissing(%s.%s): alter: %w", table, column, err)
-	}
-	return nil
-}
-
 // CreateOrReplaceIndexes drops legacy single-chain indexes and creates new
 // compound (chain_id, …) indexes suited for multi-chain queries.
 func CreateOrReplaceIndexes(db *gorm.DB) error {
@@ -435,22 +415,6 @@ func InitDB(dsn string) (*gorm.DB, error) {
 
 	if err := ApplyGovdaoCompositePrimaryKeyMigration(db); err != nil {
 		return nil, fmt.Errorf("ApplyGovdaoCompositePrimaryKeyMigration: %w", err)
-	}
-
-	// Idempotent: voting_power on addr_monikers (score v2).
-	if err := addColumnIfMissing(sqlDB, "addr_monikers", "voting_power",
-		"ALTER TABLE addr_monikers ADD COLUMN voting_power BIGINT NOT NULL DEFAULT 0"); err != nil {
-		return nil, fmt.Errorf("addColumnIfMissing(addr_monikers.voting_power): %w", err)
-	}
-
-	// Idempotent: proposed / proposed_count (score v2 proposer metric).
-	if err := addColumnIfMissing(sqlDB, "daily_participations", "proposed",
-		"ALTER TABLE daily_participations ADD COLUMN proposed BOOLEAN NOT NULL DEFAULT false"); err != nil {
-		return nil, fmt.Errorf("addColumnIfMissing(daily_participations.proposed): %w", err)
-	}
-	if err := addColumnIfMissing(sqlDB, "daily_participation_agregas", "proposed_count",
-		"ALTER TABLE daily_participation_agregas ADD COLUMN proposed_count INTEGER NOT NULL DEFAULT 0"); err != nil {
-		return nil, fmt.Errorf("addColumnIfMissing(daily_participation_agregas.proposed_count): %w", err)
 	}
 
 	if err := CreateOrReplaceIndexes(db); err != nil {
