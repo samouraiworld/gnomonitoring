@@ -268,3 +268,31 @@ func GetValidatorVP(db *gorm.DB, chainID string) (map[string]int64, int64, int64
 	}
 	return perAddr, sum, max, nil
 }
+
+// GetLastAlertTimes returns, per validator, the timestamp of its most recent
+// WARNING or CRITICAL alert on the chain. Chain-scoped. The chain-wide
+// "blockchain stuck" rows (addr = 'all') are excluded — they don't reflect an
+// individual validator's health. Validators with no such alert are absent from
+// the map.
+func GetLastAlertTimes(db *gorm.DB, chainID string) (map[string]time.Time, error) {
+	type row struct {
+		Addr      string
+		LastAlert time.Time
+	}
+	var rows []row
+	if err := db.Raw(`
+		SELECT addr, MAX(sent_at) AS last_alert
+		FROM alert_logs
+		WHERE chain_id = ?
+		  AND level IN ('WARNING','CRITICAL')
+		  AND addr <> 'all'
+		GROUP BY addr
+	`, chainID).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("GetLastAlertTimes(%s): %w", chainID, err)
+	}
+	out := make(map[string]time.Time, len(rows))
+	for _, r := range rows {
+		out[r.Addr] = r.LastAlert
+	}
+	return out, nil
+}

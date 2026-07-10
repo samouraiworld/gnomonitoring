@@ -207,3 +207,37 @@ func TestGetValidatorParticipation_ChainBlocks(t *testing.T) {
 		t.Fatalf("chain blocks = %d, want 2 (distinct heights)", chainBlocks)
 	}
 }
+
+func TestGetLastAlertTimes(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test13"
+	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+
+	// validator a: a WARNING then a later CRITICAL → last = the CRITICAL time.
+	seedScoreAlert(t, db, chain, "a", "WARNING", 0, 0, base)
+	seedScoreAlert(t, db, chain, "a", "CRITICAL", 0, 0, base.Add(2*time.Hour))
+	// validator b: only a RESOLVED row → not an alert, must be absent.
+	seedScoreAlert(t, db, chain, "b", "RESOLVED", 0, 0, base.Add(time.Hour))
+	// chain-wide "stuck" alert → excluded (not an individual validator).
+	seedScoreAlert(t, db, chain, "all", "CRITICAL", 0, 0, base.Add(3*time.Hour))
+	// another chain → must not leak.
+	seedScoreAlert(t, db, "otherchain", "a", "CRITICAL", 0, 0, base.Add(10*time.Hour))
+
+	m, err := database.GetLastAlertTimes(db, chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := m["a"]
+	if !ok || !got.Equal(base.Add(2*time.Hour)) {
+		t.Fatalf("a last alert = %v (ok=%v), want %v", got, ok, base.Add(2*time.Hour))
+	}
+	if _, ok := m["b"]; ok {
+		t.Fatalf("b has only RESOLVED, must be absent")
+	}
+	if _, ok := m["all"]; ok {
+		t.Fatalf("addr 'all' must be excluded")
+	}
+	if len(m) != 1 {
+		t.Fatalf("want exactly 1 entry (a), got %d: %v", len(m), m)
+	}
+}

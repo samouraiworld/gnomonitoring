@@ -43,6 +43,7 @@ The response is a JSON array of validator reports. Each element contains:
 **Validator Report Object:**
 - `addr` (string): Validator address (bech32 format)
 - `moniker` (string): Validator display name from the monikers table, or empty string if not set
+- `days_since_last_alert` (integer \| null): Global (period-independent) recency signal — full days elapsed since the validator's most recent WARNING or CRITICAL alert. **`null`** when the validator has never alerted. Chain-wide "blockchain stuck" rows (`addr = 'all'`) are excluded.
 - `periods` (object): Map of period key to period score. Every validator always has all four period keys.
 
 **Period Score Object:**
@@ -54,6 +55,7 @@ The response is a JSON array of validator reports. Each element contains:
 - `critical_count` (integer): Total count of CRITICAL alert rows in the period (includes resends)
 - `warning_count` (integer): Total count of WARNING alert rows in the period (includes resends)
 - `downtime_blocks` (integer): Sum of downtime blocks for CRITICAL alerts. Ongoing outages with `end_height = 0` contribute 0 blocks.
+- `missed_blocks` (integer): Blocks the validator failed to sign over the period (= `total_blocks − participated_blocks`). Display-only — already reflected in `sign_rate`/`score`, not an additional penalty.
 
 ## Period Definitions
 

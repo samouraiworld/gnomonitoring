@@ -88,18 +88,18 @@ export default function Reports() {
   }
 
   const handleExportCsv = () => {
-    const headers = ['moniker', 'address']
+    const headers = ['moniker', 'address', 'last_alert']
     for (const per of PERIOD_ORDER) {
-      headers.push(`${per}_score`, `${per}_tier`, `${per}_sign`, `${per}_vp`, `${per}_proposer`, `${per}_critical`, `${per}_warning`, `${per}_downtime`)
+      headers.push(`${per}_score`, `${per}_tier`, `${per}_sign`, `${per}_vp`, `${per}_proposer`, `${per}_critical`, `${per}_warning`, `${per}_downtime`, `${per}_missed`)
     }
     const lines = sorted.map(r => {
-      const cells = [r.moniker, r.addr]
+      const cells = [r.moniker, r.addr, r.days_since_last_alert != null ? String(r.days_since_last_alert) : '']
       for (const per of PERIOD_ORDER) {
         const p = r.periods[per]
         if (p) {
-          cells.push(String(p.score), p.tier, p.sign_rate.toFixed(1), String(p.voting_power), p.proposer_reliability != null ? p.proposer_reliability.toFixed(1) : '', String(p.critical_count), String(p.warning_count), String(p.downtime_blocks))
+          cells.push(String(p.score), p.tier, p.sign_rate.toFixed(1), String(p.voting_power), p.proposer_reliability != null ? p.proposer_reliability.toFixed(1) : '', String(p.critical_count), String(p.warning_count), String(p.downtime_blocks), String(p.missed_blocks))
         } else {
-          cells.push('', '', '', '', '', '', '', '')
+          cells.push('', '', '', '', '', '', '', '', '')
         }
       }
       return cells.map(csvEscape).join(',')
@@ -185,6 +185,12 @@ export default function Reports() {
       case 'downtime':
         cmp = pa.downtime_blocks - pb.downtime_blocks
         break
+      case 'missed':
+        cmp = pa.missed_blocks - pb.missed_blocks
+        break
+      case 'lastalert':
+        cmp = (a.days_since_last_alert ?? -1) - (b.days_since_last_alert ?? -1)
+        break
     }
     return dir === 'asc' ? cmp : -cmp
   })
@@ -244,6 +250,7 @@ export default function Reports() {
               <tr>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('moniker')}>Moniker{sortIndicator('moniker')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('addr')}>Address{sortIndicator('addr')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('lastalert')}>Last alert (d){sortIndicator('lastalert')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('score')}>Score{sortIndicator('score')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('tier')}>Tier{sortIndicator('tier')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('sign')}>Sign %{sortIndicator('sign')}</th>
@@ -252,17 +259,19 @@ export default function Reports() {
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('critical')}>Critical{sortIndicator('critical')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('warning')}>Warning{sortIndicator('warning')}</th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('downtime')}>Downtime Blocks{sortIndicator('downtime')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('missed')}>Missed{sortIndicator('missed')}</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={10}><div className="empty-state"><div className="empty-state-title">No data</div></div></td></tr>
+                <tr><td colSpan={12}><div className="empty-state"><div className="empty-state-title">No data</div></div></td></tr>
               ) : sorted.map(r => {
                 const p = r.periods[period]
                 return (
                   <tr key={r.addr}>
                     <td>{r.moniker || '—'}</td>
                     <td className="mono">{truncateAddr(r.addr)}</td>
+                    <td>{r.days_since_last_alert != null ? r.days_since_last_alert : '—'}</td>
                     <td>{p ? p.score : '—'}</td>
                     <td>{p ? <span className={`badge ${TIER_BADGE_CLASS[p.tier] || 'badge-muted'}`}>{p.tier}</span> : '—'}</td>
                     <td>{p ? `${p.sign_rate.toFixed(1)}%` : '—'}</td>
@@ -271,6 +280,7 @@ export default function Reports() {
                     <td>{p ? p.critical_count : '—'}</td>
                     <td>{p ? p.warning_count : '—'}</td>
                     <td>{p ? p.downtime_blocks : '—'}</td>
+                    <td>{p ? p.missed_blocks : '—'}</td>
                   </tr>
                 )
               })}

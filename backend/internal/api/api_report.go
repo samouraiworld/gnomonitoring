@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
@@ -21,12 +22,17 @@ type periodScore struct {
 	CriticalCount       int      `json:"critical_count"`
 	WarningCount        int      `json:"warning_count"`
 	DowntimeBlocks      int64    `json:"downtime_blocks"`
+	MissedBlocks        int64    `json:"missed_blocks"`
 }
 
 type validatorReport struct {
 	Addr    string                 `json:"addr"`
 	Moniker string                 `json:"moniker"`
-	Periods map[string]periodScore `json:"periods"`
+	// DaysSinceLastAlert is global (period-independent): full days elapsed since
+	// the validator's most recent WARNING/CRITICAL alert, nil when it never
+	// alerted.
+	DaysSinceLastAlert *int                   `json:"days_since_last_alert"`
+	Periods            map[string]periodScore `json:"periods"`
 }
 
 // merged carries one validator's score inputs plus the moniker discovered while
@@ -109,6 +115,14 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
+	// Global (period-independent) recency signal: most recent alert per addr.
+	lastAlertByAddr, err := database.GetLastAlertTimes(db, chainID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	now := time.Now().UTC()
+
 	// addr -> report, preserving discovery order.
 	byAddr := map[string]*validatorReport{}
 	order := []string{}
@@ -176,6 +190,7 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 				CriticalCount:  in.CriticalCount,
 				WarningCount:   in.WarningCount,
 				DowntimeBlocks: in.DowntimeBlocks,
+				MissedBlocks:   in.TotalBlocks - in.SignedBlocks,
 			}
 			if res.ProposerScored {
 				pr := res.ProposerReliability
@@ -188,6 +203,10 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	out := make([]validatorReport, 0, len(order))
 	for _, addr := range order {
 		rep := byAddr[addr]
+		if t, ok := lastAlertByAddr[addr]; ok {
+			d := int(now.Sub(t).Hours() / 24)
+			rep.DaysSinceLastAlert = &d
+		}
 		// Ensure every period key exists (zero-value clean score) for absent periods.
 		for _, period := range reportPeriods {
 			if _, ok := rep.Periods[period]; !ok {
