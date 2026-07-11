@@ -26,7 +26,7 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./backend/config.yaml:/app/config.yaml
+      - ./backend/config_docker.yaml:/app/config.yaml
     ports:
       - 8880:8888 #metrics
       - 8989:8989 #backend
@@ -46,3 +46,11 @@ services:
 
 volumes:
   pgdata:
+networks:
+  default:
+  # Local devnet network (gnoland-test/). Must be started first:
+  #   cd gnoland-test && docker compose up -d
+  # Without it, docker compose up fails because the external network doesn't exist.
+  gno-devnet:
+    name: gnoland-test_default
+    external: true
