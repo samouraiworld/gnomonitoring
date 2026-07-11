@@ -4,6 +4,8 @@ import { useToast } from '../hooks/useToast'
 import { truncateAddr } from '../lib/format'
 import type { ChainInfo, ApiStatus } from '../types/api'
 import { REPORT_PERIODS, type ReportPeriod, type ValidatorReport } from '../types/report'
+import ScoreLegend from '../components/ScoreLegend'
+import HeaderTip from '../components/HeaderTip'
 
 const PERIOD_LABELS: Record<ReportPeriod, string> = {
   last_24h: 'Last 24h',
@@ -88,18 +90,18 @@ export default function Reports() {
   }
 
   const handleExportCsv = () => {
-    const headers = ['moniker', 'address']
+    const headers = ['moniker', 'address', 'last_alert']
     for (const per of PERIOD_ORDER) {
-      headers.push(`${per}_score`, `${per}_tier`, `${per}_critical`, `${per}_warning`, `${per}_downtime`)
+      headers.push(`${per}_score`, `${per}_tier`, `${per}_sign`, `${per}_vp`, `${per}_proposer`, `${per}_critical`, `${per}_warning`, `${per}_downtime`, `${per}_missed`)
     }
     const lines = sorted.map(r => {
-      const cells = [r.moniker, r.addr]
+      const cells = [r.moniker, r.addr, r.days_since_last_alert != null ? String(r.days_since_last_alert) : '']
       for (const per of PERIOD_ORDER) {
         const p = r.periods[per]
         if (p) {
-          cells.push(String(p.score), p.tier, String(p.critical_count), String(p.warning_count), String(p.downtime_blocks))
+          cells.push(String(p.score), p.tier, p.sign_rate.toFixed(1), String(p.voting_power), p.proposer_reliability != null ? p.proposer_reliability.toFixed(1) : '', String(p.critical_count), String(p.warning_count), String(p.downtime_blocks), String(p.missed_blocks))
         } else {
-          cells.push('', '', '', '', '')
+          cells.push('', '', '', '', '', '', '', '', '')
         }
       }
       return cells.map(csvEscape).join(',')
@@ -164,6 +166,15 @@ export default function Reports() {
       case 'tier':
         cmp = (TIER_RANK[pa.tier] ?? -1) - (TIER_RANK[pb.tier] ?? -1)
         break
+      case 'sign':
+        cmp = pa.sign_rate - pb.sign_rate
+        break
+      case 'vp':
+        cmp = pa.voting_power - pb.voting_power
+        break
+      case 'proposer':
+        cmp = (pa.proposer_reliability ?? -1) - (pb.proposer_reliability ?? -1)
+        break
       case 'score':
         cmp = pa.score - pb.score
         break
@@ -175,6 +186,12 @@ export default function Reports() {
         break
       case 'downtime':
         cmp = pa.downtime_blocks - pb.downtime_blocks
+        break
+      case 'missed':
+        cmp = pa.missed_blocks - pb.missed_blocks
+        break
+      case 'lastalert':
+        cmp = (a.days_since_last_alert ?? -1) - (b.days_since_last_alert ?? -1)
         break
     }
     return dir === 'asc' ? cmp : -cmp
@@ -198,6 +215,8 @@ export default function Reports() {
           </div>
         )}
       </div>
+
+      <ScoreLegend thresholds={thresholds} />
 
       {/* Filters */}
       <div className="card" style={{ marginBottom: 20, padding: 16 }}>
@@ -233,29 +252,39 @@ export default function Reports() {
           <table>
             <thead>
               <tr>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('moniker')}>Moniker{sortIndicator('moniker')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('addr')}>Address{sortIndicator('addr')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('score')}>Score{sortIndicator('score')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('tier')}>Tier{sortIndicator('tier')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('critical')}>Critical{sortIndicator('critical')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('warning')}>Warning{sortIndicator('warning')}</th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('downtime')}>Downtime Blocks{sortIndicator('downtime')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('moniker')}><HeaderTip tip="Validator display name (from the monikers table).">Moniker{sortIndicator('moniker')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('addr')}><HeaderTip tip="Validator bech32 address.">Address{sortIndicator('addr')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('lastalert')}><HeaderTip tip="Full days since the validator's most recent WARNING/CRITICAL alert; “—” if it never alerted.">Last alert (d){sortIndicator('lastalert')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('score')}><HeaderTip tip="Health score 0–100 = presence − VP-weighted penalties, clamped.">Score{sortIndicator('score')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('tier')}><HeaderTip tip="Score band: Excellent ≥85, Good ≥60, Watch ≥30, Critical <30.">Tier{sortIndicator('tier')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('sign')}><HeaderTip tip="Share of blocks the validator signed this period (participated / total). The base of the score.">Sign %{sortIndicator('sign')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('vp')}><HeaderTip tip="Current voting power (latest snapshot).">VP{sortIndicator('vp')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('proposer')}><HeaderTip align="right" tip="Proposer reliability: proposed vs expected proposals (by VP share); “—” when too few proposals are expected to be meaningful.">Proposer %{sortIndicator('proposer')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('critical')}><HeaderTip align="right" tip="Number of CRITICAL alerts in the period (includes resends).">Critical{sortIndicator('critical')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('warning')}><HeaderTip align="right" tip="Number of WARNING alerts in the period (includes resends).">Warning{sortIndicator('warning')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('downtime')}><HeaderTip align="right" tip="Blocks of downtime summed over CRITICAL outages (CRITICAL only).">Downtime Blocks{sortIndicator('downtime')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('missed')}><HeaderTip align="right" tip="Blocks not signed this period (total − signed). Already reflected in Sign % and Score.">Missed{sortIndicator('missed')}</HeaderTip></th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={7}><div className="empty-state"><div className="empty-state-title">No data</div></div></td></tr>
+                <tr><td colSpan={12}><div className="empty-state"><div className="empty-state-title">No data</div></div></td></tr>
               ) : sorted.map(r => {
                 const p = r.periods[period]
                 return (
                   <tr key={r.addr}>
                     <td>{r.moniker || '—'}</td>
                     <td className="mono">{truncateAddr(r.addr)}</td>
+                    <td>{r.days_since_last_alert != null ? r.days_since_last_alert : '—'}</td>
                     <td>{p ? p.score : '—'}</td>
                     <td>{p ? <span className={`badge ${TIER_BADGE_CLASS[p.tier] || 'badge-muted'}`}>{p.tier}</span> : '—'}</td>
+                    <td>{p ? `${p.sign_rate.toFixed(1)}%` : '—'}</td>
+                    <td>{p ? p.voting_power.toLocaleString() : '—'}</td>
+                    <td>{p && p.proposer_reliability != null ? `${p.proposer_reliability.toFixed(1)}%` : '—'}</td>
                     <td>{p ? p.critical_count : '—'}</td>
                     <td>{p ? p.warning_count : '—'}</td>
                     <td>{p ? p.downtime_blocks : '—'}</td>
+                    <td>{p ? p.missed_blocks : '—'}</td>
                   </tr>
                 )
               })}

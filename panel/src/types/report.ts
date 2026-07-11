@@ -7,9 +7,13 @@
 export interface PeriodScore {
   score: number
   tier: 'Excellent' | 'Good' | 'Watch' | 'Critical'
+  sign_rate: number
+  proposer_reliability: number | null
+  voting_power: number
   critical_count: number
   warning_count: number
   downtime_blocks: number
+  missed_blocks: number
 }
 
 // ── Report period constants ─────────────────────────────────────────
@@ -20,5 +24,8 @@ export type ReportPeriod = (typeof REPORT_PERIODS)[number]
 export interface ValidatorReport {
   addr: string
   moniker: string
+  // Global (period-independent): full days since the last WARNING/CRITICAL
+  // alert, null when the validator never alerted.
+  days_since_last_alert: number | null
   periods: Record<ReportPeriod, PeriodScore>
 }

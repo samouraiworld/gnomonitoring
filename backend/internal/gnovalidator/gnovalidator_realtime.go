@@ -124,6 +124,7 @@ type Participation struct {
 	Participated   bool
 	Timestamp      time.Time
 	TxContribution bool
+	Proposed       bool
 }
 
 func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client) {
@@ -287,38 +288,22 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 
 				// ================================ Get Participation and date ==================== //
 
-				// == IF in json return section Data, have a tx and get proposer of tx
-				var txProposer string
-				if len(block.Block.Data.Txs) > 0 {
-					txProposer = block.Block.Header.ProposerAddress.String()
+				// Actual block proposer, resolved once. A block always has a
+				// proposer; hasTx gates whether TxContribution is meaningful.
+				proposerAddr := block.Block.Header.ProposerAddress.String()
+				hasTx := len(block.Block.Data.Txs) > 0
 
-				}
 				// === Get Timestamp ==
 
 				timeStp := block.Block.Header.Time
 
-				// log.Printf("Block %v prop: %s", h, txProposer)
-
-				participating := make(map[string]Participation)
+				precommitAddrs := make([]string, 0, len(block.Block.LastCommit.Precommits))
 				for _, precommit := range block.Block.LastCommit.Precommits {
 					if precommit != nil {
-						var tx bool
-
-						if precommit.ValidatorAddress.String() == txProposer {
-							tx = true
-						} else {
-							tx = false
-						}
-
-						participating[precommit.ValidatorAddress.String()] = Participation{
-							Participated:   true,
-							Timestamp:      timeStp,
-							TxContribution: tx,
-						}
-
+						precommitAddrs = append(precommitAddrs, precommit.ValidatorAddress.String())
 					}
 				}
-				// log.Printf("participating = %+v \n", participating)
+				participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, timeStp)
 
 				err = SaveParticipation(db, chainID, h, participating, GetMonikerMap(chainID), timeStp)
 				if err != nil {
@@ -598,6 +583,7 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 			Addr:           valAddr,
 			Participated:   participated.Participated,
 			TxContribution: participated.TxContribution,
+			Proposed:       participated.Proposed,
 		})
 	}
 

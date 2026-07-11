@@ -146,6 +146,29 @@ func TestAggregateChain_MultipleDays(t *testing.T) {
 	require.Equal(t, int64(2), countAgrega(t, db, testChain))
 }
 
+// TestAggregateChain_ProposedCount verifies that proposed blocks are summed
+// into proposed_count for the day.
+func TestAggregateChain_ProposedCount(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	past := time.Now().UTC().AddDate(0, 0, -1)
+	day := time.Date(past.Year(), past.Month(), past.Day(), 12, 0, 0, 0, time.UTC)
+
+	seedRaw(t, db, []database.DailyParticipation{
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 10, Date: day, Participated: true, TxContribution: false, Proposed: true, Moniker: "Alice"},
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 11, Date: day, Participated: true, TxContribution: false, Proposed: false, Moniker: "Alice"},
+	})
+
+	require.NoError(t, gnovalidator.AggregateChain(db, testChain))
+
+	var proposedCount int
+	require.NoError(t, db.Raw(
+		`SELECT proposed_count FROM daily_participation_agregas WHERE chain_id = ? AND addr = ?`,
+		testChain, "g1aaa",
+	).Scan(&proposedCount).Error)
+	require.Equal(t, 1, proposedCount)
+}
+
 // TestPruneRawData verifies that rows older than 7 days are deleted and recent
 // rows are preserved.
 func TestPruneRawData(t *testing.T) {

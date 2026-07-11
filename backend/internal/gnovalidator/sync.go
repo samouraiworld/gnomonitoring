@@ -17,6 +17,7 @@ type dpRow struct {
 	Addr           string
 	Participated   bool
 	TxContribution bool
+	Proposed       bool
 }
 
 type job struct{ H int64 }
@@ -31,9 +32,9 @@ func flushBatch(db *gorm.DB, rows []dpRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	const cols = 7
+	const cols = 8 // chain_id, date, block_height, moniker, addr, participated, tx_contribution, proposed
 	const maxVars = 30_000 // Postgres supports up to 65535 bind parameters per statement; stay well below.
-	maxRows := maxVars / cols // = 4285 rows per INSERT
+	maxRows := maxVars / cols // = 3750 rows per INSERT
 
 	for start := 0; start < len(rows); start += maxRows {
 		end := start + maxRows
@@ -53,22 +54,23 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 
 	q := `
       INSERT INTO daily_participations
-        (chain_id, date, block_height, moniker, addr, participated, tx_contribution)
+        (chain_id, date, block_height, moniker, addr, participated, tx_contribution, proposed)
       VALUES `
-	args := make([]any, 0, len(rows)*7)
+	args := make([]any, 0, len(rows)*8)
 	for i, r := range rows {
 		if i > 0 {
 			q += ","
 		}
-		q += "(?, ?, ?, ?, ?, ?, ?)"
-		args = append(args, r.ChainID, r.Date, r.BlockHeight, r.Moniker, r.Addr, r.Participated, r.TxContribution)
+		q += "(?, ?, ?, ?, ?, ?, ?, ?)"
+		args = append(args, r.ChainID, r.Date, r.BlockHeight, r.Moniker, r.Addr, r.Participated, r.TxContribution, r.Proposed)
 	}
 	q += `
 	  ON CONFLICT(chain_id, block_height, addr) DO UPDATE SET
 	    date = excluded.date,
 	    moniker = excluded.moniker,
 	    participated = excluded.participated,
-	    tx_contribution = excluded.tx_contribution
+	    tx_contribution = excluded.tx_contribution,
+	    proposed = excluded.proposed
 	`
 
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -100,34 +102,18 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 				continue
 			}
 
-			// == IF in json return section Data, have a tx and get proposer of tx
-			var txProposer string
-			if len(block.Block.Data.Txs) > 0 {
-				txProposer = block.Block.Header.ProposerAddress.String()
-
-			}
-			// === Get Timestamp ==
-
+			// Actual block proposer, resolved once.
+			proposerAddr := block.Block.Header.ProposerAddress.String()
+			hasTx := len(block.Block.Data.Txs) > 0
 			timeStp := block.Block.Header.Time
-			participating := make(map[string]Participation)
+
+			precommitAddrs := make([]string, 0, len(block.Block.LastCommit.Precommits))
 			for _, precommit := range block.Block.LastCommit.Precommits {
 				if precommit != nil {
-					var tx bool
-
-					if precommit.ValidatorAddress.String() == txProposer {
-						tx = true
-					} else {
-						tx = false
-					}
-
-					participating[precommit.ValidatorAddress.String()] = Participation{
-						Participated:   true,
-						Timestamp:      timeStp,
-						TxContribution: tx,
-					}
-
+					precommitAddrs = append(precommitAddrs, precommit.ValidatorAddress.String())
 				}
 			}
+			participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, timeStp)
 			for valAddr, moniker := range monikerMap {
 				participated := participating[valAddr] // false if not found
 
@@ -153,6 +139,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 					Addr:           valAddr,
 					Participated:   participated.Participated,
 					TxContribution: participated.TxContribution,
+					Proposed:       participated.Proposed,
 				})
 				if len(buf) >= flushThreshold {
 					if err := flushBatch(db, buf); err != nil {
@@ -197,46 +184,29 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 					outs <- out{Err: err}
 					continue
 				}
+				proposerAddr := b.Block.Header.ProposerAddress.String()
 				hasTx := len(b.Block.Data.Txs) > 0
-				var txProp string
-				if hasTx {
-					txProp = b.Block.Header.ProposerAddress.String()
-				}
-
 				tStr := b.Block.Header.Time
 
-				seen := make(map[string]struct{}, len(b.Block.LastCommit.Precommits))
-				rows := make([]dpRow, 0, len(monikerMap))
-
-				// participated true
+				precommitAddrs := make([]string, 0, len(b.Block.LastCommit.Precommits))
 				for _, pc := range b.Block.LastCommit.Precommits {
-					if pc == nil {
-						continue
+					if pc != nil {
+						precommitAddrs = append(precommitAddrs, pc.ValidatorAddress.String())
 					}
-					addr := pc.ValidatorAddress.String()
-					seen[addr] = struct{}{}
-					// Dynamic detection: record first_active_block when first seen
-					if fab := firstActiveBlocks[addr]; fab == -1 {
-						SetFirstActiveBlock(chainID, addr, j.H)
-						_ = database.UpsertFirstActiveBlock(db, chainID, addr, j.H)
-					}
-					rows = append(rows, dpRow{
-						ChainID:        chainID,
-						Date:           tStr,
-						BlockHeight:    j.H,
-						Moniker:        monikerMap[addr],
-						Addr:           addr,
-						Participated:   true,
-						TxContribution: hasTx && (addr == txProp),
-					})
 				}
-				// participated false
+				participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, tStr)
+
+				rows := make([]dpRow, 0, len(monikerMap))
 				for addr, mon := range monikerMap {
-					if _, ok := seen[addr]; ok {
-						continue
-					}
-					// Guard: skip rows before the validator's activation block
-					if fab := firstActiveBlocks[addr]; fab > 0 && j.H < fab {
+					p := participating[addr] // zero value (not participated/proposed) if absent
+					if p.Participated {
+						// Dynamic detection: record first_active_block when first seen
+						if fab := firstActiveBlocks[addr]; fab == -1 {
+							SetFirstActiveBlock(chainID, addr, j.H)
+							_ = database.UpsertFirstActiveBlock(db, chainID, addr, j.H)
+						}
+					} else if fab := firstActiveBlocks[addr]; fab > 0 && j.H < fab {
+						// Guard: skip rows before the validator's activation block
 						continue
 					}
 					rows = append(rows, dpRow{
@@ -245,8 +215,9 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 						BlockHeight:    j.H,
 						Moniker:        mon,
 						Addr:           addr,
-						Participated:   false,
-						TxContribution: false,
+						Participated:   p.Participated,
+						TxContribution: p.TxContribution,
+						Proposed:       p.Proposed,
 					})
 				}
 				outs <- out{Rows: rows}
