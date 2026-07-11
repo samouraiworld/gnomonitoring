@@ -45,7 +45,7 @@ func periodBounds(period string, now time.Time) (time.Time, time.Time, error) {
 
 // periodPartition describes how a report period splits across the durable daily
 // aggregate (complete past days) and the raw current-day rows, with the seam
-// fixed at today 00:00 UTC to avoid double counting.
+// anchored to aggregatedThrough to avoid double counting.
 type periodPartition struct {
 	rawStart, end          time.Time // raw window [rawStart, end)
 	agregaStart, agregaEnd string    // aggregate window [agregaStart, agregaEnd) as YYYY-MM-DD
@@ -162,9 +162,9 @@ func GetAggregatedThrough(db *gorm.DB, chainID string) (time.Time, error) {
 // GetValidatorParticipation returns per-validator signed/total (and proposed)
 // block counts for the period, plus the chain's total block count over the same
 // period (used to size expected proposal counts). It reads durable daily
-// aggregates for complete past days and raw rows for the current day,
-// partitioned at today 00:00 UTC to avoid double counting. last_24h reads only
-// raw rows (block granularity). Scoped to chain_id.
+// aggregates for complete past days and raw rows, partitioned at aggregatedThrough
+// (the actual upper bound of aggregated days) to avoid double counting. last_24h
+// reads only raw rows (block granularity). Scoped to chain_id.
 func GetValidatorParticipation(db *gorm.DB, chainID, period string) ([]ParticipationRaw, int64, error) {
 	aggregatedThrough, err := GetAggregatedThrough(db, chainID)
 	if err != nil {
