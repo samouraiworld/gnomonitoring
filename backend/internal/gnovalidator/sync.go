@@ -104,36 +104,18 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 				continue
 			}
 
-			// Actual block proposer, resolved once. txProposer is the same value,
-			// meaningful only when the block carries transactions.
+			// Actual block proposer, resolved once.
 			proposerAddr := block.Block.Header.ProposerAddress.String()
-			var txProposer string
-			if len(block.Block.Data.Txs) > 0 {
-				txProposer = proposerAddr
-			}
-			// === Get Timestamp ==
-
+			hasTx := len(block.Block.Data.Txs) > 0
 			timeStp := block.Block.Header.Time
-			participating := make(map[string]Participation)
+
+			precommitAddrs := make([]string, 0, len(block.Block.LastCommit.Precommits))
 			for _, precommit := range block.Block.LastCommit.Precommits {
 				if precommit != nil {
-					var tx bool
-
-					if precommit.ValidatorAddress.String() == txProposer {
-						tx = true
-					} else {
-						tx = false
-					}
-
-					participating[precommit.ValidatorAddress.String()] = Participation{
-						Participated:   true,
-						Timestamp:      timeStp,
-						TxContribution: tx,
-						Proposed:       precommit.ValidatorAddress.String() == proposerAddr,
-					}
-
+					precommitAddrs = append(precommitAddrs, precommit.ValidatorAddress.String())
 				}
 			}
+			participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, timeStp)
 			for valAddr, moniker := range monikerMap {
 				participated := participating[valAddr] // false if not found
 
@@ -204,50 +186,29 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 					outs <- out{Err: err}
 					continue
 				}
-				// Actual block proposer, resolved once; txProp is the same value,
-				// meaningful only when the block carries transactions.
-				hasTx := len(b.Block.Data.Txs) > 0
 				proposerAddr := b.Block.Header.ProposerAddress.String()
-				txProp := ""
-				if hasTx {
-					txProp = proposerAddr
-				}
-
+				hasTx := len(b.Block.Data.Txs) > 0
 				tStr := b.Block.Header.Time
 
-				seen := make(map[string]struct{}, len(b.Block.LastCommit.Precommits))
-				rows := make([]dpRow, 0, len(monikerMap))
-
-				// participated true
+				precommitAddrs := make([]string, 0, len(b.Block.LastCommit.Precommits))
 				for _, pc := range b.Block.LastCommit.Precommits {
-					if pc == nil {
-						continue
+					if pc != nil {
+						precommitAddrs = append(precommitAddrs, pc.ValidatorAddress.String())
 					}
-					addr := pc.ValidatorAddress.String()
-					seen[addr] = struct{}{}
-					// Dynamic detection: record first_active_block when first seen
-					if fab := firstActiveBlocks[addr]; fab == -1 {
-						SetFirstActiveBlock(chainID, addr, j.H)
-						_ = database.UpsertFirstActiveBlock(db, chainID, addr, j.H)
-					}
-					rows = append(rows, dpRow{
-						ChainID:        chainID,
-						Date:           tStr,
-						BlockHeight:    j.H,
-						Moniker:        monikerMap[addr],
-						Addr:           addr,
-						Participated:   true,
-						TxContribution: hasTx && (addr == txProp),
-						Proposed:       addr == proposerAddr,
-					})
 				}
-				// participated false
+				participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, tStr)
+
+				rows := make([]dpRow, 0, len(monikerMap))
 				for addr, mon := range monikerMap {
-					if _, ok := seen[addr]; ok {
-						continue
-					}
-					// Guard: skip rows before the validator's activation block
-					if fab := firstActiveBlocks[addr]; fab > 0 && j.H < fab {
+					p := participating[addr] // zero value (not participated/proposed) if absent
+					if p.Participated {
+						// Dynamic detection: record first_active_block when first seen
+						if fab := firstActiveBlocks[addr]; fab == -1 {
+							SetFirstActiveBlock(chainID, addr, j.H)
+							_ = database.UpsertFirstActiveBlock(db, chainID, addr, j.H)
+						}
+					} else if fab := firstActiveBlocks[addr]; fab > 0 && j.H < fab {
+						// Guard: skip rows before the validator's activation block
 						continue
 					}
 					rows = append(rows, dpRow{
@@ -256,8 +217,9 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 						BlockHeight:    j.H,
 						Moniker:        mon,
 						Addr:           addr,
-						Participated:   false,
-						TxContribution: false,
+						Participated:   p.Participated,
+						TxContribution: p.TxContribution,
+						Proposed:       p.Proposed,
 					})
 				}
 				outs <- out{Rows: rows}

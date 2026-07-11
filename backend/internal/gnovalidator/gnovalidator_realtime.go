@@ -289,40 +289,21 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 				// ================================ Get Participation and date ==================== //
 
 				// Actual block proposer, resolved once. A block always has a
-				// proposer; txProposer is the same value, meaningful only when
-				// the block carries transactions.
+				// proposer; hasTx gates whether TxContribution is meaningful.
 				proposerAddr := block.Block.Header.ProposerAddress.String()
-				var txProposer string
-				if len(block.Block.Data.Txs) > 0 {
-					txProposer = proposerAddr
-				}
+				hasTx := len(block.Block.Data.Txs) > 0
+
 				// === Get Timestamp ==
 
 				timeStp := block.Block.Header.Time
 
-				// log.Printf("Block %v prop: %s", h, txProposer)
-
-				participating := make(map[string]Participation)
+				precommitAddrs := make([]string, 0, len(block.Block.LastCommit.Precommits))
 				for _, precommit := range block.Block.LastCommit.Precommits {
 					if precommit != nil {
-						var tx bool
-
-						if precommit.ValidatorAddress.String() == txProposer {
-							tx = true
-						} else {
-							tx = false
-						}
-
-						participating[precommit.ValidatorAddress.String()] = Participation{
-							Participated:   true,
-							Timestamp:      timeStp,
-							TxContribution: tx,
-							Proposed:       precommit.ValidatorAddress.String() == proposerAddr,
-						}
-
+						precommitAddrs = append(precommitAddrs, precommit.ValidatorAddress.String())
 					}
 				}
-				// log.Printf("participating = %+v \n", participating)
+				participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, timeStp)
 
 				err = SaveParticipation(db, chainID, h, participating, GetMonikerMap(chainID), timeStp)
 				if err != nil {
