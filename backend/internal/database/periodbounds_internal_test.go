@@ -74,9 +74,11 @@ func TestComputePartition(t *testing.T) {
 	minus5 := time.FixedZone("UTC-5", -5*3600)
 	now := time.Date(2026, 7, 8, 21, 30, 0, 0, minus5)
 	todayUTC := "2026-07-09"
+	// Aggregator fully caught up: yesterday (and everything before) is aggregated.
+	caughtUp := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
 
 	t.Run("current_month includes agrega, raw starts today UTC", func(t *testing.T) {
-		p, err := computePartition("current_month", now)
+		p, err := computePartition("current_month", now, caughtUp)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +98,7 @@ func TestComputePartition(t *testing.T) {
 	})
 
 	t.Run("last_24h excludes agrega, raw is full window", func(t *testing.T) {
-		p, err := computePartition("last_24h", now)
+		p, err := computePartition("last_24h", now, caughtUp)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,6 +106,40 @@ func TestComputePartition(t *testing.T) {
 			t.Fatalf("last_24h must not include agrega")
 		}
 		wantRaw := time.Date(2026, 7, 9, 2, 30, 0, 0, time.UTC).Add(-24 * time.Hour)
+		if !p.rawStart.Equal(wantRaw) {
+			t.Fatalf("rawStart = %s, want %s", p.rawStart, wantRaw)
+		}
+	})
+
+	t.Run("aggregator lagging two days: raw arm absorbs the gap, no missing day", func(t *testing.T) {
+		// Aggregator hasn't rolled up anything since July 7: aggregatedThrough
+		// (exclusive) is July 8.
+		lagging := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
+		p, err := computePartition("current_month", now, lagging)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !p.includeAgrega {
+			t.Fatalf("current_month should still include agrega for July 1-7")
+		}
+		if p.agregaEnd != "2026-07-08" {
+			t.Fatalf("agregaEnd = %q, want 2026-07-08 (only what's actually aggregated)", p.agregaEnd)
+		}
+		wantRaw := lagging
+		if !p.rawStart.Equal(wantRaw) {
+			t.Fatalf("rawStart = %s, want %s (raw arm must cover the un-aggregated gap)", p.rawStart, wantRaw)
+		}
+	})
+
+	t.Run("nothing aggregated yet: raw arm covers the whole period", func(t *testing.T) {
+		p, err := computePartition("current_month", now, time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.includeAgrega {
+			t.Fatalf("must not include agrega when nothing has been aggregated")
+		}
+		wantRaw := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 		if !p.rawStart.Equal(wantRaw) {
 			t.Fatalf("rawStart = %s, want %s", p.rawStart, wantRaw)
 		}

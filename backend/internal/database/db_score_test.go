@@ -9,6 +9,38 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestGetAggregatedThrough(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test16"
+
+	t.Run("nothing aggregated yet returns zero time", func(t *testing.T) {
+		got, err := database.GetAggregatedThrough(db, chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.IsZero() {
+			t.Fatalf("want zero time, got %s", got)
+		}
+	})
+
+	t.Run("returns the day after the latest aggregated block_date", func(t *testing.T) {
+		if err := db.Exec(`INSERT INTO daily_participation_agregas
+			(chain_id, addr, block_date, moniker, participated_count, missed_count,
+			 tx_contribution_count, total_blocks, first_block_height, last_block_height)
+			VALUES (?, 'addrA', '2026-07-05', 'A', 10, 0, 0, 10, 1, 10)`, chain).Error; err != nil {
+			t.Fatal(err)
+		}
+		got, err := database.GetAggregatedThrough(db, chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC)
+		if !got.Equal(want) {
+			t.Fatalf("got %s, want %s", got, want)
+		}
+	})
+}
+
 func seedScoreAlert(t *testing.T, db *gorm.DB, chain, addr, level string, start, end int64, sentAt time.Time) {
 	t.Helper()
 	row := database.AlertLog{
@@ -137,6 +169,65 @@ func TestGetValidatorParticipation_UnionAgregaAndToday(t *testing.T) {
 	// 80 + 1 signed, 100 + 2 total.
 	if got.SignedBlocks != 81 || got.TotalBlocks != 102 {
 		t.Fatalf("signed/total = %d/%d, want 81/102", got.SignedBlocks, got.TotalBlocks)
+	}
+}
+
+// TestGetValidatorParticipation_AggregatorLagIncludesUnaggregatedDay guards
+// against the bug where a day not yet rolled up by the (hourly) aggregator
+// vanished from the report: neither counted by the raw arm (which started at
+// wall-clock "today") nor by the agrega arm (which hadn't been written yet).
+func TestGetValidatorParticipation_AggregatorLagIncludesUnaggregatedDay(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test17"
+
+	// Aggregator is lagging: only two days ago has been rolled up.
+	twoDaysAgo := time.Now().UTC().AddDate(0, 0, -2).Format("2006-01-02")
+	if err := db.Exec(`INSERT INTO daily_participation_agregas
+		(chain_id, addr, block_date, moniker, participated_count, missed_count,
+		 tx_contribution_count, total_blocks, first_block_height, last_block_height)
+		VALUES (?, 'addrA', ?, 'A', 10, 0, 0, 10, 1, 10)`,
+		chain, twoDaysAgo).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Yesterday's raw rows: NOT yet aggregated (aggregator lagging).
+	yesterday := time.Now().UTC().AddDate(0, 0, -1)
+	yesterdayTS := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 6, 0, 0, 0, time.UTC)
+	if err := db.Exec(`INSERT INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated, tx_contribution)
+		VALUES (?, ?, 501, 'A', 'addrA', true, false)`,
+		chain, yesterdayTS).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Today's raw row.
+	now := time.Now().UTC()
+	todayTS := time.Date(now.Year(), now.Month(), now.Day(), 1, 0, 0, 0, time.UTC)
+	if err := db.Exec(`INSERT INTO daily_participations
+		(chain_id, date, block_height, moniker, addr, participated, tx_contribution)
+		VALUES (?, ?, 502, 'A', 'addrA', true, false)`,
+		chain, todayTS).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	rows, _, err := database.GetValidatorParticipation(db, chain, "current_month")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *database.ParticipationRaw
+	for i := range rows {
+		if rows[i].Addr == "addrA" {
+			got = &rows[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("addrA missing from results")
+	}
+	// 10 (aggregated, two days ago) + 1 (yesterday, raw, not yet aggregated) +
+	// 1 (today, raw) = 12, with no double count and no dropped day even though
+	// the aggregator hasn't caught up on yesterday yet.
+	if got.SignedBlocks != 12 || got.TotalBlocks != 12 {
+		t.Fatalf("signed/total = %d/%d, want 12/12 (yesterday must not be dropped nor double-counted)", got.SignedBlocks, got.TotalBlocks)
 	}
 }
 

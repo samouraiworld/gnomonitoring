@@ -54,29 +54,37 @@ type periodPartition struct {
 
 // computePartition derives the raw/aggregate windows for a report period. All
 // bounds are UTC so they line up with the UTC block timestamps and block_date
-// day strings.
-func computePartition(period string, now time.Time) (periodPartition, error) {
+// day strings. The seam between the two arms is anchored to aggregatedThrough
+// — the actual exclusive upper bound of days rolled up into
+// daily_participation_agregas (see GetAggregatedThrough) — rather than to
+// wall-clock "today". This makes the split self-healing when the hourly
+// aggregator lags behind midnight: any day not yet aggregated is picked up by
+// the raw arm instead of falling into the gap between the two arms.
+func computePartition(period string, now, aggregatedThrough time.Time) (periodPartition, error) {
 	start, end, err := periodBounds(period, now)
 	if err != nil {
 		return periodPartition{}, err
 	}
-	nowUTC := now.UTC()
-	todayStart := time.Date(nowUTC.Year(), nowUTC.Month(), nowUTC.Day(), 0, 0, 0, 0, time.UTC)
 
-	rawStart := todayStart
-	if period == "last_24h" {
+	rawStart := aggregatedThrough
+	if period == "last_24h" || aggregatedThrough.IsZero() {
 		rawStart = start
 	}
 	if rawStart.Before(start) {
 		rawStart = start
 	}
 
+	agregaEnd := aggregatedThrough
+	if agregaEnd.After(end) {
+		agregaEnd = end
+	}
+
 	return periodPartition{
 		rawStart:      rawStart,
 		end:           end,
 		agregaStart:   start.Format("2006-01-02"),
-		agregaEnd:     todayStart.Format("2006-01-02"),
-		includeAgrega: period != "last_24h" && todayStart.After(start),
+		agregaEnd:     agregaEnd.Format("2006-01-02"),
+		includeAgrega: period != "last_24h" && !aggregatedThrough.IsZero() && aggregatedThrough.After(start),
 	}, nil
 }
 
@@ -126,6 +134,31 @@ type ParticipationRaw struct {
 	ProposedBlocks int64  `json:"proposed_blocks"`
 }
 
+// GetAggregatedThrough returns the exclusive upper bound (UTC midnight) of the
+// days that have already been rolled up into daily_participation_agregas for
+// chainID — i.e. the day after the latest aggregated block_date. A zero
+// time.Time means nothing has been aggregated yet for this chain, so callers
+// must treat the entire period as raw. Anchoring the report's raw/aggregate
+// seam to this value (instead of wall-clock "today") keeps it correct even
+// when the hourly aggregator run is delayed or the chain is brand new.
+func GetAggregatedThrough(db *gorm.DB, chainID string) (time.Time, error) {
+	var maxDate *string
+	if err := db.Raw(
+		`SELECT MAX(block_date) FROM daily_participation_agregas WHERE chain_id = ?`,
+		chainID,
+	).Scan(&maxDate).Error; err != nil {
+		return time.Time{}, fmt.Errorf("GetAggregatedThrough(%s): %w", chainID, err)
+	}
+	if maxDate == nil {
+		return time.Time{}, nil
+	}
+	d, err := time.ParseInLocation("2006-01-02", *maxDate, time.UTC)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("GetAggregatedThrough(%s): parse %q: %w", chainID, *maxDate, err)
+	}
+	return d.AddDate(0, 0, 1), nil
+}
+
 // GetValidatorParticipation returns per-validator signed/total (and proposed)
 // block counts for the period, plus the chain's total block count over the same
 // period (used to size expected proposal counts). It reads durable daily
@@ -133,7 +166,11 @@ type ParticipationRaw struct {
 // partitioned at today 00:00 UTC to avoid double counting. last_24h reads only
 // raw rows (block granularity). Scoped to chain_id.
 func GetValidatorParticipation(db *gorm.DB, chainID, period string) ([]ParticipationRaw, int64, error) {
-	p, err := computePartition(period, time.Now())
+	aggregatedThrough, err := GetAggregatedThrough(db, chainID)
+	if err != nil {
+		return nil, 0, err
+	}
+	p, err := computePartition(period, time.Now(), aggregatedThrough)
 	if err != nil {
 		return nil, 0, err
 	}
