@@ -200,6 +200,9 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		}
 	}
 
+	emptyRes := score.Compute(score.Inputs{}, weights)
+	emptyPeriod := periodScore{Score: emptyRes.Score, Tier: string(emptyRes.Tier)}
+
 	out := make([]validatorReport, 0, len(order))
 	for _, addr := range order {
 		rep := byAddr[addr]
@@ -210,8 +213,7 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		// Ensure every period key exists (zero-value clean score) for absent periods.
 		for _, period := range reportPeriods {
 			if _, ok := rep.Periods[period]; !ok {
-				res := score.Compute(score.Inputs{}, weights)
-				rep.Periods[period] = periodScore{Score: res.Score, Tier: string(res.Tier)}
+				rep.Periods[period] = emptyPeriod
 			}
 		}
 		out = append(out, *rep)
