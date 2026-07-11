@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -373,10 +374,25 @@ func CreateAggregaIndexes(db *gorm.DB) error {
 	return nil
 }
 
+// ensureUTCTimeZone appends a TimeZone=UTC parameter to dsn if the caller
+// hasn't already set one. Every report query (see db_score.go) assumes block
+// timestamps are bucketed into calendar days (via ::date casts on the
+// timestamptz `date`/`block_date` columns) in UTC; without pinning the
+// session timezone, a non-UTC default shifts that bucketing and desyncs it
+// from the UTC period boundaries the report uses, silently double-counting
+// or dropping blocks near midnight.
+func ensureUTCTimeZone(dsn string) string {
+	if strings.Contains(strings.ToLower(dsn), "timezone=") {
+		return dsn
+	}
+	return strings.TrimSpace(dsn) + " TimeZone=UTC"
+}
+
 // InitDB opens the PostgreSQL database, configures the connection pool, runs
 // AutoMigrate, applies multi-chain schema migrations, rebuilds indexes and
 // creates the missing-blocks view.
 func InitDB(dsn string) (*gorm.DB, error) {
+	dsn = ensureUTCTimeZone(dsn)
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Error),
 	})

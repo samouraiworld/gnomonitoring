@@ -23,3 +23,10 @@ func TestApplyMultiChainMigrations_SchemaScoped(t *testing.T) {
 	require.NoError(t, database.ApplyTelegramChainIDMigration(db1))
 	require.NoError(t, database.ApplyTelegramChainIDMigration(db2))
 }
+
+func TestInitDB_SessionTimeZoneIsUTC(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	var tz string
+	require.NoError(t, db.Raw("SHOW TimeZone").Scan(&tz).Error)
+	require.Equal(t, "UTC", tz)
+}
