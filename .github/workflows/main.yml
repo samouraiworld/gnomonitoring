@@ -17,6 +17,9 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            cd gnomonitoring
+            # gnomonitoringv2 is the live Postgres-era project; ~/gnomonitoring is the
+            # retired SQLite-era dir (renamed *-legacy-sqlite on the box) — deploying
+            # there crashloops the backend with an empty database DSN (2026-07-10).
+            cd gnomonitoringv2
             docker compose pull
             docker compose up -d

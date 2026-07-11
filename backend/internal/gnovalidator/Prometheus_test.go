@@ -65,13 +65,15 @@ func TestUpdatePrometheusMetricsFromDB_ChainLabel(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify gnoland1 metrics were set with proper chain label.
-	// Moniker comes from COALESCE(am.moniker, dp.addr) = "g1gnoland1" (no addr_monikers entry).
-	val = testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1gnoland1", "g1gnoland1"))
+	// The seeded rows carry Moniker "GnolandVal": with the symmetric fallback the
+	// moniker label is the FROZEN ROW MONIKER (never the address) even though
+	// addr_monikers has no entry.
+	val = testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1gnoland1", "GnolandVal"))
 	assert.Greater(t, val, 0.0, "gnoland1 ValidatorParticipation should be set")
 
 	// Verify metrics are chain-isolated
 	// When we query with wrong chain, the metric should be 0 (not set)
-	wrongChainVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("betanet", "g1gnoland1", "g1gnoland1"))
+	wrongChainVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("betanet", "g1gnoland1", "GnolandVal"))
 	assert.Equal(t, 0.0, wrongChainVal, "gnoland1 validator should not appear in betanet metrics")
 
 	wrongChainVal = testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1abc", "g1abc"))
@@ -134,17 +136,18 @@ func TestUpdatePrometheusMetricsFromDB_MultipleChains(t *testing.T) {
 	}
 
 	// Verify each chain has its own metrics.
-	// GetCurrentPeriodParticipationRate uses COALESCE(am.moniker, dp.addr) so the
-	// moniker label is the address when no addr_monikers entry exists.
+	// The moniker label is the frozen row moniker when addr_monikers is empty;
+	// the fixture's g1abc rows carry NO moniker, so only there the address is
+	// still the last-resort label.
 	betanetVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("betanet", "g1abc", "g1abc"))
 	assert.Greater(t, betanetVal, 0.0, "betanet metrics should be set")
 
 	// gnoland1 data has addr "g1gnoland2"; participated=false so rate is 0, but metric is set.
-	gnolandVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1gnoland2", "g1gnoland2"))
+	gnolandVal := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("gnoland1", "g1gnoland2", "GnolandVal2"))
 	assert.GreaterOrEqual(t, gnolandVal, 0.0, "gnoland1 metrics should be set or 0")
 
 	// test3 data has addr "g1test3"; participated=true so rate is 100%.
-	test3Val := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("test3", "g1test3", "g1test3"))
+	test3Val := testutil.ToFloat64(gnovalidator.ValidatorParticipation.WithLabelValues("test3", "g1test3", "Test3Val"))
 	assert.Greater(t, test3Val, 0.0, "test3 metrics should be set")
 }
 

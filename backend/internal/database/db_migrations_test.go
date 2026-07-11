@@ -68,11 +68,12 @@ func TestMigrationsApplyChainIDColumns(t *testing.T) {
 func TestMigrationsIndexesCreated(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
+	// Note: idx_dp_chain_addr and idx_dp_chain_date were intentionally dropped as
+	// redundant prefixes (see CreateOrReplaceIndexes and TestIndexMigration).
 	expectedIndexes := []string{
 		"idx_dp_chain_block_height",
-		"idx_dp_chain_addr",
-		"idx_dp_chain_date",
 		"idx_dp_chain_addr_participated",
+		"idx_dp_chain_date_addr",
 		"idx_al_chain_addr",
 		"idx_tvs_chain_addr_chatid",
 	}

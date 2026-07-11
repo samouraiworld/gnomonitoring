@@ -244,81 +244,108 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	ConsecutiveMissedBlocks.DeletePartialMatch(chainLabel)
 	MissedBlocksWindow.DeletePartialMatch(chainLabel)
 
+	// Phases 1-4 run concurrently. Each unit reads db/chainID and writes to its
+	// own Prometheus vector (GaugeVec is safe for concurrent use), so there is no
+	// shared mutable Go state between units. The DeletePartialMatch calls above
+	// already ran synchronously. A WaitGroup bounds the fan-out; StartMetricsUpdater
+	// processes chains sequentially, keeping peak connections within the pool.
+	var wg sync.WaitGroup
+	run := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[metrics][%s] metric goroutine panic recovered: %v", chainID, r)
+				}
+			}()
+			fn()
+		}()
+	}
+
 	// Phase 1: Base validator metrics (non-critical errors logged, execution continues)
 
 	// ValidatorParticipation (current calendar month)
-	participationRates, err := database.GetCurrentPeriodParticipationRate(db, chainID, "current_month")
-	if err != nil {
-		log.Printf("[metrics][%s] ValidatorParticipation error: %v", chainID, err)
-	} else {
+	run(func() {
+		participationRates, err := database.GetCurrentPeriodParticipationRate(db, chainID, "current_month")
+		if err != nil {
+			log.Printf("[metrics][%s] ValidatorParticipation error: %v", chainID, err)
+			return
+		}
 		for _, stat := range participationRates {
 			ValidatorParticipation.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.ParticipationRate)
 		}
-	}
+	})
 
 	// MissedBlocks
-	missedStats, err := CalculateMissedBlocks(db, chainID)
-	if err != nil {
-		log.Printf("[metrics][%s] MissedBlocks error: %v", chainID, err)
-	} else {
+	run(func() {
+		missedStats, err := CalculateMissedBlocks(db, chainID)
+		if err != nil {
+			log.Printf("[metrics][%s] MissedBlocks error: %v", chainID, err)
+			return
+		}
 		for _, stat := range missedStats {
 			MissedBlocks.WithLabelValues(chainID, stat.Address, stat.Moniker).Set(float64(stat.Missed))
 		}
-	}
+	})
 
 	// ConsecutiveMissedBlocks
-	consecutiveStats, err := CalculateConsecutiveMissedBlocks(db, chainID)
-	if err != nil {
-		log.Printf("[metrics][%s] ConsecutiveMissedBlocks error: %v", chainID, err)
-	} else {
+	run(func() {
+		consecutiveStats, err := CalculateConsecutiveMissedBlocks(db, chainID)
+		if err != nil {
+			log.Printf("[metrics][%s] ConsecutiveMissedBlocks error: %v", chainID, err)
+			return
+		}
 		for _, stat := range consecutiveStats {
 			ConsecutiveMissedBlocks.WithLabelValues(chainID, stat.Address, stat.Moniker).Set(float64(stat.Count))
 		}
-	}
+	})
 
-	// MissedBlocksWindow (1h, 24h, 7d)
-	windows := map[string]time.Duration{
-		"1h":  time.Hour,
-		"24h": 24 * time.Hour,
-		"7d":  7 * 24 * time.Hour,
-	}
-	for windowLabel, dur := range windows {
-		since := time.Now().Add(-dur)
-		windowStats, err := database.GetMissedBlocksWindow(db, chainID, since)
+	// MissedBlocksWindow (1h, 24h, 7d) — one scan for all three windows.
+	run(func() {
+		multi, err := database.GetMissedBlocksMultiWindow(db, chainID)
 		if err != nil {
-			log.Printf("[metrics][%s] MissedBlocksWindow[%s] error: %v", chainID, windowLabel, err)
-			continue
+			log.Printf("[metrics][%s] MissedBlocksWindow error: %v", chainID, err)
+			return
 		}
-		for _, stat := range windowStats {
-			MissedBlocksWindow.WithLabelValues(chainID, stat.Addr, stat.Moniker, windowLabel).Set(float64(stat.MissingBlock))
+		for _, s := range multi {
+			MissedBlocksWindow.WithLabelValues(chainID, s.Addr, s.Moniker, "1h").Set(float64(s.Missed1h))
+			MissedBlocksWindow.WithLabelValues(chainID, s.Addr, s.Moniker, "24h").Set(float64(s.Missed24h))
+			MissedBlocksWindow.WithLabelValues(chainID, s.Addr, s.Moniker, "7d").Set(float64(s.Missed7d))
 		}
-	}
+	})
 
 	// ValidatorUptime (last 500 blocks)
-	uptimeStats, err := database.UptimeMetricsaddr(db, chainID)
-	if err != nil {
-		log.Printf("[metrics][%s] ValidatorUptime error: %v", chainID, err)
-	} else {
+	run(func() {
+		uptimeStats, err := database.UptimeMetricsaddr(db, chainID)
+		if err != nil {
+			log.Printf("[metrics][%s] ValidatorUptime error: %v", chainID, err)
+			return
+		}
 		for _, stat := range uptimeStats {
 			ValidatorUptime.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.Uptime)
 		}
-	}
+	})
 
 	// ValidatorOperationTime (days since last down)
-	operationStats, err := database.OperationTimeMetricsaddr(db, chainID)
-	if err != nil {
-		log.Printf("[metrics][%s] OperationTime error: %v", chainID, err)
-	} else {
+	run(func() {
+		operationStats, err := database.OperationTimeMetricsaddr(db, chainID)
+		if err != nil {
+			log.Printf("[metrics][%s] OperationTime error: %v", chainID, err)
+			return
+		}
 		for _, stat := range operationStats {
 			ValidatorOperationTime.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.DaysDiff)
 		}
-	}
+	})
 
 	// ValidatorTxContribution (current month)
-	txStats, err := database.TxContrib(db, chainID, "current_month")
-	if err != nil {
-		log.Printf("[metrics][%s] TxContribution error: %v", chainID, err)
-	} else {
+	run(func() {
+		txStats, err := database.TxContrib(db, chainID, "current_month")
+		if err != nil {
+			log.Printf("[metrics][%s] TxContribution error: %v", chainID, err)
+			return
+		}
 		allZero := true
 		for _, s := range txStats {
 			if s.TxContrib > 0 {
@@ -332,23 +359,27 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 		for _, stat := range txStats {
 			ValidatorTxContribution.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(stat.TxContrib)
 		}
-	}
+	})
 
 	// ValidatorMissingBlocksMonth (current month)
-	missingStats, err := database.MissingBlock(db, chainID, "current_month")
-	if err != nil {
-		log.Printf("[metrics][%s] MissingBlocksMonth error: %v", chainID, err)
-	} else {
+	run(func() {
+		missingStats, err := database.MissingBlock(db, chainID, "current_month")
+		if err != nil {
+			log.Printf("[metrics][%s] MissingBlocksMonth error: %v", chainID, err)
+			return
+		}
 		for _, stat := range missingStats {
 			ValidatorMissingBlocksMonth.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(float64(stat.MissingBlock))
 		}
-	}
+	})
 
 	// ValidatorFirstSeenUnix (unix timestamp of first participation)
-	firstSeenStats, err := database.GetFirstSeen(db, chainID)
-	if err != nil {
-		log.Printf("[metrics][%s] FirstSeen error: %v", chainID, err)
-	} else {
+	run(func() {
+		firstSeenStats, err := database.GetFirstSeen(db, chainID)
+		if err != nil {
+			log.Printf("[metrics][%s] FirstSeen error: %v", chainID, err)
+			return
+		}
 		for _, stat := range firstSeenStats {
 			// Parse the date string returned from SQL (format: "YYYY-MM-DD HH:MM:SS" or with timezone)
 			var t time.Time
@@ -371,51 +402,55 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 			}
 			ValidatorFirstSeenUnix.WithLabelValues(chainID, stat.Addr, stat.Moniker).Set(float64(t.Unix()))
 		}
-	}
+	})
 
-	// Phase 2: Chain-level metrics
+	// Phase 2: Chain-level metrics (three small queries grouped in one unit)
+	run(func() {
+		if activeCount, err := database.GetActiveValidatorCount(db, chainID); err != nil {
+			log.Printf("[metrics][%s] ActiveValidatorCount error: %v", chainID, err)
+		} else {
+			ChainActiveValidators.WithLabelValues(chainID).Set(float64(activeCount))
+		}
 
-	activeCount, err := database.GetActiveValidatorCount(db, chainID)
-	if err != nil {
-		log.Printf("[metrics][%s] ActiveValidatorCount error: %v", chainID, err)
-	} else {
-		ChainActiveValidators.WithLabelValues(chainID).Set(float64(activeCount))
-	}
+		if avgRate, err := database.GetAvgParticipationRate(db, chainID); err != nil {
+			log.Printf("[metrics][%s] AvgParticipation error: %v", chainID, err)
+		} else {
+			ChainAvgParticipationRate.WithLabelValues(chainID).Set(avgRate)
+		}
 
-	avgRate, err := database.GetAvgParticipationRate(db, chainID)
-	if err != nil {
-		log.Printf("[metrics][%s] AvgParticipation error: %v", chainID, err)
-	} else {
-		ChainAvgParticipationRate.WithLabelValues(chainID).Set(avgRate)
-	}
-
-	height, err := database.GetCurrentChainHeight(db, chainID)
-	if err != nil {
-		log.Printf("[metrics][%s] CurrentHeight error: %v", chainID, err)
-	} else {
-		ChainCurrentHeight.WithLabelValues(chainID).Set(float64(height))
-	}
+		if height, err := database.GetCurrentChainHeight(db, chainID); err != nil {
+			log.Printf("[metrics][%s] CurrentHeight error: %v", chainID, err)
+		} else {
+			ChainCurrentHeight.WithLabelValues(chainID).Set(float64(height))
+		}
+	})
 
 	// Phase 3: Alert metrics
-	for _, level := range []string{"CRITICAL", "WARNING"} {
-		alertActiveCount, err := database.GetActiveAlertCount(db, chainID, level)
-		if err != nil {
-			log.Printf("[metrics][%s] ActiveAlerts[%s] error: %v", chainID, level, err)
-			continue
-		}
-		ActiveAlerts.WithLabelValues(chainID, level).Set(float64(alertActiveCount))
+	run(func() {
+		for _, level := range []string{"CRITICAL", "WARNING"} {
+			alertActiveCount, err := database.GetActiveAlertCount(db, chainID, level)
+			if err != nil {
+				log.Printf("[metrics][%s] ActiveAlerts[%s] error: %v", chainID, level, err)
+				continue
+			}
+			ActiveAlerts.WithLabelValues(chainID, level).Set(float64(alertActiveCount))
 
-		totalCount, err := database.GetTotalAlertCount(db, chainID, level)
-		if err != nil {
-			log.Printf("[metrics][%s] TotalAlerts[%s] error: %v", chainID, level, err)
-			continue
+			totalCount, err := database.GetTotalAlertCount(db, chainID, level)
+			if err != nil {
+				log.Printf("[metrics][%s] TotalAlerts[%s] error: %v", chainID, level, err)
+				continue
+			}
+			AlertsTotal.WithLabelValues(chainID, level).Set(float64(totalCount))
 		}
-		AlertsTotal.WithLabelValues(chainID, level).Set(float64(totalCount))
-	}
+	})
 
 	// Phase 4: RPC-enriched metrics (voting power, peer count, mempool, valset size)
-	snap := FetchChainHealthSnapshot(db, chainID)
-	if snap.RPCReachable {
+	run(func() {
+		snap := FetchChainHealthSnapshot(db, chainID)
+		if !snap.RPCReachable {
+			log.Printf("[metrics][%s] RPC unreachable, skipping Phase 4 metrics", chainID)
+			return
+		}
 		monikerMap := GetMonikerMap(chainID)
 
 		ValidatorVotingPower.DeletePartialMatch(chainLabel)
@@ -427,9 +462,9 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 		ChainPeerCount.WithLabelValues(chainID).Set(float64(snap.PeerCount))
 		ChainMempoolTxCount.WithLabelValues(chainID).Set(float64(snap.MempoolTxCount))
 		ChainValsetSize.WithLabelValues(chainID).Set(float64(len(snap.ValidatorSet)))
-	} else {
-		log.Printf("[metrics][%s] RPC unreachable, skipping Phase 4 metrics", chainID)
-	}
+	})
+
+	wg.Wait()
 
 	log.Printf("[metrics][%s] update complete", chainID)
 	return nil

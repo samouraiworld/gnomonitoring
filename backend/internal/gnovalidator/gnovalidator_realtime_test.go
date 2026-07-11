@@ -39,6 +39,31 @@ func TestSaveParticipation(t *testing.T) {
 	}
 }
 
+func TestSaveParticipationBatch(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	blockTime := time.Date(2025, 10, 1, 12, 0, 0, 0, time.UTC)
+
+	participating := map[string]gnovalidator.Participation{
+		"addrA": {Participated: true, Timestamp: blockTime, TxContribution: true},
+		// addrB missing => participated=false expected
+	}
+	monikers := map[string]string{"addrA": "Val A", "addrB": "Val B"}
+
+	err := gnovalidator.SaveParticipation(db, "testchain", 500, participating, monikers, blockTime)
+	require.NoError(t, err)
+
+	var rows []database.DailyParticipation
+	require.NoError(t, db.Where("chain_id = ? AND block_height = 500", "testchain").
+		Order("addr").Find(&rows).Error)
+	require.Len(t, rows, 2)
+	require.Equal(t, "addrA", rows[0].Addr)
+	require.True(t, rows[0].Participated)
+	require.True(t, rows[0].TxContribution)
+	require.Equal(t, "addrB", rows[1].Addr)
+	require.False(t, rows[1].Participated)
+	require.False(t, rows[1].TxContribution)
+}
+
 func TestGetLastStoredHeight_Empty(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
