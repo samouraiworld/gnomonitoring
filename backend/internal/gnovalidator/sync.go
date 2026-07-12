@@ -45,6 +45,18 @@ func RecordActivationOrSkip(db *gorm.DB, chainID, addr string, height int64, par
 	}
 	fab := GetFirstActiveBlock(chainID, addr)
 	if fab == -1 {
+		// Return true (skip) when activation is still completely unknown.
+		// This closes the phantom pre-activation row bug: with 20 concurrent workers
+		// pulling jobs without strict ordering, a validator's true first-activation block
+		// can be discovered by any worker at any time relative to other blocks in flight.
+		// Writing a row when fab is unknown would allow phantom pre-activation rows for
+		// any block processed before some worker discovers the real activation —
+		// which is the exact bug this function exists to fix. The trade-off is narrow:
+		// a handful of blocks right around the true activation boundary might be silently
+		// skipped (not recorded as a genuine miss) if processed before that worker's
+		// discovery reaches the map. That's a bounded, rare undercount very close to
+		// onboarding — much less harmful than unbounded phantom pre-activation rows for
+		// the validator's entire pre-existence.
 		return true
 	}
 	if fab > 0 && height < fab {
