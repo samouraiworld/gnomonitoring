@@ -26,7 +26,7 @@ Live testing on `test13` (`https://rpc.test13.testnets.gno.land/`) confirmed the
 - New alerts are sent through the existing `internal.SendInfoValidator` (Discord + Slack webhooks + Telegram validator bot in one call) — the same delivery path already used for "new validator detected" / "activity restored", so all channels are covered without new plumbing.
 - No new RPC calls: everything needed (`/validators` snapshot, valoper registry) is already fetched every cycle by `InitMonikerMap`.
 - **Correction from the first draft of this spec:** issue #2's historical bad rows are *not* actually a gap — `PopulateFirstActiveBlocks` + `CleanupSpuriousParticipations` (`db_init.go`) already run on every service startup and delete `participated=false` rows preceding a validator's real `first_active_block`. The `BackfillParallel` code fix (Fix 2) still matters (it keeps the report correct *between* restarts), but no new cleanup is needed for it.
-- Issue #3 (trailing ghost rows after a real departure, e.g. VALIDARIOS's old address) has **no existing symmetric mechanism** — there is no `last_active_block` counterpart to `first_active_block`. Fix 4 below adds one, mirroring the existing pattern, so this history becomes cleanable too (see Fix 4).
+- Issue #3 (trailing ghost rows after a real departure, e.g. VALIDARIOS's old address) has **no existing cleanup mechanism**. Fix 4 below adds one — computed live via a correlated subquery at cleanup time, not a new persisted column, since (unlike `first_active_block`) nothing reads this value in the per-block hot path.
 
 ## Global Constraints
 
@@ -98,30 +98,33 @@ MonikerMutex.Unlock()
 
 ## Fix 4 — Retroactive cleanup for trailing post-departure ghost rows
 
-Mirrors the existing `first_active_block` / `PopulateFirstActiveBlocks` / `CleanupSpuriousParticipations` pattern (`db_init.go`), but for the *end* of a validator's real activity instead of the start.
+Conceptually symmetric to `first_active_block` / `CleanupSpuriousParticipations` (`db_init.go`), but for the *end* of a validator's real activity instead of the start — **without** a schema addition.
 
-**Schema.** Add `last_active_block int64` to `AddrMoniker` (`db_init.go`), default `-1` (mirroring `FirstActiveBlock`'s convention), migrated like the existing column.
+**No persisted column.** `first_active_block` is persisted because it is read on *every block, for every validator* in the hot path (`SaveParticipation`, `BackfillParallel`) — computing it live there would be far too expensive, hence the in-memory cache backed by a DB column. `last_active_block` has no such hot-path reader: once `MonikerMap` is properly pruned (Fix 3a), the map itself is what stops new ghost rows from being written the moment a departure is detected — nothing needs to persist "when it stopped" to prevent future writes. The only two consumers are (a) a one-time-per-chain historical cleanup and (b) recording an already-known departure, both cold paths. So `MAX(block_height) WHERE participated=true` is computed as a correlated subquery at cleanup time instead of stored — no new column, no migration, no `Set/UpsertLastActiveBlock` helpers, no `-1` sentinel to manage.
 
-**Sequencing note.** `PopulateFirstActiveBlocks`/`CleanupSpuriousParticipations` run inside `InitDB()`, which executes once at process start, **before** `StartValidatorMonitoring` (and therefore before the first `InitMonikerMap` call) runs for any chain — at that point `MonikerMap` is empty, there is no per-chain live valset in memory yet, and `InitDB` doesn't have chain RPC clients/config to fetch one itself. So `PopulateLastActiveBlocks`/`CleanupTrailingGhostParticipations` cannot live in `InitDB`'s generic sequence like their `first_active_block` counterparts. Instead, call them from `StartValidatorMonitoring` (`gnovalidator_realtime.go:603-613`), right after the initial `InitMonikerMap(db, chainID, client, chainCfg)` call and before `WatchNewValidators`/`CollectParticipation` start — at that point `GetMonikerMap(chainID)` is already the fresh, per-chain, currently-bonded set, so "absent from the live valset" is simply "not a key in `GetMonikerMap(chainID)`." Idempotent either way, so running it once per chain at that point (rather than once globally in `InitDB`) is a placement change only, not a behavior change.
-
-**`PopulateLastActiveBlocks(db, chainID)`.** For every address with rows in `daily_participations`/`daily_participation_agregas` for this chain but absent from `GetMonikerMap(chainID)`, and with `last_active_block` still `-1`:
+**`CleanupTrailingGhostParticipations(db, chainID string, departedAddrs []string) error`** (new function, `db_init.go` alongside `CleanupSpuriousParticipations`). `departedAddrs` is supplied by the caller as "addresses with history for this chain that are not a key in `GetMonikerMap(chainID)`" — this is exactly the guard that makes it safe (a validator mid-downtime but still bonded is never in this list, since it's still a `MonikerMap` key):
 
 ```sql
-UPDATE addr_monikers
-SET last_active_block = (
-    SELECT MAX(block_height) FROM daily_participations
-    WHERE addr = addr_monikers.addr AND chain_id = addr_monikers.chain_id AND participated = true
-)
-WHERE chain_id = ? AND last_active_block = -1 AND addr = ANY(?) -- ?: the slice of addresses absent from GetMonikerMap(chainID)
+DELETE FROM daily_participations dp
+USING (
+    SELECT addr, MAX(block_height) AS last_true
+    FROM daily_participations
+    WHERE chain_id = ? AND addr = ANY(?) AND participated = true
+    GROUP BY addr
+) last_true_block
+WHERE dp.chain_id = ?
+  AND dp.addr = last_true_block.addr
+  AND dp.participated = false
+  AND dp.block_height > last_true_block.last_true
 ```
 
-The "currently absent from the live valset" guard is what makes this safe: a validator merely going through a long downtime while still bonded is never touched (it's still a key in `MonikerMap`), only a *confirmed* departure is.
+plus the equivalent for `daily_participation_agregas` (delete/adjust aggregate day-rows entirely after each address's `last_true`, same day-granularity boundary tolerance already accepted by the existing `CleanupSpuriousParticipations` for the start-of-activity case). An address in `departedAddrs` with **no** `participated=true` row at all (never really active — e.g. a pure Fix-2-style backfill ghost that also never truly joined) simply has nothing matched by the `GROUP BY` and is left untouched by this query; that case is already fully handled by the existing `CleanupSpuriousParticipations`.
 
-**`CleanupTrailingGhostParticipations(db)`.** Symmetric to `CleanupSpuriousParticipations`: deletes `participated=false` rows (and adjusts/deletes aggregate rows) with `block_height > last_active_block` for any address where `last_active_block > 0`. Same idempotent, startup-safe design.
+**Sequencing.** Called from `StartValidatorMonitoring` (`gnovalidator_realtime.go:603-613`), once per chain, right after the initial `InitMonikerMap(db, chainID, client, chainCfg)` call and before `WatchNewValidators`/`CollectParticipation` start — that's the earliest point where `GetMonikerMap(chainID)` reflects the real, current, per-chain valset, needed to compute `departedAddrs`. Idempotent (a second run finds nothing left to delete), so safe on every restart, matching the existing pair's behavior.
 
-**Going forward.** Once Fix 3b lands, every real-time departure detected by `WatchNewValidators` can set `last_active_block` immediately (via a new `SetLastActiveBlock`/`UpsertLastActiveBlock`, mirroring `SetFirstActiveBlock`/`UpsertFirstActiveBlock`) at the moment of detection, instead of waiting for the next startup's retroactive scan. The startup-time `PopulateLastActiveBlocks` remains as the catch-up path for departures that happened before this code shipped (e.g. VALIDARIOS's old address) and as a safety net if a departure is ever missed by the live watcher (e.g. a restart between polling cycles).
+**Going forward.** Once Fix 3b lands, `WatchNewValidators` already knows the exact moment and address of every new departure; it can call `CleanupTrailingGhostParticipations` immediately with just that one address instead of waiting for the next restart's full per-chain scan — same function, smaller `departedAddrs` slice. The startup-time full-chain call remains as the catch-up path for departures that happened before this code shipped (e.g. VALIDARIOS's old address) and as a safety net for anything the live watcher might miss across a restart.
 
-**Testing.** DB-backed test seeding a departed address (rows before and after a simulated departure height, address absent from a fake "current valset" input) asserting only the trailing false rows are removed, participated=true rows and rows for a still-bonded address are untouched.
+**Testing.** DB-backed test seeding a departed address (rows before and after a simulated departure height) plus a still-bonded address with a long downtime tail, asserting: only the departed address's trailing `participated=false` rows are removed, its `participated=true` rows are untouched, and the still-bonded address (not in `departedAddrs`) is entirely untouched even though its own tail also looks like a downtime.
 
 ---
 
@@ -130,17 +133,16 @@ The "currently absent from the live valset" guard is what makes this safe: a val
 - `backend/internal/database/db_score.go` — `addr <> 'all'` filter in `GetValidatorScores`.
 - `backend/internal/gnovalidator/sync.go` — `BackfillParallel` uses live `GetFirstActiveBlock`/`SetFirstActiveBlock`.
 - `backend/internal/gnovalidator/valoper.go` — `InitMonikerMap` replaces `MonikerMap[chainID]` instead of merging; exposes the valoper list to callers.
-- `backend/internal/gnovalidator/gnovalidator_realtime.go` — `WatchNewValidators` adds the removed-validator diff, rotation correlation, and new alert dispatch; sets `last_active_block` on detected departures; `StartValidatorMonitoring` calls `PopulateLastActiveBlocks`/`CleanupTrailingGhostParticipations` once per chain, right after the initial `InitMonikerMap`.
-- `backend/internal/database/db_init.go` — `last_active_block` column on `AddrMoniker`, plus the `PopulateLastActiveBlocks`/`CleanupTrailingGhostParticipations` functions themselves (called from `gnovalidator_realtime.go`, not from `InitDB`'s sequence — see Fix 4's sequencing note).
-- `backend/internal/database/db_metrics.go` / `db.go` — `SetLastActiveBlock`/`UpsertLastActiveBlock` helpers, mirroring the existing `FirstActiveBlock` ones.
-- `CLAUDE.md` — update the Known Limitations / Alert Thresholds sections to describe the new departure/rotation alert, the `last_active_block` cleanup, and note MonikerMap is now a live snapshot, not an accumulation.
+- `backend/internal/gnovalidator/gnovalidator_realtime.go` — `WatchNewValidators` adds the removed-validator diff, rotation correlation, and new alert dispatch; `StartValidatorMonitoring` calls `CleanupTrailingGhostParticipations` once per chain, right after the initial `InitMonikerMap`, with the addresses absent from `GetMonikerMap(chainID)`.
+- `backend/internal/database/db_init.go` — new `CleanupTrailingGhostParticipations(db, chainID, departedAddrs)` function, no schema change.
+- `CLAUDE.md` — update the Known Limitations / Alert Thresholds sections to describe the new departure/rotation alert and the trailing-ghost cleanup, and note MonikerMap is now a live snapshot, not an accumulation.
 
 ## Testing
 
 - `db_score_test.go` — `addr='all'` exclusion (Fix 1).
 - `sync_test.go` (or new file) — sequential first-active-block guard behavior (Fix 2).
 - `gnovalidator_realtime_test.go` (or new file) — rotation/departure/arrival classification (Fix 3), RPC-free.
-- `db_init_test.go` (or new file) — `PopulateLastActiveBlocks`/`CleanupTrailingGhostParticipations` (Fix 4), Postgres-backed.
+- `db_init_test.go` (or new file) — `CleanupTrailingGhostParticipations` (Fix 4), Postgres-backed.
 - `go vet ./...`, `go test ./...` (Postgres test DB per CLAUDE.md).
 
 ## Out of Scope
