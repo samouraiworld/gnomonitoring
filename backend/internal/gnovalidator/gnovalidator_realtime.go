@@ -333,7 +333,13 @@ func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client
 				valopers := InitMonikerMap(db, chainID, client, chainCfg)
 
 				newMap := GetMonikerMap(chainID)
-				setSigningToOperator(chainID, signingToOperatorFromValopers(valopers))
+				// Only update signing-to-operator mapping if we have fresh valoper data.
+				// A transient valoper-registry fetch failure should not erase the correlation
+				// memory built from the last successful fetch, since MonikerMap itself can
+				// still update independently that same cycle.
+				if len(valopers) > 0 {
+					setSigningToOperator(chainID, signingToOperatorFromValopers(valopers))
+				}
 
 				for _, ev := range classifyValsetChanges(oldMap, newMap, prevSigningToOperator, valopers) {
 					var msg string
