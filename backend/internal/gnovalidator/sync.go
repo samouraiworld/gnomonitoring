@@ -27,6 +27,32 @@ type out struct {
 	Err  error
 }
 
+// RecordActivationOrSkip is the shared first-activation guard used while
+// writing daily_participations rows. It reads and writes the live,
+// thread-safe FirstActiveBlockMap (GetFirstActiveBlock/SetFirstActiveBlock)
+// rather than a point-in-time snapshot, so concurrent backfill workers
+// observe each other's discoveries immediately instead of each working off
+// a copy that's stale for the whole run. Returns true when the caller
+// should skip writing a row for this (chainID, addr, height) because it
+// predates the validator's first recorded activation.
+func RecordActivationOrSkip(db *gorm.DB, chainID, addr string, height int64, participated bool) bool {
+	if participated {
+		if GetFirstActiveBlock(chainID, addr) == -1 {
+			SetFirstActiveBlock(chainID, addr, height)
+			_ = database.UpsertFirstActiveBlock(db, chainID, addr, height)
+		}
+		return false
+	}
+	fab := GetFirstActiveBlock(chainID, addr)
+	if fab == -1 {
+		return true
+	}
+	if fab > 0 && height < fab {
+		return true
+	}
+	return false
+}
+
 // for not send insert very longue trunc dpRow
 func flushBatch(db *gorm.DB, rows []dpRow) error {
 	// if dprow empty stop
@@ -169,7 +195,6 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 	const workers = 20
 	const flushThreshold = 2000
 
-	firstActiveBlocks := GetFirstActiveBlockMap(chainID)
 	jobs := make(chan job, 2048)
 	outs := make(chan out, 2048)
 
@@ -200,14 +225,7 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 				rows := make([]dpRow, 0, len(monikerMap))
 				for addr, mon := range monikerMap {
 					p := participating[addr] // zero value (not participated/proposed) if absent
-					if p.Participated {
-						// Dynamic detection: record first_active_block when first seen
-						if fab := firstActiveBlocks[addr]; fab == -1 {
-							SetFirstActiveBlock(chainID, addr, j.H)
-							_ = database.UpsertFirstActiveBlock(db, chainID, addr, j.H)
-						}
-					} else if fab := firstActiveBlocks[addr]; fab > 0 && j.H < fab {
-						// Guard: skip rows before the validator's activation block
+					if RecordActivationOrSkip(db, chainID, addr, j.H, p.Participated) {
 						continue
 					}
 					rows = append(rows, dpRow{
