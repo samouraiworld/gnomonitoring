@@ -327,20 +327,27 @@ func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client
 				log.Printf("[monitor][%s] WatchNewValidators stopped", chainID)
 				return
 			case <-ticker.C:
-				// Copy old map
 				oldMap := GetMonikerMap(chainID)
+				prevSigningToOperator := getSigningToOperator(chainID)
 
-				// Refresh MonikerMap
-				InitMonikerMap(db, chainID, client, chainCfg)
+				valopers := InitMonikerMap(db, chainID, client, chainCfg)
 
-				// Compare with the old Monikermap
-				for addr, moniker := range GetMonikerMap(chainID) {
-					if _, exists := oldMap[addr]; !exists {
-						msg := fmt.Sprintf("[%s] ✅ **New Validator detected**: %s (%s)", chainID, moniker, addr)
-						log.Println(msg)
-						if err := internal.SendInfoValidator(chainID, msg, "info", db); err != nil {
-							log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
-						}
+				newMap := GetMonikerMap(chainID)
+				setSigningToOperator(chainID, signingToOperatorFromValopers(valopers))
+
+				for _, ev := range classifyValsetChanges(oldMap, newMap, prevSigningToOperator, valopers) {
+					var msg string
+					switch ev.Kind {
+					case ValidatorJoined:
+						msg = fmt.Sprintf("[%s] ✅ **New Validator detected**: %s (%s)", chainID, ev.Moniker, ev.NewAddr)
+					case ValidatorLeft:
+						msg = fmt.Sprintf("[%s] ⚠️ **Validator left the valset**: %s (%s)", chainID, ev.Moniker, ev.OldAddr)
+					case ValidatorAddressChanged:
+						msg = fmt.Sprintf("[%s] 🔄 **Validator address changed**: %s (%s → %s)", chainID, ev.Moniker, ev.OldAddr, ev.NewAddr)
+					}
+					log.Println(msg)
+					if err := internal.SendInfoValidator(chainID, msg, "info", db); err != nil {
+						log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
 					}
 				}
 			}
