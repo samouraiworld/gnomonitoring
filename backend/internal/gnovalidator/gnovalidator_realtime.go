@@ -620,6 +620,15 @@ func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, 
 
 	t := GetThresholds()
 	InitMonikerMap(db, chainID, client, chainCfg)
+
+	currentAddrs := make([]string, 0)
+	for addr := range GetMonikerMap(chainID) {
+		currentAddrs = append(currentAddrs, addr)
+	}
+	if err := database.CleanupTrailingGhostParticipations(db, chainID, currentAddrs); err != nil {
+		log.Printf("[monitor][%s] CleanupTrailingGhostParticipations error: %v", chainID, err)
+	}
+
 	WatchNewValidators(ctx, db, chainID, client, chainCfg, t.NewValidatorScan())
 	CollectParticipation(ctx, db, chainID, client)
 	WatchValidatorAlerts(ctx, db, chainID, t.AlertCheckInterval())
