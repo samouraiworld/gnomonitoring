@@ -71,3 +71,27 @@ func TestGetLastStoredHeight_Empty(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(51), height)
 }
+
+func TestReplaceMonikerMap(t *testing.T) {
+	chainID := "test-replace-moniker"
+
+	gnovalidator.ReplaceMonikerMap(chainID, map[string]string{
+		"g1old":  "Old Validator",
+		"g1stay": "Still Here",
+	})
+	require.Equal(t, "Old Validator", gnovalidator.GetMonikerMap(chainID)["g1old"])
+
+	// A second replace with a different set must DROP g1old entirely, not
+	// merge it in — this is the behavior that stops SaveParticipation from
+	// writing rows for validators that have left the valset forever.
+	gnovalidator.ReplaceMonikerMap(chainID, map[string]string{
+		"g1stay": "Still Here",
+		"g1new":  "New Validator",
+	})
+	got := gnovalidator.GetMonikerMap(chainID)
+	require.Len(t, got, 2)
+	require.Equal(t, "Still Here", got["g1stay"])
+	require.Equal(t, "New Validator", got["g1new"])
+	_, stillPresent := got["g1old"]
+	require.False(t, stillPresent, "g1old must be pruned after ReplaceMonikerMap, not accumulated")
+}

@@ -637,6 +637,19 @@ func SetMoniker(chainID, addr, moniker string) {
 	MonikerMap[chainID][addr] = moniker
 }
 
+// ReplaceMonikerMap atomically replaces the entire per-chain moniker map with
+// m, instead of merging into it. Used by InitMonikerMap so MonikerMap always
+// reflects exactly the validators currently in the live valset — a validator
+// that drops out of /validators is dropped from this map on the very next
+// refresh cycle, instead of lingering forever (which used to make
+// SaveParticipation keep writing participated=false rows for it long after
+// it left).
+func ReplaceMonikerMap(chainID string, m map[string]string) {
+	MonikerMutex.Lock()
+	defer MonikerMutex.Unlock()
+	MonikerMap[chainID] = m
+}
+
 // Height helpers
 
 func GetLastHeight(chainID string) int64 {

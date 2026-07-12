@@ -328,7 +328,7 @@ func resolveMoniker(addr string, dbMap, valoperMap, genesisMap, discoveredMap ma
 	return "unknown"
 }
 
-func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainCfg *internal.ChainConfig) {
+func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainCfg *internal.ChainConfig) []Valoper {
 	type Validator struct {
 		Address     string `json:"address"`
 		VotingPower string `json:"voting_power"`
@@ -348,28 +348,28 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 	})
 	if err != nil {
 		log.Printf("[valoper][%s] failed to retrieve validators after retries: %v", chainID, err)
-		return
+		return nil
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("❌ Error reading validator response: %v", err)
-		return
+		return nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("❌ Invalid HTTP status %d from /validators: %s", resp.StatusCode, string(body))
-		return
+		return nil
 	}
 
 	if !json.Valid(body) {
 		log.Printf("❌ Invalid JSON received from /validators:\n%s", string(body))
-		return
+		return nil
 	}
 	var validatorsResp ValidatorsResponse
 	if err := json.Unmarshal(body, &validatorsResp); err != nil {
 		log.Printf("❌ Error decoding validator JSON: %v\nRaw body: %s", err, string(body))
-		return
+		return nil
 	}
 
 	// Step 2 — Use passed client for valopers.Render
@@ -418,9 +418,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 		tempMonikers[addr] = resolveMoniker(addr, dbMap, valoperMap, genesisMap, discoveredMap)
 	}
 
-	for addr, moniker := range tempMonikers {
-		SetMoniker(chainID, addr, moniker)
-	}
+	ReplaceMonikerMap(chainID, tempMonikers)
 
 	// Persist current voting power for score severity weighting (best-effort),
 	// in a single batched upsert rather than one round-trip per validator.
@@ -468,6 +466,8 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 	}
 	log.Printf("[valoper][%s] moniker sync: %d resolved persisted, %d unresolved (not persisted)",
 		chainID, resolved, unresolved)
+
+	return valopers
 }
 func doWithRetry(attempts int, sleep time.Duration, fn func() error) error {
 	var err error
