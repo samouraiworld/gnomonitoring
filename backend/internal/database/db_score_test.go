@@ -86,6 +86,29 @@ func TestGetValidatorScoresInvalidPeriod(t *testing.T) {
 	}
 }
 
+func TestGetValidatorScoresExcludesAddrAll(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now().UTC()
+	inMonth := time.Date(now.Year(), now.Month(), 2, 12, 0, 0, 0, time.UTC)
+
+	seedScoreAlert(t, db, "test12", "g1aaa", "CRITICAL", 100, 130, inMonth)
+	// Chain-wide "blockchain stuck" alert — must never appear as a fake validator.
+	seedScoreAlert(t, db, "test12", "all", "CRITICAL", 1, 999, inMonth)
+
+	rows, err := database.GetValidatorScores(db, "test12", "current_month")
+	if err != nil {
+		t.Fatalf("GetValidatorScores: %v", err)
+	}
+	for _, r := range rows {
+		if r.Addr == "all" {
+			t.Fatalf("addr='all' must be excluded from GetValidatorScores, got: %+v", rows)
+		}
+	}
+	if len(rows) != 1 || rows[0].Addr != "g1aaa" {
+		t.Fatalf("want exactly [g1aaa], got %+v", rows)
+	}
+}
+
 func seedParticipation(t *testing.T, db *gorm.DB, chain, addr, moniker string, height int64, date time.Time) {
 	t.Helper()
 	row := database.DailyParticipation{

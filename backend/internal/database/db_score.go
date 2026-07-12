@@ -269,6 +269,7 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
 		WHERE al.chain_id = ?
 		  AND al.level IN ('CRITICAL','WARNING')
+		  AND al.addr <> 'all'
 		  AND al.sent_at >= ? AND al.sent_at < ?
 		GROUP BY al.addr
 		ORDER BY al.addr
