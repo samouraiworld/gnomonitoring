@@ -90,6 +90,16 @@ func seedDP(t *testing.T, db *gorm.DB, chain, addr string, height int64, partici
 	require.NoError(t, db.Create(&row).Error)
 }
 
+func seedAgrega(t *testing.T, db *gorm.DB, chain, addr, blockDate string, participatedCount int, firstHeight, lastHeight int64) {
+	t.Helper()
+	row := database.DailyParticipationAgrega{
+		ChainID: chain, Addr: addr, BlockDate: blockDate, Moniker: addr + "-mon",
+		ParticipatedCount: participatedCount, MissedCount: 0, TxContributionCount: 0,
+		TotalBlocks: int(lastHeight - firstHeight + 1), FirstBlockHeight: firstHeight, LastBlockHeight: lastHeight,
+	}
+	require.NoError(t, db.Create(&row).Error)
+}
+
 func TestCleanupTrailingGhostParticipations(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	chain := "test-trailing-ghost"
@@ -143,4 +153,38 @@ func TestCleanupTrailingGhostParticipations_EmptyCurrentAddrsIsNoop(t *testing.T
 	var rows []database.DailyParticipation
 	require.NoError(t, db.Where("chain_id = ?", chain).Find(&rows).Error)
 	require.Len(t, rows, 2)
+}
+
+func TestCleanupTrailingGhostParticipations_AgregaTable(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test-trailing-ghost-agrega"
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Establish last_true=100 for both addresses via a raw participated=true row.
+	seedDP(t, db, chain, "g1departed", 100, true, day)
+	seedDP(t, db, chain, "g1bonded", 100, true, day)
+
+	// Aggregate row entirely BEFORE last_true — must survive for both addresses.
+	seedAgrega(t, db, chain, "g1departed", "2025-12-31", 5, 90, 99)
+	seedAgrega(t, db, chain, "g1bonded", "2025-12-31", 5, 90, 99)
+
+	// Aggregate row entirely AFTER last_true — phantom tail for g1departed (must be
+	// deleted), identical-looking legitimate row for g1bonded (must survive because
+	// it's in currentAddrs).
+	seedAgrega(t, db, chain, "g1departed", "2026-01-02", 0, 105, 110)
+	seedAgrega(t, db, chain, "g1bonded", "2026-01-02", 0, 105, 110)
+
+	currentAddrs := []string{"g1bonded"}
+	require.NoError(t, database.CleanupTrailingGhostParticipations(db, chain, currentAddrs))
+
+	var departedAgregas []database.DailyParticipationAgrega
+	require.NoError(t, db.Where("chain_id = ? AND addr = ?", chain, "g1departed").
+		Order("block_date").Find(&departedAgregas).Error)
+	require.Len(t, departedAgregas, 1, "only the pre-last_true aggregate day should survive for the departed address")
+	require.Equal(t, "2025-12-31", departedAgregas[0].BlockDate)
+
+	var bondedAgregas []database.DailyParticipationAgrega
+	require.NoError(t, db.Where("chain_id = ? AND addr = ?", chain, "g1bonded").
+		Order("block_date").Find(&bondedAgregas).Error)
+	require.Len(t, bondedAgregas, 2, "still-bonded address's aggregate rows must be untouched")
 }
