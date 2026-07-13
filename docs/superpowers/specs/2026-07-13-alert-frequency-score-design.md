@@ -23,33 +23,43 @@ The validator score already penalizes `critical_count`/`warning_count` — but t
 
 `GetValidatorScores` is called **once per period** (`last_24h`, `current_week`, `current_month`, `current_year` — [api_report.go:147-148](backend/internal/api/api_report.go#L147-L148)), i.e. 4 times per `/api/reports/validators` request. On 2026-07-13, a sustained Postgres CPU incident was caused by six `daily_participations`/`daily_participation_agregas` queries each scanning all the way back to the period start (or unbounded) on every call, run in parallel every ~5 min (fixed in `659982c`, bounding each scan to the aggregation watermark instead). A naive `freq` implementation — computing `LAG() OVER (PARTITION BY addr ORDER BY sent_at)` over the **entire** `alert_logs` history for the chain, 4 times per report request — reproduces the exact same anti-pattern on a different table, and is strictly worse because it re-scans full history on every single page load/refresh rather than every 5 minutes.
 
-**Required approach:** never scan more than (a) one row per validator before the period start, and (b) rows within the period. Concretely:
+**Required approach:** never scan more than (a) one row per validator before the period start, and (b) rows within the period. A plain `DISTINCT ON (addr) ... WHERE sent_at < period_start` does **not** satisfy (a): for a short period like `last_24h`, `sent_at < period_start` matches nearly the *entire* chain history, and Postgres has no native "skip scan" to jump straight to each addr's latest row — the planner sorts/scans the whole qualifying set. The bounded shape uses a `LATERAL` join instead, one `LIMIT 1` backward-index probe per validator that actually alerted this period:
 
 ```sql
-WITH prior AS (
-    -- One row per addr: the alert immediately preceding the period. Same
-    -- DISTINCT ON (addr) ... ORDER BY addr, sent_at DESC pattern already used
-    -- (and proven in production) by SendResolveAlerts (gnovalidator_realtime.go:546).
-    SELECT DISTINCT ON (addr) addr, level, sent_at
-    FROM alert_logs
-    WHERE chain_id = ? AND addr <> 'all'
-      AND level IN ('WARNING','CRITICAL','RESOLVED')
-      AND sent_at < ?  -- period start
-    ORDER BY addr, sent_at DESC
-),
-in_period AS (
+WITH in_period AS (
     -- Same period bound already used today for critical_count/warning_count —
     -- no new cost here, this scan already exists.
-    SELECT addr, level, sent_at
+    SELECT addr, level, sent_at, id
     FROM alert_logs
     WHERE chain_id = ? AND addr <> 'all'
       AND level IN ('WARNING','CRITICAL')
       AND sent_at >= ? AND sent_at < ?  -- period bounds
 ),
+addrs AS (
+    SELECT DISTINCT addr FROM in_period
+),
+prior AS (
+    -- Per addr that alerted this period, one LIMIT-1 backward index probe for
+    -- the closest preceding row — O(#addrs) index lookups, NOT a scan
+    -- proportional to total alert_logs history.
+    SELECT a.addr, p.level, p.sent_at, p.id
+    FROM addrs a
+    LEFT JOIN LATERAL (
+        SELECT level, sent_at, id
+        FROM alert_logs
+        WHERE chain_id = ? AND addr = a.addr AND sent_at < ?  -- period start
+        ORDER BY sent_at DESC, id DESC
+        LIMIT 1
+    ) p ON true
+),
 tagged AS (
-    SELECT addr, level, sent_at,
-           LAG(level) OVER (PARTITION BY addr ORDER BY sent_at) AS prev_level
-    FROM (SELECT * FROM prior UNION ALL SELECT * FROM in_period) combined
+    SELECT addr, level, sent_at, id,
+           LAG(level) OVER (PARTITION BY addr ORDER BY sent_at, id) AS prev_level
+    FROM (
+        SELECT addr, level, sent_at, id FROM prior WHERE level IS NOT NULL
+        UNION ALL
+        SELECT addr, level, sent_at, id FROM in_period
+    ) combined
 )
 SELECT addr, COUNT(*) AS incident_count
 FROM tagged
@@ -59,7 +69,7 @@ WHERE sent_at >= ? AND sent_at < ?  -- exclude the prior-context row itself
 GROUP BY addr
 ```
 
-`prior` costs one index-backed lookup per validator (bounded by validator count, index `idx_al_chain_addr_sentat`), not a table scan. `in_period` is the same bound the existing `critical_count`/`warning_count` query already pays. Total added cost ≈ one more per-validator `DISTINCT ON` lookup — no scan proportional to total historical `alert_logs` size, regardless of how long the chain has been running.
+`in_period` is the same bound the existing `critical_count`/`warning_count` query already pays. `addrs` is derived from it (only validators that alerted this period — a small set). `prior`'s `LATERAL` probe is index-backed by `idx_al_chain_addr_sentat` (`chain_id, addr, sent_at`) with `LIMIT 1`, so each probe is O(log n) regardless of chain age — total added cost is O(#addrs that alerted) index lookups, never a scan proportional to total historical `alert_logs` size. The `id` tiebreaker (autoincrement primary key) makes ordering deterministic when two rows share the same `sent_at` (seed data and real resends can collide at second granularity).
 
 **Verification before merge:** `EXPLAIN ANALYZE` the final query against the populated production-shaped test data and confirm it index-scans (`idx_al_chain_addr_sentat`) rather than seq-scanning `alert_logs`, for both a fresh chain and one with a full year of history.
 
@@ -76,7 +86,7 @@ GROUP BY addr
 
 **`ValidatorScoreRaw`** gains `IncidentCount int` (json tag `incident_count` where the struct is reused for JSON, otherwise threaded manually like the other raw fields).
 
-**`GetValidatorScores`** — extend the existing query with the **bounded** `prior` + `in_period` CTE pair from the "Performance constraint" section above (not a full-history scan — see that section for the exact SQL and why). The `prior` CTE resolves, per validator, whether the first in-period WARNING/CRITICAL is a continuation of an already-open incident or the start of a new one, without reading anything before the single closest preceding row.
+**`GetValidatorScores`** — extend the existing query with the **bounded** `in_period` + `addrs` + `prior` (LATERAL) CTE chain from the "Performance constraint" section above (not a full-history scan, not a `DISTINCT ON` over the whole pre-period range — see that section for the exact SQL and why). The `prior` CTE resolves, per validator that alerted this period, whether the first in-period WARNING/CRITICAL is a continuation of an already-open incident or the start of a new one, via one `LIMIT 1` index probe each — without scanning anything proportional to total history.
 
 This is merged into the existing `GetValidatorScores` result set (same `addr`-keyed row), not a second round-trip if avoidable — join or merge in Go, whichever keeps the existing query readable.
 
