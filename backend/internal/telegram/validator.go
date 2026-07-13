@@ -381,8 +381,11 @@ func formatParticipationRAte(db *gorm.DB, chainID, period string, page, limit in
 			rates = v
 		}
 	} else {
-		var fetchErr error
-		rates, fetchErr = database.GetCurrentPeriodParticipationRate(db, chainID, period)
+		aggregatedThrough, fetchErr := database.GetAggregatedThrough(db, chainID)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get aggregation watermark: %v", fetchErr)
+		}
+		rates, fetchErr = database.GetCurrentPeriodParticipationRate(db, chainID, period, aggregatedThrough)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get participation rate: %v", fetchErr)
 		}
@@ -436,8 +439,11 @@ func formatUptime(db *gorm.DB, chainID string, page, limit int, filter, sortOrde
 			results = v
 		}
 	} else {
-		var fetchErr error
-		results, fetchErr = database.UptimeMetricsaddr(db, chainID)
+		aggregatedThrough, fetchErr := database.GetAggregatedThrough(db, chainID)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get aggregation watermark: %v", fetchErr)
+		}
+		results, fetchErr = database.UptimeMetricsaddr(db, chainID, aggregatedThrough)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get uptime metrics: %v", fetchErr)
 		}
@@ -491,8 +497,11 @@ func formatOperationTime(db *gorm.DB, chainID string, page, limit int, filter st
 			results = v
 		}
 	} else {
-		var fetchErr error
-		results, fetchErr = database.OperationTimeMetricsaddr(db, chainID)
+		aggregatedThrough, fetchErr := database.GetAggregatedThrough(db, chainID)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get aggregation watermark: %v", fetchErr)
+		}
+		results, fetchErr = database.OperationTimeMetricsaddr(db, chainID, aggregatedThrough)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get operation time metrics: %v", fetchErr)
 		}
@@ -532,8 +541,11 @@ func FormatTxcontrib(db *gorm.DB, chainID, period string, page, limit int, filte
 			txcontrib = v
 		}
 	} else {
-		var fetchErr error
-		txcontrib, fetchErr = database.TxContrib(db, chainID, period)
+		aggregatedThrough, fetchErr := database.GetAggregatedThrough(db, chainID)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get aggregation watermark: %v", fetchErr)
+		}
+		txcontrib, fetchErr = database.TxContrib(db, chainID, period, aggregatedThrough)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get tx_contrib: %v", fetchErr)
 		}
@@ -574,8 +586,11 @@ func formatMissing(db *gorm.DB, chainID, period string, page, limit int, filter 
 			rows = v
 		}
 	} else {
-		var fetchErr error
-		rows, fetchErr = database.MissingBlock(db, chainID, period)
+		aggregatedThrough, fetchErr := database.GetAggregatedThrough(db, chainID)
+		if fetchErr != nil {
+			return "", 1, 1, fmt.Errorf("failed to get aggregation watermark: %w", fetchErr)
+		}
+		rows, fetchErr = database.MissingBlock(db, chainID, period, aggregatedThrough)
 		if fetchErr != nil {
 			return "", 1, 1, fmt.Errorf("failed to get missing block: %w", fetchErr)
 		}

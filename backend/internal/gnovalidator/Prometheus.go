@@ -244,6 +244,18 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	ConsecutiveMissedBlocks.DeletePartialMatch(chainLabel)
 	MissedBlocksWindow.DeletePartialMatch(chainLabel)
 
+	// Looked up once and shared by every metric function below instead of each
+	// one re-querying daily_participation_agregas independently — they all run
+	// for the same chain in this one pass. A lookup failure degrades to the
+	// zero time (treated as "nothing aggregated yet", i.e. unbounded fallback
+	// scans for this cycle) rather than failing the whole update, consistent
+	// with how the individual metric errors below are handled non-fatally.
+	aggregatedThrough, err := database.GetAggregatedThrough(db, chainID)
+	if err != nil {
+		log.Printf("[metrics][%s] GetAggregatedThrough error: %v", chainID, err)
+		aggregatedThrough = time.Time{}
+	}
+
 	// Phases 1-4 run concurrently. Each unit reads db/chainID and writes to its
 	// own Prometheus vector (GaugeVec is safe for concurrent use), so there is no
 	// shared mutable Go state between units. The DeletePartialMatch calls above
@@ -267,7 +279,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 
 	// ValidatorParticipation (current calendar month)
 	run(func() {
-		participationRates, err := database.GetCurrentPeriodParticipationRate(db, chainID, "current_month")
+		participationRates, err := database.GetCurrentPeriodParticipationRate(db, chainID, "current_month", aggregatedThrough)
 		if err != nil {
 			log.Printf("[metrics][%s] ValidatorParticipation error: %v", chainID, err)
 			return
@@ -317,7 +329,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 
 	// ValidatorUptime (last 500 blocks)
 	run(func() {
-		uptimeStats, err := database.UptimeMetricsaddr(db, chainID)
+		uptimeStats, err := database.UptimeMetricsaddr(db, chainID, aggregatedThrough)
 		if err != nil {
 			log.Printf("[metrics][%s] ValidatorUptime error: %v", chainID, err)
 			return
@@ -329,7 +341,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 
 	// ValidatorOperationTime (days since last down)
 	run(func() {
-		operationStats, err := database.OperationTimeMetricsaddr(db, chainID)
+		operationStats, err := database.OperationTimeMetricsaddr(db, chainID, aggregatedThrough)
 		if err != nil {
 			log.Printf("[metrics][%s] OperationTime error: %v", chainID, err)
 			return
@@ -341,7 +353,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 
 	// ValidatorTxContribution (current month)
 	run(func() {
-		txStats, err := database.TxContrib(db, chainID, "current_month")
+		txStats, err := database.TxContrib(db, chainID, "current_month", aggregatedThrough)
 		if err != nil {
 			log.Printf("[metrics][%s] TxContribution error: %v", chainID, err)
 			return
@@ -363,7 +375,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 
 	// ValidatorMissingBlocksMonth (current month)
 	run(func() {
-		missingStats, err := database.MissingBlock(db, chainID, "current_month")
+		missingStats, err := database.MissingBlock(db, chainID, "current_month", aggregatedThrough)
 		if err != nil {
 			log.Printf("[metrics][%s] MissingBlocksMonth error: %v", chainID, err)
 			return
@@ -375,7 +387,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 
 	// ValidatorFirstSeenUnix (unix timestamp of first participation)
 	run(func() {
-		firstSeenStats, err := database.GetFirstSeen(db, chainID)
+		firstSeenStats, err := database.GetFirstSeen(db, chainID, aggregatedThrough)
 		if err != nil {
 			log.Printf("[metrics][%s] FirstSeen error: %v", chainID, err)
 			return

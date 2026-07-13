@@ -770,7 +770,12 @@ func Getarticipation(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	part, err := database.GetCurrentPeriodParticipationRate(db, chainID, period)
+	aggregatedThrough, err := database.GetAggregatedThrough(db, chainID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get aggregation watermark: %v", err), http.StatusInternalServerError)
+		return
+	}
+	part, err := database.GetCurrentPeriodParticipationRate(db, chainID, period, aggregatedThrough)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get participation rate: %v", err), http.StatusInternalServerError)
 		return
@@ -797,7 +802,12 @@ func GetUptime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	uptime, err := database.UptimeMetricsaddr(db, chainID)
+	aggregatedThrough, err := database.GetAggregatedThrough(db, chainID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get aggregation watermark: %v", err), http.StatusInternalServerError)
+		return
+	}
+	uptime, err := database.UptimeMetricsaddr(db, chainID, aggregatedThrough)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get Uptime metrics: %v", err), http.StatusInternalServerError)
 		return
@@ -824,7 +834,12 @@ func GetOperationtime(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	uptime, err := database.OperationTimeMetricsaddr(db, chainID)
+	aggregatedThrough, err := database.GetAggregatedThrough(db, chainID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get aggregation watermark: %v", err), http.StatusInternalServerError)
+		return
+	}
+	uptime, err := database.OperationTimeMetricsaddr(db, chainID, aggregatedThrough)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get Operation time  metrics: %v", err), http.StatusInternalServerError)
 		return
@@ -850,7 +865,12 @@ func GetFirstSeen(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	firstSeen, err := database.GetFirstSeen(db, chainID)
+	aggregatedThrough, err := database.GetAggregatedThrough(db, chainID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get aggregation watermark: %v", err), http.StatusInternalServerError)
+		return
+	}
+	firstSeen, err := database.GetFirstSeen(db, chainID, aggregatedThrough)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get First Seen metrics: %v", err), http.StatusInternalServerError)
 		return
@@ -881,7 +901,12 @@ func GetTxContrib(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	txcontrib, err := database.TxContrib(db, chainID, period)
+	aggregatedThrough, err := database.GetAggregatedThrough(db, chainID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get aggregation watermark: %v", err), http.StatusInternalServerError)
+		return
+	}
+	txcontrib, err := database.TxContrib(db, chainID, period, aggregatedThrough)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get TxContrib metrics: %v", err), http.StatusInternalServerError)
 		return
@@ -914,7 +939,12 @@ func GetMissingBlock(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	txcontrib, err := database.MissingBlock(db, chainID, period)
+	aggregatedThrough, err := database.GetAggregatedThrough(db, chainID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get aggregation watermark: %v", err), http.StatusInternalServerError)
+		return
+	}
+	txcontrib, err := database.MissingBlock(db, chainID, period, aggregatedThrough)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get Missing Block metrics: %v", err), http.StatusInternalServerError)
 		return
