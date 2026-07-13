@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -403,6 +404,43 @@ func UpsertAddrMonikerVPBatch(db *gorm.DB, chainID string, rows []AddrVP) error 
 		if err := db.Exec(q, args...).Error; err != nil {
 			return fmt.Errorf("UpsertAddrMonikerVPBatch(%s): %w", chainID, err)
 		}
+	}
+	return nil
+}
+
+// ZeroDepartedVotingPower zeroes voting_power for every addr_monikers row of
+// chainID whose address is absent from currentAddrs (the live /validators
+// snapshot). This is what makes voting_power > 0 a reliable "currently in the
+// valset" signal for the validator report roster filter — without it, a
+// validator's last known VP would otherwise stay frozen at a stale nonzero
+// value forever after it leaves, since UpsertAddrMonikerVPBatch only ever
+// upserts currently-bonded addresses and never touches anyone else.
+//
+// currentAddrs is bounded by the live valset size (never grows with chain
+// history), and the query is scoped by chain_id (the leading column of
+// uniq_chain_addr) — this runs once per ~5-minute InitMonikerMap cycle
+// against the small addr_monikers table, not a scan proportional to
+// daily_participations/alert_logs history.
+//
+// A deliberately empty currentAddrs is a no-op (never zero out everyone —
+// guards against a transient empty /validators response wiping all VP data).
+// Uses the native db.DB()/ExecContext + $1/$2 placeholders (not gorm's
+// db.Exec) so currentAddrs binds as a real Postgres array for <> ALL($2),
+// matching the precedent in CleanupTrailingGhostParticipations.
+func ZeroDepartedVotingPower(ctx context.Context, db *gorm.DB, chainID string, currentAddrs []string) error {
+	if len(currentAddrs) == 0 {
+		return nil
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("ZeroDepartedVotingPower(%s): %w", chainID, err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, `
+		UPDATE addr_monikers
+		SET voting_power = 0
+		WHERE chain_id = $1 AND addr <> ALL($2) AND voting_power <> 0
+	`, chainID, currentAddrs); err != nil {
+		return fmt.Errorf("ZeroDepartedVotingPower(%s): %w", chainID, err)
 	}
 	return nil
 }

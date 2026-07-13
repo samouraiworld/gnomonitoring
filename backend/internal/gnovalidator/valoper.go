@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -435,6 +436,18 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 	}
 	if err := database.UpsertAddrMonikerVPBatch(db, chainID, vpRows); err != nil {
 		log.Printf("[valoper][%s] failed to persist voting power batch: %v", chainID, err)
+	}
+
+	// Zero out voting_power for any addr no longer in the live valset, so
+	// voting_power > 0 stays a reliable "currently bonded" signal (otherwise a
+	// departed validator's last VP would stay frozen at a stale nonzero value
+	// forever, since the upsert above only ever touches currently-bonded addrs).
+	currentAddrs := make([]string, 0, len(tempMonikers))
+	for addr := range tempMonikers {
+		currentAddrs = append(currentAddrs, addr)
+	}
+	if err := database.ZeroDepartedVotingPower(context.Background(), db, chainID, currentAddrs); err != nil {
+		log.Printf("[valoper][%s] failed to zero departed voting power: %v", chainID, err)
 	}
 
 	// Load first_active_block from DB into FirstActiveBlockMap
