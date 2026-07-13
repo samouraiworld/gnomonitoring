@@ -99,6 +99,33 @@ GET /Participation?period=[current_week|current_month|current_year]
 curl "http://localhost:8989/Participation?period=current_week"
 ```
 
+#### Get Validator Health Report
+
+Per-validator health score, tier, and alert metrics over four rolling periods (`last_24h`, `current_week`, `current_month`, `current_year`). Full field reference, tunable weights, and a sample response: [`docs/validator-report-api.md`](../docs/validator-report-api.md).
+
+```bash
+GET /api/reports/validators?chain=<chainID>[&addr=<validatorAddr>]
+```
+```bash
+# All validators currently in the valset for a chain
+curl "http://localhost:8989/api/reports/validators?chain=test12"
+
+# A single validator
+curl "http://localhost:8989/api/reports/validators?chain=test12&addr=g1..."
+```
+
+`chain` must be one of the enabled chains (see `config.yaml`); an unknown chain returns HTTP 400. Validators that have left the valset (no current voting power) are excluded from the report entirely, even when targeted directly via `addr`.
+
+**How the score is calculated** (0–100, see the linked doc for the full formula and tunable weights):
+
+1. **Availability base** — `100 × signed_blocks / total_blocks` for the period.
+2. **Proposer reliability** — how often the validator proposed a block versus its expected share by voting power; dropped for validators with too few expected proposals to be meaningful.
+3. **Presence** — a weighted blend of the two above.
+4. **Incident penalties** — points deducted per CRITICAL alert, per WARNING alert, per *distinct* incident (flapping — consecutive alerts not separated by a resolution collapse into one), and per block of CRITICAL downtime, each capped.
+5. **Voting-power severity** — the total penalty is scaled up for higher-stake validators, since their downtime matters more to consensus.
+
+The final score is `clamp(presence − total_penalty, 0, 100)`, mapped to a tier: Excellent (≥85), Good (≥60), Watch (≥30), Critical (<30).
+
 ### 🎣 Webhook Management
 
 #### GovDAO Webhooks (Governance Alerts)

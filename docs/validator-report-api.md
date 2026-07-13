@@ -54,6 +54,7 @@ The response is a JSON array of validator reports. Each element contains:
 - `voting_power` (integer): The validator's current voting power (latest snapshot). `0` until the first snapshot is captured.
 - `critical_count` (integer): Total count of CRITICAL alert rows in the period (includes resends)
 - `warning_count` (integer): Total count of WARNING alert rows in the period (includes resends)
+- `incident_count` (integer): Number of *distinct* WARNING/CRITICAL incidents in the period — consecutive alert rows not separated by a RESOLVED collapse into one incident (an escalation from WARNING to CRITICAL is one incident, not two). Unlike `critical_count`/`warning_count`, this isn't inflated by alert resends, so it's a better signal for a validator that flaps in and out repeatedly.
 - `downtime_blocks` (integer): Sum of downtime blocks for CRITICAL alerts. Ongoing outages with `end_height = 0` contribute 0 blocks.
 - `missed_blocks` (integer): Blocks the validator failed to sign over the period (= `total_blocks − participated_blocks`). Display-only — already reflected in `sign_rate`/`score`, not an additional penalty.
 
@@ -103,12 +104,13 @@ When the proposer component is dropped, `presence = base`.
 **4. Incident penalties (modifier):**
 - **CRITICAL alerts:** −`critical_weight` per alert (capped at `critical_cap`)
 - **WARNING alerts:** −`warning_weight` per alert (capped at `warning_cap`)
+- **Distinct incidents:** −`freq_weight` per distinct WARNING/CRITICAL incident (capped at `freq_cap`) — see `incident_count` above
 - **Downtime blocks:** −1 for every `downtime_blocks_per_point` blocks (capped at `downtime_cap`)
 
 **5. Voting-power severity** — high-VP validators are penalized harder because their failures weigh more on consensus:
 ```
 severity      = 1 + vp_severity_factor × (voting_power / max_voting_power)
-total_penalty = (critical_penalty + warning_penalty + downtime_penalty) × severity
+total_penalty = (critical_penalty + warning_penalty + incident_penalty + downtime_penalty) × severity
 ```
 
 **Final:**
@@ -124,6 +126,8 @@ score = clamp(presence − total_penalty, 0, 100)
 | `report_score_critical_cap` | 60 | max points lost to criticals |
 | `report_score_warning_weight` | 2 | points per WARNING alert |
 | `report_score_warning_cap` | 20 | max points lost to warnings |
+| `report_score_freq_weight` | 3 | points per distinct incident |
+| `report_score_freq_cap` | 30 | max points lost to incident frequency |
 | `report_score_downtime_blocks_per_point` | 500 | downtime blocks that cost 1 point |
 | `report_score_downtime_cap` | 20 | max points lost to downtime |
 | `report_score_sign_weight` | 0.8 | availability weight in the presence blend |
@@ -159,6 +163,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
         "voting_power": 1000,
         "critical_count": 0,
         "warning_count": 1,
+        "incident_count": 1,
         "downtime_blocks": 0
       },
       "current_week": {
@@ -169,6 +174,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
         "voting_power": 1000,
         "critical_count": 0,
         "warning_count": 2,
+        "incident_count": 1,
         "downtime_blocks": 0
       },
       "current_month": {
@@ -179,6 +185,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
         "voting_power": 1000,
         "critical_count": 3,
         "warning_count": 5,
+        "incident_count": 4,
         "downtime_blocks": 250
       },
       "current_year": {
@@ -189,6 +196,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
         "voting_power": 1000,
         "critical_count": 8,
         "warning_count": 15,
+        "incident_count": 9,
         "downtime_blocks": 1200
       }
     }
@@ -205,6 +213,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
         "voting_power": 12,
         "critical_count": 0,
         "warning_count": 0,
+        "incident_count": 0,
         "downtime_blocks": 0
       },
       "current_week": {
@@ -215,6 +224,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
         "voting_power": 12,
         "critical_count": 0,
         "warning_count": 0,
+        "incident_count": 0,
         "downtime_blocks": 0
       },
       "current_month": {
@@ -225,6 +235,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
         "voting_power": 12,
         "critical_count": 1,
         "warning_count": 1,
+        "incident_count": 1,
         "downtime_blocks": 0
       },
       "current_year": {
@@ -235,6 +246,7 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
         "voting_power": 12,
         "critical_count": 3,
         "warning_count": 4,
+        "incident_count": 3,
         "downtime_blocks": 500
       }
     }
@@ -244,9 +256,10 @@ curl 'http://localhost:8989/api/reports/validators?chain=test12'
 
 ## Notes
 
-- The response includes every validator that participated on the chain during the current calendar year (the active-validator roster), not only validators that have alerted. A validator that signs every block with no alerts scores at or near 100 / tier "Excellent".
-- All validators in the response have all four period keys populated. Under the sign-base model, a validator with **no participation data at all** in a period (e.g. a validator that left the active set earlier in the year, so it has no rows in the shorter `last_24h`/`current_week` windows) scores 0 / tier "Critical" for that period — the base is `100 × signed/total` and `total = 0` yields a sign rate of 0. This is intentional: absence of signing is treated as unavailability, not health.
-- `voting_power` reflects the latest snapshot captured by the 5-minute moniker refresh; it is `0` until the first snapshot. `proposer_reliability` is `null` for low-voting-power validators whose expected proposal count falls below `report_score_proposer_min_expected`.
-- The `addr` filter returns only matching validators; if no validators match, the response is an empty array.
+- The response includes every validator **currently in the valset** (`voting_power > 0`) that participated on the chain during the current calendar year, not only validators that have alerted. A validator that signs every block with no alerts scores at or near 100 / tier "Excellent".
+- **Validators that have left the valset are excluded entirely, from every period** (including `current_year`), even under an explicit `?addr=` match for their exact address. Membership is judged by `voting_power > 0` in `addr_monikers`, which is zeroed out (not just left stale) as soon as an address stops appearing in the live `/validators` response, refreshed every ~5 minutes. A validator that just left may still appear for up to that ~5-minute window before the next refresh excludes it.
+- All remaining validators in the response have all four period keys populated. Under the sign-base model, a validator with **no participation data at all** in a period scores 0 / tier "Critical" for that period — the base is `100 × signed/total` and `total = 0` yields a sign rate of 0. This is intentional: absence of signing is treated as unavailability, not health.
+- `voting_power` reflects the latest snapshot captured by the 5-minute moniker refresh. `proposer_reliability` is `null` for low-voting-power validators whose expected proposal count falls below `report_score_proposer_min_expected`.
+- The `addr` filter returns only matching validators; if no validators match (including a departed validator's exact address), the response is an empty array.
 - Invalid chain IDs return HTTP 400.
 - This is a **public read endpoint**: it is not behind Clerk authentication in either `dev_mode` or production, consistent with the other read-only metric endpoints (`/uptime`, `/Participation`, `/missing_block`, etc.). Do not expose data through it that you would not expose on those endpoints. (The `/admin/*` configuration routes, including the report toggle, remain Clerk-protected.)
