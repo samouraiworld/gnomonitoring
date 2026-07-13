@@ -25,11 +25,20 @@ func TestMultiChain_SaveAndQueryParticipation(t *testing.T) {
 		"addr_a1": "ChainA-Validator1",
 		"addr_a2": "ChainA-Validator2",
 	}
+	// addr_a2 needs a genuine prior activation before a participated=false row
+	// for it is recorded rather than skipped as a phantom pre-activation row.
+	// Seeded on the previous calendar day so it doesn't affect the block-height
+	// range CalculateRate computes for the target date below.
+	err := gnovalidator.SaveParticipation(db, "chainA", 999,
+		map[string]gnovalidator.Participation{"addr_a2": {Participated: true, Timestamp: blockTime}},
+		chainAMonikers, blockTime.AddDate(0, 0, -1))
+	require.NoError(t, err)
+
 	chainAParticipation := map[string]gnovalidator.Participation{
 		"addr_a1": {Participated: true, Timestamp: blockTime, TxContribution: false},
 		"addr_a2": {Participated: false, Timestamp: blockTime, TxContribution: false},
 	}
-	err := gnovalidator.SaveParticipation(db, "chainA", 1000, chainAParticipation, chainAMonikers, blockTime)
+	err = gnovalidator.SaveParticipation(db, "chainA", 1000, chainAParticipation, chainAMonikers, blockTime)
 	require.NoError(t, err)
 
 	// Insert participation for chainB: completely different addresses and rates.

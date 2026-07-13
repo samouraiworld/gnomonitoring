@@ -89,3 +89,28 @@ func TestCompute_ProposerDroppedWhenExpectedBelowMin(t *testing.T) {
 		t.Fatalf("score = %d, want 100 (presence == base)", r.Score)
 	}
 }
+
+func TestCompute_FreqPenaltyApplied(t *testing.T) {
+	// 100/100 signed, 2 distinct incidents @ weight 3 = 6 penalty.
+	r := Compute(Inputs{SignedBlocks: 100, TotalBlocks: 100, IncidentCount: 2}, DefaultWeights())
+	if r.Score != 94 {
+		t.Fatalf("score = %d, want 94", r.Score)
+	}
+}
+
+func TestCompute_FreqPenaltyCapped(t *testing.T) {
+	// 100/100 signed, 20 incidents @ weight 3 = 60, capped at 30.
+	r := Compute(Inputs{SignedBlocks: 100, TotalBlocks: 100, IncidentCount: 20}, DefaultWeights())
+	if r.Score != 70 {
+		t.Fatalf("score = %d, want 70 (penalty capped at 30)", r.Score)
+	}
+}
+
+func TestCompute_FreqWeightZeroIsNoOp(t *testing.T) {
+	w := DefaultWeights()
+	w.FreqWeight = 0
+	r := Compute(Inputs{SignedBlocks: 100, TotalBlocks: 100, IncidentCount: 5}, w)
+	if r.Score != 100 {
+		t.Fatalf("score = %d, want 100 (FreqWeight=0 must be a no-op)", r.Score)
+	}
+}

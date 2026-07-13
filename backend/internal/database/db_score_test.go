@@ -86,6 +86,97 @@ func TestGetValidatorScoresInvalidPeriod(t *testing.T) {
 	}
 }
 
+func TestGetValidatorScoresExcludesAddrAll(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now().UTC()
+	inMonth := time.Date(now.Year(), now.Month(), 2, 12, 0, 0, 0, time.UTC)
+
+	seedScoreAlert(t, db, "test12", "g1aaa", "CRITICAL", 100, 130, inMonth)
+	// Chain-wide "blockchain stuck" alert — must never appear as a fake validator.
+	seedScoreAlert(t, db, "test12", "all", "CRITICAL", 1, 999, inMonth)
+
+	rows, err := database.GetValidatorScores(db, "test12", "current_month")
+	if err != nil {
+		t.Fatalf("GetValidatorScores: %v", err)
+	}
+	for _, r := range rows {
+		if r.Addr == "all" {
+			t.Fatalf("addr='all' must be excluded from GetValidatorScores, got: %+v", rows)
+		}
+	}
+	if len(rows) != 1 || rows[0].Addr != "g1aaa" {
+		t.Fatalf("want exactly [g1aaa], got %+v", rows)
+	}
+}
+
+func TestGetValidatorScoresIncidentCount(t *testing.T) {
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	day2 := time.Date(now.Year(), now.Month(), 2, 9, 0, 0, 0, time.UTC)
+
+	t.Run("escalation without RESOLVED is one incident", func(t *testing.T) {
+		db := testoutils.NewTestDB(t)
+		seedScoreAlert(t, db, "test20", "g1esc", "WARNING", 10, 15, day2)
+		seedScoreAlert(t, db, "test20", "g1esc", "CRITICAL", 10, 40, day2.Add(time.Hour))
+
+		rows, err := database.GetValidatorScores(db, "test20", "current_month")
+		if err != nil {
+			t.Fatalf("GetValidatorScores: %v", err)
+		}
+		if len(rows) != 1 || rows[0].IncidentCount != 1 {
+			t.Fatalf("want 1 row with IncidentCount=1, got %+v", rows)
+		}
+	})
+
+	t.Run("RESOLVED then new WARNING is two incidents", func(t *testing.T) {
+		db := testoutils.NewTestDB(t)
+		seedScoreAlert(t, db, "test20", "g1flap", "WARNING", 10, 15, day2)
+		seedScoreAlert(t, db, "test20", "g1flap", "RESOLVED", 10, 15, day2.Add(time.Hour))
+		seedScoreAlert(t, db, "test20", "g1flap", "WARNING", 20, 25, day2.Add(2*time.Hour))
+
+		rows, err := database.GetValidatorScores(db, "test20", "current_month")
+		if err != nil {
+			t.Fatalf("GetValidatorScores: %v", err)
+		}
+		if len(rows) != 1 || rows[0].IncidentCount != 2 {
+			t.Fatalf("want 1 row with IncidentCount=2, got %+v", rows)
+		}
+	})
+
+	t.Run("incident started before the period and still resending counts zero new", func(t *testing.T) {
+		db := testoutils.NewTestDB(t)
+		// Started before this month, no RESOLVED yet, resent inside the period.
+		seedScoreAlert(t, db, "test20", "g1cont", "CRITICAL", 10, 40, monthStart.Add(-time.Hour))
+		seedScoreAlert(t, db, "test20", "g1cont", "CRITICAL", 10, 400, day2)
+
+		rows, err := database.GetValidatorScores(db, "test20", "current_month")
+		if err != nil {
+			t.Fatalf("GetValidatorScores: %v", err)
+		}
+		if len(rows) != 1 || rows[0].IncidentCount != 0 {
+			t.Fatalf("want 1 row with IncidentCount=0 (continuation, not new), got %+v", rows)
+		}
+		// critical_count must still count the resend row itself — unaffected by freq.
+		if rows[0].CriticalCount != 1 {
+			t.Fatalf("critical_count must stay a raw resend count, got %d", rows[0].CriticalCount)
+		}
+	})
+
+	t.Run("addr=all and other chains never counted", func(t *testing.T) {
+		db := testoutils.NewTestDB(t)
+		seedScoreAlert(t, db, "test20", "all", "CRITICAL", 1, 999, day2)
+		seedScoreAlert(t, db, "other20", "g1esc", "CRITICAL", 1, 999, day2)
+
+		rows, err := database.GetValidatorScores(db, "test20", "current_month")
+		if err != nil {
+			t.Fatalf("GetValidatorScores: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("want no rows (addr=all excluded, other chain excluded), got %+v", rows)
+		}
+	})
+}
+
 func seedParticipation(t *testing.T, db *gorm.DB, chain, addr, moniker string, height int64, date time.Time) {
 	t.Helper()
 	row := database.DailyParticipation{

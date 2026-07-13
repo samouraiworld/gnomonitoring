@@ -42,6 +42,28 @@ func SetFirstActiveBlock(chainID, addr string, block int64) {
 	FirstActiveBlockMap[chainID][addr] = block
 }
 
+// SetFirstActiveBlockIfEarlier atomically records height as the validator's
+// first_active_block if none is recorded yet (-1), or lowers the recorded
+// value if height is earlier than what's currently stored. Returns true when
+// the in-memory value changed. Unlike a plain Get-then-Set pair, the check
+// and the write happen under a single lock acquisition, so concurrent
+// callers (e.g. BackfillParallel's workers, which process blocks without a
+// guaranteed ascending-height order) can never both observe "unset" and
+// race to write a later, non-minimal height as the final answer.
+func SetFirstActiveBlockIfEarlier(chainID, addr string, height int64) bool {
+	FirstActiveBlockMutex.Lock()
+	defer FirstActiveBlockMutex.Unlock()
+	if _, ok := FirstActiveBlockMap[chainID]; !ok {
+		FirstActiveBlockMap[chainID] = make(map[string]int64)
+	}
+	current, exists := FirstActiveBlockMap[chainID][addr]
+	if exists && current != -1 && current <= height {
+		return false
+	}
+	FirstActiveBlockMap[chainID][addr] = height
+	return true
+}
+
 // GetFirstActiveBlockMap returns a snapshot of the first_active_block map for a chain.
 func GetFirstActiveBlockMap(chainID string) map[string]int64 {
 	FirstActiveBlockMutex.RLock()
@@ -327,20 +349,58 @@ func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client
 				log.Printf("[monitor][%s] WatchNewValidators stopped", chainID)
 				return
 			case <-ticker.C:
-				// Copy old map
 				oldMap := GetMonikerMap(chainID)
+				prevSigningToOperator := getSigningToOperator(chainID)
 
-				// Refresh MonikerMap
-				InitMonikerMap(db, chainID, client, chainCfg)
+				valopers := InitMonikerMap(db, chainID, client, chainCfg)
 
-				// Compare with the old Monikermap
-				for addr, moniker := range GetMonikerMap(chainID) {
-					if _, exists := oldMap[addr]; !exists {
-						msg := fmt.Sprintf("[%s] ✅ **New Validator detected**: %s (%s)", chainID, moniker, addr)
-						log.Println(msg)
-						if err := internal.SendInfoValidator(chainID, msg, "info", db); err != nil {
-							log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
-						}
+				newMap := GetMonikerMap(chainID)
+				// Only update signing-to-operator mapping (and the cached valoper
+				// fallback) if we have fresh valoper data. A transient valoper-registry
+				// fetch failure should not erase the correlation memory built from the
+				// last successful fetch, since MonikerMap itself can still update
+				// independently that same cycle.
+				if len(valopers) > 0 {
+					setSigningToOperator(chainID, signingToOperatorFromValopers(valopers))
+					setCachedValopers(chainID, valopers)
+				}
+				// classifyValsetChanges needs currentValopers to correlate a rotation;
+				// fall back to the last known-good snapshot on a transient fetch
+				// failure instead of an empty list, for the same reason as above.
+				currentValopers := valopers
+				if len(currentValopers) == 0 {
+					currentValopers = getCachedValopers(chainID)
+				}
+
+				var departed bool
+				for _, ev := range classifyValsetChanges(oldMap, newMap, prevSigningToOperator, currentValopers) {
+					var msg string
+					switch ev.Kind {
+					case ValidatorJoined:
+						msg = fmt.Sprintf("[%s] ✅ **New Validator detected**: %s (%s)", chainID, ev.Moniker, ev.NewAddr)
+					case ValidatorLeft:
+						msg = fmt.Sprintf("[%s] ⚠️ **Validator left the valset**: %s (%s)", chainID, ev.Moniker, ev.OldAddr)
+						departed = true
+					case ValidatorAddressChanged:
+						msg = fmt.Sprintf("[%s] 🔄 **Validator address changed**: %s (%s → %s)", chainID, ev.Moniker, ev.OldAddr, ev.NewAddr)
+						departed = true
+					}
+					log.Println(msg)
+					if err := internal.SendInfoValidator(chainID, msg, "info", db); err != nil {
+						log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
+					}
+				}
+
+				// A departure/rotation just made an address stop accumulating true
+				// participation; clean up its trailing ghost rows now instead of
+				// waiting for the next process restart.
+				if departed {
+					currentAddrs := make([]string, 0, len(newMap))
+					for addr := range newMap {
+						currentAddrs = append(currentAddrs, addr)
+					}
+					if err := database.CleanupTrailingGhostParticipations(ctx, db, chainID, currentAddrs); err != nil {
+						log.Printf("[monitor][%s] CleanupTrailingGhostParticipations error: %v", chainID, err)
 					}
 				}
 			}
@@ -562,17 +622,8 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 	for valAddr, moniker := range monikerMap {
 		participated := participating[valAddr] // zero value => not participated
 
-		if participated.Participated {
-			// Dynamic detection: record first_active_block when first seen.
-			if GetFirstActiveBlock(chainID, valAddr) == -1 {
-				SetFirstActiveBlock(chainID, valAddr, blockHeight)
-				_ = database.UpsertFirstActiveBlock(db, chainID, valAddr, blockHeight)
-			}
-		} else {
-			// Guard: skip rows before the validator's activation block.
-			if fab := GetFirstActiveBlock(chainID, valAddr); fab > 0 && blockHeight < fab {
-				continue
-			}
+		if RecordActivationOrSkip(db, chainID, valAddr, blockHeight, participated.Participated) {
+			continue
 		}
 
 		rows = append(rows, dpRow{
@@ -601,12 +652,37 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 }
 
 func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
+	if ctx.Err() != nil {
+		return
+	}
+
 	rpcClient := NewFallbackRPCClient(chainCfg.RPCEndpoints)
 	SetChainRPCClient(chainID, rpcClient)
 	client := gnoclient.Client{RPCClient: rpcClient}
 
 	t := GetThresholds()
-	InitMonikerMap(db, chainID, client, chainCfg)
+	valopers := InitMonikerMap(db, chainID, client, chainCfg)
+	// Seed the signing-to-operator correlation memory (and its cached valoper
+	// fallback) from this startup fetch, so the very first WatchNewValidators
+	// tick can already correlate a signing-key rotation instead of starting
+	// from an empty prevSigningToOperator snapshot.
+	if len(valopers) > 0 {
+		setSigningToOperator(chainID, signingToOperatorFromValopers(valopers))
+		setCachedValopers(chainID, valopers)
+	}
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	currentAddrs := make([]string, 0)
+	for addr := range GetMonikerMap(chainID) {
+		currentAddrs = append(currentAddrs, addr)
+	}
+	if err := database.CleanupTrailingGhostParticipations(ctx, db, chainID, currentAddrs); err != nil {
+		log.Printf("[monitor][%s] CleanupTrailingGhostParticipations error: %v", chainID, err)
+	}
+
 	WatchNewValidators(ctx, db, chainID, client, chainCfg, t.NewValidatorScan())
 	CollectParticipation(ctx, db, chainID, client)
 	WatchValidatorAlerts(ctx, db, chainID, t.AlertCheckInterval())
@@ -635,6 +711,19 @@ func SetMoniker(chainID, addr, moniker string) {
 		MonikerMap[chainID] = make(map[string]string)
 	}
 	MonikerMap[chainID][addr] = moniker
+}
+
+// ReplaceMonikerMap atomically replaces the entire per-chain moniker map with
+// m, instead of merging into it. Used by InitMonikerMap so MonikerMap always
+// reflects exactly the validators currently in the live valset — a validator
+// that drops out of /validators is dropped from this map on the very next
+// refresh cycle, instead of lingering forever (which used to make
+// SaveParticipation keep writing participated=false rows for it long after
+// it left).
+func ReplaceMonikerMap(chainID string, m map[string]string) {
+	MonikerMutex.Lock()
+	defer MonikerMutex.Unlock()
+	MonikerMap[chainID] = m
 }
 
 // Height helpers

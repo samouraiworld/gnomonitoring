@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -627,6 +628,126 @@ func CleanupSpuriousParticipations(db *gorm.DB) error {
 	if agrega.RowsAffected > 0 {
 		log.Printf("[db] deleted %d spurious rows from daily_participation_agregas in %s",
 			agrega.RowsAffected, time.Since(start).Round(time.Millisecond))
+	}
+	return nil
+}
+
+// CleanupTrailingGhostParticipations deletes participated=false rows written
+// after a validator's real last participation, for any address that has
+// history on this chain but is not part of the currently live valset
+// (currentAddrs). Idempotent: safe to call on every chain startup and after
+// every detected departure — WatchNewValidators does both (once at chain
+// startup, then again on any cycle where classifyValsetChanges reports a
+// ValidatorLeft/ValidatorAddressChanged event), so trailing ghost rows from
+// a mid-uptime departure get cleaned within one refresh cycle instead of
+// surviving until the next process restart. Unlike first_active_block, this
+// value has no per-block hot-path reader — once MonikerMap is a true
+// snapshot (see ReplaceMonikerMap), it alone stops future ghost writes, so
+// "last true participation" is computed live via a correlated subquery
+// instead of being persisted.
+//
+// currentAddrs empty is treated as "valset unknown" (e.g. the initial
+// /validators fetch failed) and is a deliberate no-op: an empty exclusion
+// list would otherwise make every address vacuously match "departed" via
+// addr <> ALL(empty array), which is always true.
+//
+// The "last true" lookup (lastTrueCTE) is materialized once into a temp
+// table shared by both DELETEs (rather than inlined twice), and both run in
+// the same transaction on a context-aware connection so the whole operation
+// is a single unit of work that respects caller cancellation (ctx) instead
+// of running unconditionally to completion in the background.
+//
+// Deviation from the original plan: this deliberately bypasses gorm's
+// db.Exec for the two DELETEs and drops to the underlying *sql.DB instead.
+// gorm's Statement.AddVar expands any Go slice/array argument into a
+// scalar (or an IN-list-style) substitution before the query ever reaches
+// the driver, which defeats pgx/v5's native []string -> text[] array
+// encoding: a one-element []string{"g1bonded"} arrived at Postgres as the
+// bare text literal 'g1bonded' instead of the array literal '{g1bonded}',
+// and ALL($1) then failed with "malformed array literal". Going through
+// db.DB().ExecContext directly hands the []string to pgx/v5's own
+// extended-protocol parameter encoding, which does bind it as a native
+// Postgres array, exactly as the native-binding rationale for this
+// approach intends.
+func CleanupTrailingGhostParticipations(ctx context.Context, db *gorm.DB, chainID string, currentAddrs []string) error {
+	if len(currentAddrs) == 0 {
+		return nil
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("CleanupTrailingGhostParticipations(%s): %w", chainID, err)
+	}
+
+	start := time.Now()
+
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("CleanupTrailingGhostParticipations(%s): begin tx: %w", chainID, err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once Commit succeeds
+
+	// The daily_participation_agregas branch uses last_block_height (the
+	// day's last RECORDED block, true or false — see AggregateChain) as a
+	// proxy for "last true participation" whenever participated_count > 0,
+	// which over-estimates last_true for a day that mixes true rows with a
+	// trailing ghost tail. In practice this window is now closed for future
+	// departures: WatchNewValidators calls this function within one refresh
+	// cycle of detecting a departure (see doc comment above), so the ghost
+	// rows are gone from daily_participations before AggregateChain (which
+	// only rolls up days < CURRENT_DATE) ever aggregates that day. The
+	// residual case is historical data already aggregated before this
+	// cleanup existed, where the raw ghost rows may already be gone too
+	// (pruned by retention) — there the agrega proxy is the only signal
+	// left, so it's kept as a best-effort fallback rather than dropped.
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TEMP TABLE last_true_block ON COMMIT DROP AS
+		SELECT addr, MAX(block_height) AS last_true
+		FROM (
+			SELECT addr, block_height FROM daily_participations
+			WHERE chain_id = $1 AND participated = true AND addr <> ALL($2)
+			UNION ALL
+			SELECT addr, last_block_height AS block_height FROM daily_participation_agregas
+			WHERE chain_id = $1 AND participated_count > 0 AND addr <> ALL($2)
+		) combined
+		GROUP BY addr
+	`, chainID, currentAddrs); err != nil {
+		return fmt.Errorf("CleanupTrailingGhostParticipations(%s): materialize last_true_block: %w", chainID, err)
+	}
+
+	raw, err := tx.ExecContext(ctx, `
+		DELETE FROM daily_participations dp
+		USING last_true_block
+		WHERE dp.chain_id = $1
+		  AND dp.addr = last_true_block.addr
+		  AND dp.participated = false
+		  AND dp.block_height > last_true_block.last_true
+	`, chainID)
+	if err != nil {
+		return fmt.Errorf("CleanupTrailingGhostParticipations(%s): daily_participations: %w", chainID, err)
+	}
+	if affected, err := raw.RowsAffected(); err == nil && affected > 0 {
+		log.Printf("[db][%s] deleted %d trailing ghost rows from daily_participations in %s",
+			chainID, affected, time.Since(start).Round(time.Millisecond))
+	}
+
+	agrega, err := tx.ExecContext(ctx, `
+		DELETE FROM daily_participation_agregas dpa
+		USING last_true_block
+		WHERE dpa.chain_id = $1
+		  AND dpa.addr = last_true_block.addr
+		  AND dpa.first_block_height > last_true_block.last_true
+	`, chainID)
+	if err != nil {
+		return fmt.Errorf("CleanupTrailingGhostParticipations(%s): daily_participation_agregas: %w", chainID, err)
+	}
+	if affected, err := agrega.RowsAffected(); err == nil && affected > 0 {
+		log.Printf("[db][%s] deleted %d trailing ghost rows from daily_participation_agregas in %s",
+			chainID, affected, time.Since(start).Round(time.Millisecond))
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("CleanupTrailingGhostParticipations(%s): commit: %w", chainID, err)
 	}
 	return nil
 }

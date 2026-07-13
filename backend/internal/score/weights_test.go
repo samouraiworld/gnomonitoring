@@ -59,3 +59,20 @@ func TestWeightsFromConfig_DefaultsWhenMissing(t *testing.T) {
 		t.Fatalf("empty config should equal DefaultWeights: got %+v want %+v", w, d)
 	}
 }
+
+func TestWeightsFromConfig_FreqKeys(t *testing.T) {
+	w := WeightsFromConfig(map[string]string{
+		KeyFreqWeight: "5",
+		KeyFreqCap:    "40",
+	})
+	if w.FreqWeight != 5 || w.FreqCap != 40 {
+		t.Fatalf("freq keys not parsed: %+v", w)
+	}
+}
+
+func TestWeightsFromConfig_FreqDefaultsWhenMissing(t *testing.T) {
+	w := WeightsFromConfig(map[string]string{})
+	if w.FreqWeight != 3 || w.FreqCap != 30 {
+		t.Fatalf("want default FreqWeight=3 FreqCap=30, got %+v", w)
+	}
+}
