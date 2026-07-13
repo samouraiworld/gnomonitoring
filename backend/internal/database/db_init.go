@@ -685,7 +685,7 @@ func CleanupTrailingGhostParticipations(ctx context.Context, db *gorm.DB, chainI
 	if err != nil {
 		return fmt.Errorf("CleanupTrailingGhostParticipations(%s): begin tx: %w", chainID, err)
 	}
-	defer tx.Rollback() // no-op once Commit succeeds
+	defer func() { _ = tx.Rollback() }() // no-op once Commit succeeds
 
 	// The daily_participation_agregas branch uses last_block_height (the
 	// day's last RECORDED block, true or false — see AggregateChain) as a
