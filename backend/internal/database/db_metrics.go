@@ -192,10 +192,16 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string) ([]P
 		log.Printf("[db] invalid period: %v", err)
 		return nil, err
 	}
+	fallbackStart, err := fallbackRawWindowStart(db, chainID, startStr)
+	if err != nil {
+		return nil, err
+	}
 
 	// Three-way UNION:
 	//   1. Agrega — past complete days (fast path, production)
-	//   2. Raw fallback — past days not yet in agrega (tests + new chains + today if agrega lags)
+	//   2. Raw fallback — days not yet in agrega (tests + new chains + agrega lag).
+	//      Bounded to the chain's aggregation watermark via fallbackRawWindowStart
+	//      — see that function's doc comment for why.
 	//   3. Raw today — current day always from raw (never aggregated yet)
 	// Moniker fallback chain (symmetric with the streak query): live
 	// addr_monikers ('unknown' placeholder excluded) → the moniker frozen into
@@ -234,7 +240,7 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string) ([]P
 		GROUP BY combined.addr
 		ORDER BY participation_rate ASC`
 
-	err = db.Raw(query, chainID, startStr, chainID, startStr, chainID).Scan(&results).Error
+	err = db.Raw(query, chainID, startStr, chainID, fallbackStart, chainID).Scan(&results).Error
 
 	return results, err
 }
@@ -242,6 +248,14 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string) ([]P
 // ====================================== Up Time / tx_contrib Metrics ==========================
 func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetrics, error) {
 	var results []OperationTimeMetrics
+
+	// No period floor here (this metric isn't period-scoped), so the sentinel
+	// "0001-01-01" defers entirely to the chain's aggregation watermark — see
+	// fallbackRawWindowStart's doc comment.
+	fallbackStart, err := fallbackRawWindowStart(db, chainID, "0001-01-01")
+	if err != nil {
+		return nil, err
+	}
 
 	// Combines agrega (complete past days) with raw fallback (days not yet aggregated).
 	query := `
@@ -254,7 +268,7 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 				FROM daily_participations dp
 				LEFT JOIN daily_participation_agregas dpa
 					ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date::date = dp.date::date
-				WHERE dp.chain_id = ? AND dp.participated = false AND dpa.block_date IS NULL
+				WHERE dp.chain_id = ? AND dp.date >= ? AND dp.participated = false AND dpa.block_date IS NULL
 			) GROUP BY chain_id, addr
 		),
 		last_up AS (
@@ -266,7 +280,7 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 				FROM daily_participations dp
 				LEFT JOIN daily_participation_agregas dpa
 					ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date::date = dp.date::date
-				WHERE dp.chain_id = ? AND dp.participated = true AND dpa.block_date IS NULL
+				WHERE dp.chain_id = ? AND dp.date >= ? AND dp.participated = true AND dpa.block_date IS NULL
 			) GROUP BY chain_id, addr
 		)
 		SELECT
@@ -287,7 +301,7 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 			GROUP BY addr
 		) fm ON fm.addr = ld.addr`
 
-	if err := db.Raw(query, chainID, chainID, chainID, chainID, chainID).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, chainID, fallbackStart, chainID, chainID, fallbackStart, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
 
@@ -295,6 +309,17 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string) ([]OperationTimeMetri
 }
 func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 	var results []UptimeMetrics
+
+	// Floor matches the agrega branch's own 30-day window — no need for the
+	// fallback to look back further than that. See fallbackRawWindowStart's
+	// doc comment for how this gets narrowed further to the aggregation
+	// watermark in steady state.
+	thirtyDaysAgo := time.Now().UTC().AddDate(0, 0, -30).Format("2006-01-02")
+	fallbackStart, err := fallbackRawWindowStart(db, chainID, thirtyDaysAgo)
+	if err != nil {
+		return nil, err
+	}
+
 	// Same symmetric moniker fallback as the participation query: live
 	// addr_monikers → frozen row moniker → address last.
 	query := `
@@ -313,7 +338,7 @@ func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 			FROM daily_participations dp
 			LEFT JOIN daily_participation_agregas dpa
 				ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date::date = dp.date::date
-			WHERE dp.chain_id = ? AND dp.date >= CURRENT_DATE - INTERVAL '30 days' AND dp.date < CURRENT_DATE
+			WHERE dp.chain_id = ? AND dp.date >= ? AND dp.date < CURRENT_DATE
 				AND dpa.block_date IS NULL
 			GROUP BY dp.chain_id, dp.addr
 			UNION ALL
@@ -328,7 +353,7 @@ func UptimeMetricsaddr(db *gorm.DB, chainID string) ([]UptimeMetrics, error) {
 		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
 		GROUP BY combined.addr
 		ORDER BY uptime ASC`
-	if err := db.Raw(query, chainID, chainID, chainID).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, chainID, fallbackStart, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
 	return results, nil
@@ -342,8 +367,13 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 		log.Printf("[db] invalid period: %v", err)
 		return nil, err
 	}
+	fallbackStart, err := fallbackRawWindowStart(db, chainID, startStr)
+	if err != nil {
+		return nil, err
+	}
 
-	// Same symmetric moniker fallback as the participation query.
+	// Same symmetric moniker fallback as the participation query. Raw-fallback
+	// branch bound via fallbackRawWindowStart — see that function's doc comment.
 	query := `
 		WITH combined AS (
 			SELECT chain_id, addr, moniker, tx_contribution_count
@@ -374,7 +404,7 @@ func TxContrib(db *gorm.DB, chainID, period string) ([]TxContribMetrics, error) 
 		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
 		GROUP BY combined.addr`
 
-	if err := db.Raw(query, chainID, startStr, chainID, startStr, chainID).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, startStr, chainID, fallbackStart, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
 	}
 
@@ -390,8 +420,13 @@ func MissingBlock(db *gorm.DB, chainID, period string) ([]MissingBlockMetrics, e
 		log.Printf("[db] invalid period: %v", err)
 		return nil, err
 	}
+	fallbackStart, err := fallbackRawWindowStart(db, chainID, startStr)
+	if err != nil {
+		return nil, err
+	}
 
-	// Same symmetric moniker fallback as the participation query.
+	// Same symmetric moniker fallback as the participation query. Raw-fallback
+	// branch bound via fallbackRawWindowStart — see that function's doc comment.
 	query := `
 		SELECT combined.addr,
 			MAX(COALESCE(NULLIF(am.moniker, 'unknown'), NULLIF(combined.moniker, ''), combined.addr)) AS moniker,
@@ -420,7 +455,7 @@ func MissingBlock(db *gorm.DB, chainID, period string) ([]MissingBlockMetrics, e
 		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
 		GROUP BY combined.addr`
 
-	if err := db.Raw(query, chainID, startStr, chainID, startStr, chainID).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, startStr, chainID, fallbackStart, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request MissingBlock: %s", err)
 	}
 
@@ -559,12 +594,56 @@ func getPeriodParams(period string) (startStr, endStr string, err error) {
 	return startStr, endStr, nil
 }
 
+// fallbackRawWindowStart returns the lower date-string bound to use for a
+// metric query's raw-fallback branch (the leg that catches daily_participations
+// rows not yet rolled into daily_participation_agregas), given the branch's
+// otherwise-applicable floor (period start, or a permissive sentinel like
+// "0001-01-01" for queries with no period).
+//
+// Everything strictly before the chain's aggregation watermark
+// (GetAggregatedThrough) is guaranteed to already be covered by the agrega
+// branch — AggregateChain rolls up every complete day (< today) hourly — so
+// the fallback branch never needs to look earlier than that. Scanning further
+// back just re-confirms "nothing to add" at the cost of a full raw-table scan
+// (measured: a few hundred thousand rows read and sorted, for zero result
+// rows, on the current_month queries driving the Prometheus update loop).
+//
+// When nothing has been aggregated yet for the chain (new chain, or a test
+// fixture with raw-only history and no agrega rows), GetAggregatedThrough
+// returns the zero time and this returns floorStr unchanged — the fallback
+// branch keeps its original, full-period reach.
+func fallbackRawWindowStart(db *gorm.DB, chainID, floorStr string) (string, error) {
+	aggregatedThrough, err := GetAggregatedThrough(db, chainID)
+	if err != nil {
+		return "", err
+	}
+	if aggregatedThrough.IsZero() {
+		return floorStr, nil
+	}
+	if aggStr := aggregatedThrough.Format("2006-01-02"); aggStr > floorStr {
+		return aggStr, nil
+	}
+	return floorStr, nil
+}
+
 // ====================================== First Seen ======================================
 
 // GetFirstSeen returns the earliest participation date for each validator.
 // This can be used as a "start time" / "first seen" metric.
 func GetFirstSeen(db *gorm.DB, chainID string) ([]FirstSeenMetrics, error) {
 	var results []FirstSeenMetrics
+
+	// first_seen wants the EARLIEST participation ever, so unlike the
+	// period-scoped metrics above there's no natural floor to pass — but
+	// fallbackRawWindowStart is still safe here: it only ever narrows the
+	// fallback branch up to the chain's aggregation watermark, and everything
+	// before that watermark is guaranteed to already be in the agrega branch
+	// by construction (AggregateChain rolls up every complete day). So no
+	// validator's true first-seen date can be missed.
+	fallbackStart, err := fallbackRawWindowStart(db, chainID, "0001-01-01")
+	if err != nil {
+		return nil, err
+	}
 
 	query := `
 		SELECT combined.addr,
@@ -579,13 +658,13 @@ func GetFirstSeen(db *gorm.DB, chainID string) ([]FirstSeenMetrics, error) {
 			FROM daily_participations dp
 			LEFT JOIN daily_participation_agregas dpa
 				ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date::date = dp.date::date
-			WHERE dp.chain_id = ? AND dp.participated = true AND dpa.block_date IS NULL
+			WHERE dp.chain_id = ? AND dp.date >= ? AND dp.participated = true AND dpa.block_date IS NULL
 		) combined
 		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
 		GROUP BY combined.addr
 		ORDER BY first_seen ASC`
 
-	if err := db.Raw(query, chainID, chainID).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, chainID, fallbackStart).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request FirstSeen: %s", err)
 	}
 

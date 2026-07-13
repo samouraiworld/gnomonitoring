@@ -618,6 +618,56 @@ func TestGetCurrentPeriodParticipationRate_MonikerFrozenFallback_AgregaLeg(t *te
 	assert.Equal(t, frozen, rates[0].Moniker, "the agrega leg must thread its frozen moniker too")
 }
 
+// TestGetCurrentPeriodParticipationRate_FallbackBoundedByAggregationWatermark
+// verifies the raw-fallback branch is bounded to the chain's aggregation
+// watermark (GetAggregatedThrough), not the full period start: raw rows
+// before the watermark are assumed already covered by agrega and skipped by
+// the fallback branch (even with no matching agrega row for that exact
+// address — a real gap there is a separate aggregator bug, not something this
+// query should pay a full-table scan to paper over), while raw rows at or
+// after the watermark are still picked up.
+func TestGetCurrentPeriodParticipationRate_FallbackBoundedByAggregationWatermark(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain = "test-watermark"
+
+	// Establishes the aggregation watermark at "4 days ago + 1" = 3 days ago
+	// (GetAggregatedThrough returns the day AFTER the latest aggregated day).
+	agrega := database.DailyParticipationAgrega{
+		ChainID: chain, Addr: "g1anyaddr", Moniker: "any",
+		BlockDate:         time.Now().UTC().AddDate(0, 0, -4).Format("2006-01-02"),
+		ParticipatedCount: 1, TotalBlocks: 1,
+	}
+	require.NoError(t, db.Create(&agrega).Error)
+
+	// Raw-only, BEFORE the watermark (6 days ago): must be excluded by the
+	// now-bounded fallback branch.
+	stale := database.DailyParticipation{
+		ChainID: chain, Addr: "g1stale", Moniker: "stale-val",
+		BlockHeight: 1, Date: time.Now().UTC().AddDate(0, 0, -6),
+		Participated: true,
+	}
+	require.NoError(t, db.Create(&stale).Error)
+
+	// Raw-only, AFTER the watermark (2 days ago): must still be included.
+	recent := database.DailyParticipation{
+		ChainID: chain, Addr: "g1recent", Moniker: "recent-val",
+		BlockHeight: 2, Date: time.Now().UTC().AddDate(0, 0, -2),
+		Participated: true,
+	}
+	require.NoError(t, db.Create(&recent).Error)
+
+	rates, err := database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	require.NoError(t, err)
+
+	addrs := make([]string, 0, len(rates))
+	for _, r := range rates {
+		addrs = append(addrs, r.Addr)
+	}
+	assert.Contains(t, addrs, "g1anyaddr", "agrega-covered address must always appear")
+	assert.Contains(t, addrs, "g1recent", "raw row at/after the watermark must still be picked up by the fallback")
+	assert.NotContains(t, addrs, "g1stale", "raw row before the watermark must be excluded by the bounded fallback")
+}
+
 func TestUptimeAndMissingBlock_MonikerFrozenFallback(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	const chain, addr, frozen = "test-13", "g1uptimeaddr", "uptime-val"

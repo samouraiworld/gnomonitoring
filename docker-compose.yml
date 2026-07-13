@@ -7,6 +7,23 @@ services:
       POSTGRES_USER: gnomonitoring
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: gnomonitoring
+    # Tuned for the daily_participations hot table (several GB, high insert
+    # rate). Defaults (shared_buffers=128MB, work_mem=4MB) were sized for a
+    # toy dataset: under concurrent metric queries this forced sorts to spill
+    # to disk (external merge) and left almost nothing cached, which was a
+    # major contributor to a 2026-07-13 production CPU incident. Values below
+    # assume a host with several GB of free RAM; shrink shared_buffers if
+    # deploying on a smaller box.
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=4GB"
+      - "-c"
+      - "effective_cache_size=16GB"
+      - "-c"
+      - "work_mem=64MB"
+      - "-c"
+      - "maintenance_work_mem=512MB"
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
