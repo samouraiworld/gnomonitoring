@@ -112,7 +112,7 @@ func TestGetCurrentPeriodParticipationRate_CrossChain(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query betanet participation rate - should include seeded data and new data
-	betanetRates, err := database.GetCurrentPeriodParticipationRate(db, "betanet", "all_time")
+	betanetRates, err := database.GetCurrentPeriodParticipationRate(db, "betanet", "all_time", time.Time{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, betanetRates)
 
@@ -122,7 +122,7 @@ func TestGetCurrentPeriodParticipationRate_CrossChain(t *testing.T) {
 	}
 
 	// Query gnoland1 participation rate
-	gnolandRates, err := database.GetCurrentPeriodParticipationRate(db, "gnoland1", "all_time")
+	gnolandRates, err := database.GetCurrentPeriodParticipationRate(db, "gnoland1", "all_time", time.Time{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, gnolandRates)
 
@@ -200,7 +200,7 @@ func TestUptimeMetricsaddr_CrossChain(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query betanet uptime
-	betanetUptime, err := database.UptimeMetricsaddr(db, "betanet")
+	betanetUptime, err := database.UptimeMetricsaddr(db, "betanet", time.Time{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, betanetUptime)
 
@@ -211,7 +211,7 @@ func TestUptimeMetricsaddr_CrossChain(t *testing.T) {
 	}
 
 	// Query gnoland1 uptime
-	gnolandUptime, err := database.UptimeMetricsaddr(db, "gnoland1")
+	gnolandUptime, err := database.UptimeMetricsaddr(db, "gnoland1", time.Time{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, gnolandUptime)
 
@@ -265,7 +265,7 @@ func TestMissingBlock_CrossChain(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query betanet missing blocks
-	betanetMissing, err := database.MissingBlock(db, "betanet", "all_time")
+	betanetMissing, err := database.MissingBlock(db, "betanet", "all_time", time.Time{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, betanetMissing)
 
@@ -275,7 +275,7 @@ func TestMissingBlock_CrossChain(t *testing.T) {
 	}
 
 	// Query gnoland1 missing blocks
-	gnolandMissing, err := database.MissingBlock(db, "gnoland1", "all_time")
+	gnolandMissing, err := database.MissingBlock(db, "gnoland1", "all_time", time.Time{})
 	require.NoError(t, err)
 
 	// Verify we only see gnoland1 validators, not betanet
@@ -319,7 +319,7 @@ func TestGetFirstSeen_CrossChain(t *testing.T) {
 	require.NoError(t, err)
 
 	// Query betanet first seen - should include seeded data and new data
-	betanetFirstSeen, err := database.GetFirstSeen(db, "betanet")
+	betanetFirstSeen, err := database.GetFirstSeen(db, "betanet", time.Time{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, betanetFirstSeen)
 
@@ -329,7 +329,7 @@ func TestGetFirstSeen_CrossChain(t *testing.T) {
 	}
 
 	// Query gnoland1 first seen
-	gnolandFirstSeen, err := database.GetFirstSeen(db, "gnoland1")
+	gnolandFirstSeen, err := database.GetFirstSeen(db, "gnoland1", time.Time{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, gnolandFirstSeen)
 
@@ -577,7 +577,7 @@ func TestGetCurrentPeriodParticipationRate_MonikerFrozenFallback(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&rows).Error)
 
-	rates, err := database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	rates, err := database.GetCurrentPeriodParticipationRate(db, chain, "all_time", time.Time{})
 	require.NoError(t, err)
 	require.Len(t, rates, 1)
 	assert.Equal(t, frozen, rates[0].Moniker,
@@ -585,7 +585,7 @@ func TestGetCurrentPeriodParticipationRate_MonikerFrozenFallback(t *testing.T) {
 
 	// A persisted 'unknown' placeholder must not beat the frozen moniker either.
 	require.NoError(t, db.Create(&database.AddrMoniker{ChainID: chain, Addr: addr, Moniker: "unknown"}).Error)
-	rates, err = database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	rates, err = database.GetCurrentPeriodParticipationRate(db, chain, "all_time", time.Time{})
 	require.NoError(t, err)
 	require.Len(t, rates, 1)
 	assert.Equal(t, frozen, rates[0].Moniker, "'unknown' in addr_monikers must not mask the frozen moniker")
@@ -594,7 +594,7 @@ func TestGetCurrentPeriodParticipationRate_MonikerFrozenFallback(t *testing.T) {
 	require.NoError(t, db.Model(&database.AddrMoniker{}).
 		Where("chain_id = ? AND addr = ?", chain, addr).
 		Update("moniker", "gfanton-live").Error)
-	rates, err = database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	rates, err = database.GetCurrentPeriodParticipationRate(db, chain, "all_time", time.Time{})
 	require.NoError(t, err)
 	require.Len(t, rates, 1)
 	assert.Equal(t, "gfanton-live", rates[0].Moniker, "a real live moniker takes precedence over the frozen one")
@@ -612,7 +612,7 @@ func TestGetCurrentPeriodParticipationRate_MonikerFrozenFallback_AgregaLeg(t *te
 	}
 	require.NoError(t, db.Create(&agrega).Error)
 
-	rates, err := database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	rates, err := database.GetCurrentPeriodParticipationRate(db, chain, "all_time", time.Time{})
 	require.NoError(t, err)
 	require.Len(t, rates, 1)
 	assert.Equal(t, frozen, rates[0].Moniker, "the agrega leg must thread its frozen moniker too")
@@ -656,7 +656,9 @@ func TestGetCurrentPeriodParticipationRate_FallbackBoundedByAggregationWatermark
 	}
 	require.NoError(t, db.Create(&recent).Error)
 
-	rates, err := database.GetCurrentPeriodParticipationRate(db, chain, "all_time")
+	aggregatedThrough, err := database.GetAggregatedThrough(db, chain)
+	require.NoError(t, err)
+	rates, err := database.GetCurrentPeriodParticipationRate(db, chain, "all_time", aggregatedThrough)
 	require.NoError(t, err)
 
 	addrs := make([]string, 0, len(rates))
@@ -678,12 +680,12 @@ func TestUptimeAndMissingBlock_MonikerFrozenFallback(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&rows).Error)
 
-	up, err := database.UptimeMetricsaddr(db, chain)
+	up, err := database.UptimeMetricsaddr(db, chain, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, up, 1)
 	assert.Equal(t, frozen, up[0].Moniker, "uptime must use the frozen moniker when addr_monikers is empty")
 
-	missing, err := database.MissingBlock(db, chain, "all_time")
+	missing, err := database.MissingBlock(db, chain, "all_time", time.Time{})
 	require.NoError(t, err)
 	require.Len(t, missing, 1)
 	assert.Equal(t, frozen, missing[0].Moniker, "missing-block must use the frozen moniker when addr_monikers is empty")
