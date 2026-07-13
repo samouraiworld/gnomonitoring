@@ -14,6 +14,7 @@ type ValidatorScoreRaw struct {
 	CriticalCount  int    `json:"critical_count"`
 	WarningCount   int    `json:"warning_count"`
 	DowntimeBlocks int64  `json:"downtime_blocks"`
+	IncidentCount  int    `json:"incident_count"`
 }
 
 // periodBounds returns [start,end) for a report period. All bounds are derived
@@ -246,9 +247,19 @@ func GetValidatorParticipation(db *gorm.DB, chainID, period string) ([]Participa
 	return rows, chainBlocks, nil
 }
 
-// GetValidatorScores returns per-validator CRITICAL/WARNING counts and summed
-// downtime blocks for the given chain and period. Ongoing outages
-// (end_height = 0) contribute 0 downtime. Scoped to chain_id.
+// GetValidatorScores returns per-validator CRITICAL/WARNING counts, summed
+// downtime blocks, and distinct-incident frequency for the given chain and
+// period. Ongoing outages (end_height = 0) contribute 0 downtime. Scoped to
+// chain_id.
+//
+// IncidentCount collapses consecutive WARNING/CRITICAL rows not separated by a
+// RESOLVED into one incident (an escalation from WARNING to CRITICAL is one
+// incident, not two). The "prior" CTE below resolves whether the first
+// in-period alert continues an already-open incident using one LATERAL
+// LIMIT-1 index probe per validator that alerted this period — NOT a scan
+// over all pre-period alert_logs history. See
+// docs/superpowers/specs/2026-07-13-alert-frequency-score-design.md
+// "Performance constraint" for why this shape is required.
 func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRaw, error) {
 	start, end, err := periodBounds(period, time.Now())
 	if err != nil {
@@ -257,6 +268,44 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 
 	var rows []ValidatorScoreRaw
 	err = db.Raw(`
+		WITH in_period AS (
+			SELECT addr, level, sent_at, id
+			FROM alert_logs
+			WHERE chain_id = ? AND addr <> 'all'
+			  AND level IN ('WARNING','CRITICAL','RESOLVED')
+			  AND sent_at >= ? AND sent_at < ?
+		),
+		addrs AS (
+			SELECT DISTINCT addr FROM in_period WHERE level IN ('WARNING','CRITICAL')
+		),
+		prior AS (
+			SELECT a.addr, p.level, p.sent_at, p.id
+			FROM addrs a
+			LEFT JOIN LATERAL (
+				SELECT level, sent_at, id
+				FROM alert_logs
+				WHERE chain_id = ? AND addr = a.addr AND sent_at < ?
+				ORDER BY sent_at DESC, id DESC
+				LIMIT 1
+			) p ON true
+		),
+		tagged AS (
+			SELECT addr, level, sent_at, id,
+			       LAG(level) OVER (PARTITION BY addr ORDER BY sent_at, id) AS prev_level
+			FROM (
+				SELECT addr, level, sent_at, id FROM prior WHERE level IS NOT NULL
+				UNION ALL
+				SELECT addr, level, sent_at, id FROM in_period
+			) combined
+		),
+		incidents AS (
+			SELECT addr, COUNT(*) AS incident_count
+			FROM tagged
+			WHERE sent_at >= ? AND sent_at < ?
+			  AND level IN ('WARNING','CRITICAL')
+			  AND (prev_level IS NULL OR prev_level = 'RESOLVED')
+			GROUP BY addr
+		)
 		SELECT al.addr AS addr,
 		       COALESCE(MAX(am.moniker), MAX(al.moniker), '') AS moniker,
 		       COUNT(*) FILTER (WHERE al.level = 'CRITICAL') AS critical_count,
@@ -264,16 +313,18 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 		       COALESCE(SUM(
 		           CASE WHEN al.level = 'CRITICAL' AND al.end_height > al.start_height
 		                THEN al.end_height - al.start_height ELSE 0 END
-		       ), 0) AS downtime_blocks
+		       ), 0) AS downtime_blocks,
+		       COALESCE(MAX(incidents.incident_count), 0) AS incident_count
 		FROM alert_logs al
 		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
+		LEFT JOIN incidents ON incidents.addr = al.addr
 		WHERE al.chain_id = ?
 		  AND al.level IN ('CRITICAL','WARNING')
 		  AND al.addr <> 'all'
 		  AND al.sent_at >= ? AND al.sent_at < ?
 		GROUP BY al.addr
 		ORDER BY al.addr
-	`, chainID, start, end).Scan(&rows).Error
+	`, chainID, start, end, chainID, start, start, end, chainID, start, end).Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("GetValidatorScores(%s,%s): %w", chainID, period, err)
 	}
