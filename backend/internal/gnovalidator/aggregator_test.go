@@ -146,6 +146,88 @@ func TestAggregateChain_MultipleDays(t *testing.T) {
 	require.Equal(t, int64(2), countAgrega(t, db, testChain))
 }
 
+// TestAggregateChain_NeverRevisitsAggregatedDay documents the gap
+// ReaggregateDateRange exists to close: once a day has an agrega row,
+// AggregateChain's "> lastDate" scan skips it forever, even if more raw rows
+// for that exact day arrive afterward (e.g. a late BackfillParallel run).
+func TestAggregateChain_NeverRevisitsAggregatedDay(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	past := time.Now().UTC().AddDate(0, 0, -4)
+	day := time.Date(past.Year(), past.Month(), past.Day(), 12, 0, 0, 0, time.UTC)
+
+	seedRaw(t, db, []database.DailyParticipation{
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 600, Date: day, Participated: true, Moniker: "Alice"},
+	})
+	require.NoError(t, gnovalidator.AggregateChain(db, testChain))
+
+	var total int
+	require.NoError(t, db.Raw(
+		`SELECT total_blocks FROM daily_participation_agregas WHERE chain_id = ? AND addr = ?`,
+		testChain, "g1aaa",
+	).Scan(&total).Error)
+	require.Equal(t, 1, total, "one raw row aggregated so far")
+
+	// A late backfill writes one more row for the SAME already-aggregated day.
+	require.NoError(t, db.Create(&database.DailyParticipation{
+		ChainID: testChain, Addr: "g1aaa", BlockHeight: 601, Date: day, Participated: true, Moniker: "Alice",
+	}).Error)
+
+	require.NoError(t, gnovalidator.AggregateChain(db, testChain))
+
+	require.NoError(t, db.Raw(
+		`SELECT total_blocks FROM daily_participation_agregas WHERE chain_id = ? AND addr = ?`,
+		testChain, "g1aaa",
+	).Scan(&total).Error)
+	require.Equal(t, 1, total, "AggregateChain must NOT pick up the late row — it never revisits an already-aggregated day")
+}
+
+// TestReaggregateDateRange_PicksUpLateBackfilledDay verifies the fix: forcing
+// a re-aggregation pass over the day backfill touched correctly folds in rows
+// that arrived after that day was already aggregated.
+func TestReaggregateDateRange_PicksUpLateBackfilledDay(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	past := time.Now().UTC().AddDate(0, 0, -4)
+	day := time.Date(past.Year(), past.Month(), past.Day(), 12, 0, 0, 0, time.UTC)
+
+	seedRaw(t, db, []database.DailyParticipation{
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 600, Date: day, Participated: true, Moniker: "Alice"},
+	})
+	require.NoError(t, gnovalidator.AggregateChain(db, testChain))
+
+	// Late backfill writes one more row for the same already-aggregated day.
+	require.NoError(t, db.Create(&database.DailyParticipation{
+		ChainID: testChain, Addr: "g1aaa", BlockHeight: 601, Date: day, Participated: true, Moniker: "Alice",
+	}).Error)
+
+	require.NoError(t, gnovalidator.ReaggregateDateRange(db, testChain, day, day))
+
+	var total int
+	require.NoError(t, db.Raw(
+		`SELECT total_blocks FROM daily_participation_agregas WHERE chain_id = ? AND addr = ?`,
+		testChain, "g1aaa",
+	).Scan(&total).Error)
+	require.Equal(t, 2, total, "ReaggregateDateRange must fold in the late-arriving row")
+}
+
+// TestReaggregateDateRange_ClampsToday verifies "to" is clamped to yesterday
+// so an in-progress day is never frozen as final by a backfill that catches
+// all the way up to the present.
+func TestReaggregateDateRange_ClampsToday(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 10, 0, 0, 0, time.UTC)
+
+	seedRaw(t, db, []database.DailyParticipation{
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 700, Date: today, Participated: true, Moniker: "Alice"},
+	})
+
+	require.NoError(t, gnovalidator.ReaggregateDateRange(db, testChain, today, today))
+	require.Equal(t, int64(0), countAgrega(t, db, testChain), "today must never be force-aggregated, same rule as AggregateChain")
+}
+
 // TestAggregateChain_ProposedCount verifies that proposed blocks are summed
 // into proposed_count for the day.
 func TestAggregateChain_ProposedCount(t *testing.T) {

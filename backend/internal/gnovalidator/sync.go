@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -238,11 +239,20 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 
 	// writer unique + batch
 	buf := make([]dpRow, 0, flushThreshold)
+	var minDate, maxDate time.Time
 	for o := range outs {
 		if o.Err != nil {
 			continue
 		}
 		buf = append(buf, o.Rows...)
+		for _, r := range o.Rows {
+			if minDate.IsZero() || r.Date.Before(minDate) {
+				minDate = r.Date
+			}
+			if r.Date.After(maxDate) {
+				maxDate = r.Date
+			}
+		}
 		if len(buf) >= flushThreshold {
 			if err := flushBatch(db, buf); err != nil {
 				return err
@@ -250,5 +260,21 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 			buf = buf[:0]
 		}
 	}
-	return flushBatch(db, buf)
+	if err := flushBatch(db, buf); err != nil {
+		return err
+	}
+
+	// The backfilled range can span days already rolled into
+	// daily_participation_agregas (this runs whenever the live sync gap
+	// exceeds 500 blocks, not just at startup — see the "> 500" check in
+	// CollectParticipation). AggregateChain never revisits an already-
+	// aggregated day, so force a re-aggregation pass over exactly the days
+	// this backfill touched.
+	if !minDate.IsZero() {
+		if err := ReaggregateDateRange(db, chainID, minDate, maxDate); err != nil {
+			log.Printf("[monitor][%s] backfill: re-aggregate [%s..%s] failed: %v",
+				chainID, minDate.Format("2006-01-02"), maxDate.Format("2006-01-02"), err)
+		}
+	}
+	return nil
 }
