@@ -208,6 +208,12 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 
 	out := make([]validatorReport, 0, len(order))
 	for _, addr := range order {
+		// vpByAddr only contains addrs with voting_power > 0 (GetValidatorVP) —
+		// a validator absent here has left the valset. Exclude it from the
+		// report entirely (every period), even under an explicit ?addr= match.
+		if _, inValset := vpByAddr[addr]; !inValset {
+			continue
+		}
 		rep := byAddr[addr]
 		if t, ok := lastAlertByAddr[addr]; ok {
 			d := int(now.Sub(t).Hours() / 24)
