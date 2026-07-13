@@ -61,6 +61,9 @@ type ChainHealthSnapshot struct {
 	PeerCount         int
 	MempoolTxCount    int
 	MempoolTotalBytes int64
+
+	// BFTLine is the pre-rendered BFT safety-margin line from gnovalidator.
+	BFTLine string
 }
 
 // ValidatorInfo mirrors gnovalidator.ValidatorInfo.
@@ -2345,6 +2348,10 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 			}
 			return entries[i].addr < entries[j].addr
 		})
+
+		if snap.BFTLine != "" {
+			b.WriteString(snap.BFTLine + "\n")
+		}
 
 		headerPower := ""
 		if totalPower > 0 {

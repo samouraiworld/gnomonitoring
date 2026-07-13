@@ -85,6 +85,7 @@ func main() {
 				PeerCount:         snap.PeerCount,
 				MempoolTxCount:    snap.MempoolTxCount,
 				MempoolTotalBytes: snap.MempoolTotalBytes,
+				BFTLine:           snap.BFTLine,
 			}
 			if snap.PrecommitBitmap != nil {
 				tgSnap.PrecommitBitmap = snap.PrecommitBitmap
