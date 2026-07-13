@@ -11,6 +11,8 @@ const DEFAULT_WEIGHTS: Record<string, number> = {
   report_score_critical_cap: 60,
   report_score_warning_weight: 2,
   report_score_warning_cap: 20,
+  report_score_freq_weight: 3,
+  report_score_freq_cap: 30,
   report_score_downtime_blocks_per_point: 500,
   report_score_downtime_cap: 20,
   report_score_proposer_min_expected: 5,
@@ -33,6 +35,8 @@ export default function ScoreLegend({ thresholds }: { thresholds: Record<string,
   const criticalCap = weight(thresholds, 'report_score_critical_cap')
   const warningWeight = weight(thresholds, 'report_score_warning_weight')
   const warningCap = weight(thresholds, 'report_score_warning_cap')
+  const freqWeight = weight(thresholds, 'report_score_freq_weight')
+  const freqCap = weight(thresholds, 'report_score_freq_cap')
   const downtimePerPoint = weight(thresholds, 'report_score_downtime_blocks_per_point')
   const downtimeCap = weight(thresholds, 'report_score_downtime_cap')
   const minExpected = weight(thresholds, 'report_score_proposer_min_expected')
@@ -61,9 +65,10 @@ export default function ScoreLegend({ thresholds }: { thresholds: Record<string,
 Proposer% is dropped when fewer than ${minExpected} proposals are expected → presence = Sign%`}</code>
 
           <p><strong>Penalties</strong> grow with incidents and stake:</p>
-          <code className="score-legend-formula">{`penalties = (critical + warning + downtime) × severity
+          <code className="score-legend-formula">{`penalties = (critical + warning + freq + downtime) × severity
   • −${criticalWeight} per CRITICAL alert (max ${criticalCap})
   • −${warningWeight} per WARNING alert (max ${warningCap})
+  • −${freqWeight} per distinct incident (max ${freqCap})
   • −1 per ${downtimePerPoint} downtime blocks (max ${downtimeCap})
 severity = 1 + ${vpSeverity} × (VP / max VP)`}</code>
 

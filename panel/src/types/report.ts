@@ -12,6 +12,7 @@ export interface PeriodScore {
   voting_power: number
   critical_count: number
   warning_count: number
+  incident_count: number
   downtime_blocks: number
   missed_blocks: number
 }
