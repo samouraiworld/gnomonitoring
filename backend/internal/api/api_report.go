@@ -21,6 +21,7 @@ type periodScore struct {
 	VotingPower         int64    `json:"voting_power"`
 	CriticalCount       int      `json:"critical_count"`
 	WarningCount        int      `json:"warning_count"`
+	IncidentCount       int      `json:"incident_count"`
 	DowntimeBlocks      int64    `json:"downtime_blocks"`
 	MissedBlocks        int64    `json:"missed_blocks"`
 }
@@ -71,6 +72,7 @@ func mergeParticipationAndAlerts(partRows []database.ParticipationRaw, alertRows
 		m := ensure(a.Addr)
 		m.in.CriticalCount = a.CriticalCount
 		m.in.WarningCount = a.WarningCount
+		m.in.IncidentCount = a.IncidentCount
 		m.in.DowntimeBlocks = a.DowntimeBlocks
 		if a.Moniker != "" {
 			m.moniker = a.Moniker
@@ -189,6 +191,7 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 				VotingPower:    in.VotingPower,
 				CriticalCount:  in.CriticalCount,
 				WarningCount:   in.WarningCount,
+				IncidentCount:  in.IncidentCount,
 				DowntimeBlocks: in.DowntimeBlocks,
 				MissedBlocks:   in.TotalBlocks - in.SignedBlocks,
 			}

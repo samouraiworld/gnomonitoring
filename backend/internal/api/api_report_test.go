@@ -74,8 +74,14 @@ func TestGetValidatorReportHandler(t *testing.T) {
 	if p.CriticalCount != 1 || p.DowntimeBlocks != 30 {
 		t.Fatalf("current_month wrong: %+v", p)
 	}
-	if p.Score != 94 || p.Tier != "Excellent" {
-		t.Fatalf("score wrong: got (%d,%s), want (94,Excellent)", p.Score, p.Tier)
+	// Score now also reflects the frequency penalty: 1 distinct incident (the
+	// single CRITICAL alert) @ default FreqWeight=3, on top of the existing
+	// critical penalty (@6): 100 - 6 - 3 = 91.
+	if p.Score != 91 || p.Tier != "Excellent" {
+		t.Fatalf("score wrong: got (%d,%s), want (91,Excellent)", p.Score, p.Tier)
+	}
+	if p.IncidentCount != 1 {
+		t.Fatalf("want incident_count 1, got %d", p.IncidentCount)
 	}
 	if _, ok := alerting.Periods["last_24h"]; !ok {
 		t.Fatalf("missing last_24h period")
