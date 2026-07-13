@@ -1,6 +1,7 @@
 package database_test
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -122,7 +123,7 @@ func TestCleanupTrailingGhostParticipations(t *testing.T) {
 	seedDP(t, db, chain, "g1bonded", 110, false, day)
 
 	currentAddrs := []string{"g1bonded"}
-	require.NoError(t, database.CleanupTrailingGhostParticipations(db, chain, currentAddrs))
+	require.NoError(t, database.CleanupTrailingGhostParticipations(context.Background(), db, chain, currentAddrs))
 
 	var departedRows []database.DailyParticipation
 	require.NoError(t, db.Where("chain_id = ? AND addr = ?", chain, "g1departed").
@@ -148,7 +149,7 @@ func TestCleanupTrailingGhostParticipations_EmptyCurrentAddrsIsNoop(t *testing.T
 	// An empty currentAddrs must be treated as "valset unknown" and be a
 	// deliberate no-op, not "everyone is departed" (which would otherwise
 	// vacuously match every address via addr <> ALL(empty array) = true).
-	require.NoError(t, database.CleanupTrailingGhostParticipations(db, chain, nil))
+	require.NoError(t, database.CleanupTrailingGhostParticipations(context.Background(), db, chain, nil))
 
 	var rows []database.DailyParticipation
 	require.NoError(t, db.Where("chain_id = ?", chain).Find(&rows).Error)
@@ -175,7 +176,7 @@ func TestCleanupTrailingGhostParticipations_AgregaTable(t *testing.T) {
 	seedAgrega(t, db, chain, "g1bonded", "2026-01-02", 0, 105, 110)
 
 	currentAddrs := []string{"g1bonded"}
-	require.NoError(t, database.CleanupTrailingGhostParticipations(db, chain, currentAddrs))
+	require.NoError(t, database.CleanupTrailingGhostParticipations(context.Background(), db, chain, currentAddrs))
 
 	var departedAgregas []database.DailyParticipationAgrega
 	require.NoError(t, db.Where("chain_id = ? AND addr = ?", chain, "g1departed").

@@ -32,3 +32,27 @@ func TestRecordActivationOrSkip(t *testing.T) {
 	// miss and must NOT be skipped.
 	require.False(t, gnovalidator.RecordActivationOrSkip(db, chainID, addr, 31, false))
 }
+
+func TestRecordActivationOrSkip_OutOfOrderKeepsEarliestActivation(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chainID := "test-record-activation-race"
+	addr := "g1raced"
+
+	// A worker processing a LATER height's true participation runs first —
+	// plausible with 20 concurrent BackfillParallel workers pulling jobs
+	// without a guaranteed ascending-height order.
+	require.False(t, gnovalidator.RecordActivationOrSkip(db, chainID, addr, 110, true))
+	require.Equal(t, int64(110), gnovalidator.GetFirstActiveBlock(chainID, addr))
+
+	// A worker processing the true, EARLIER first-activation height arrives
+	// after. It must lower the recorded value, not be discarded just because
+	// a later height already "won" the race.
+	require.False(t, gnovalidator.RecordActivationOrSkip(db, chainID, addr, 100, true))
+	require.Equal(t, int64(100), gnovalidator.GetFirstActiveBlock(chainID, addr))
+
+	// A real miss between the true activation (100) and the wrongly-raced
+	// later value (110) must now be recorded, not silently discarded as
+	// "before activation" — this was the exact undercount the non-atomic
+	// check-then-act version of this guard was exposed to.
+	require.False(t, gnovalidator.RecordActivationOrSkip(db, chainID, addr, 105, false))
+}

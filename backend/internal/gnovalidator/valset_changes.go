@@ -71,6 +71,31 @@ func signingToOperatorFromValopers(valopers []Valoper) map[string]string {
 	return m
 }
 
+// cachedValopersMap[chainID] holds the last valoper registry snapshot for
+// which a fetch actually succeeded. Mirrors signingToOperatorMap's pattern:
+// callers should update it under the same "only if len(valopers) > 0" gate,
+// and fall back to it as currentValopers for classifyValsetChanges on a
+// cycle where the fetch transiently failed, instead of passing an empty
+// list that would make any real rotation that cycle unmatchable even though
+// prevSigningToOperator (from the last successful fetch) is still intact.
+var cachedValopersMap = make(map[string][]Valoper)
+var cachedValopersMutex sync.RWMutex
+
+// getCachedValopers returns the last known-good valoper snapshot for chainID
+// (nil if never set).
+func getCachedValopers(chainID string) []Valoper {
+	cachedValopersMutex.RLock()
+	defer cachedValopersMutex.RUnlock()
+	return cachedValopersMap[chainID]
+}
+
+// setCachedValopers replaces the last known-good valoper snapshot for chainID.
+func setCachedValopers(chainID string, valopers []Valoper) {
+	cachedValopersMutex.Lock()
+	defer cachedValopersMutex.Unlock()
+	cachedValopersMap[chainID] = valopers
+}
+
 // classifyValsetChanges compares oldMap (the moniker snapshot before this
 // refresh cycle) with newMap (the snapshot after), and correlates any
 // departures with arrivals via prevSigningToOperator (each now-removed
@@ -107,7 +132,6 @@ func classifyValsetChanges(
 	}
 
 	var events []ValsetChangeEvent
-	matchedArrival := make(map[string]bool)
 
 	for r := range removed {
 		if operator, ok := prevSigningToOperator[r]; ok {
@@ -118,7 +142,9 @@ func classifyValsetChanges(
 					OldAddr: r,
 					NewAddr: newSigning,
 				})
-				matchedArrival[newSigning] = true
+				// Remove from added so the second loop below doesn't also
+				// report this same arrival as a plain ValidatorJoined.
+				delete(added, newSigning)
 				continue
 			}
 		}
@@ -130,9 +156,6 @@ func classifyValsetChanges(
 	}
 
 	for a := range added {
-		if matchedArrival[a] {
-			continue
-		}
 		events = append(events, ValsetChangeEvent{
 			Kind:    ValidatorJoined,
 			Moniker: newMap[a],

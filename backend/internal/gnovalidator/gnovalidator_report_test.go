@@ -24,13 +24,22 @@ func TestSaveParticipation2(t *testing.T) {
 
 	blockTime := time.Date(2025, 10, 1, 12, 0, 0, 0, time.UTC)
 
+	// addr2 needs a genuine prior activation before a participated=false row
+	// for it is recorded rather than skipped as a phantom pre-activation row.
+	err := gnovalidator.SaveParticipation(db, "testchain", 99,
+		map[string]gnovalidator.Participation{"addr2": {Participated: true, Timestamp: blockTime}},
+		monikerMap, blockTime)
+	if err != nil {
+		t.Fatalf("SaveParticipation failed: %v", err)
+	}
+
 	participating := map[string]gnovalidator.Participation{
 		"addr1": {Participated: true, Timestamp: blockTime, TxContribution: true},
 		"addr2": {Participated: false, Timestamp: blockTime, TxContribution: false},
 	}
 
 	// call SavePArticipation
-	err := gnovalidator.SaveParticipation(db, "testchain", 100, participating, monikerMap, blockTime)
+	err = gnovalidator.SaveParticipation(db, "testchain", 100, participating, monikerMap, blockTime)
 	if err != nil {
 		t.Fatalf("SaveParticipation failed: %v", err)
 	}

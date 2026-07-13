@@ -29,7 +29,7 @@ type out struct {
 
 // RecordActivationOrSkip is the shared first-activation guard used while
 // writing daily_participations rows. It reads and writes the live,
-// thread-safe FirstActiveBlockMap (GetFirstActiveBlock/SetFirstActiveBlock)
+// thread-safe FirstActiveBlockMap (GetFirstActiveBlock/SetFirstActiveBlockIfEarlier)
 // rather than a point-in-time snapshot, so concurrent backfill workers
 // observe each other's discoveries immediately instead of each working off
 // a copy that's stale for the whole run. Returns true when the caller
@@ -37,8 +37,12 @@ type out struct {
 // predates the validator's first recorded activation.
 func RecordActivationOrSkip(db *gorm.DB, chainID, addr string, height int64, participated bool) bool {
 	if participated {
-		if GetFirstActiveBlock(chainID, addr) == -1 {
-			SetFirstActiveBlock(chainID, addr, height)
+		// SetFirstActiveBlockIfEarlier is a single atomic check-and-write, so
+		// with 20 concurrent workers processing blocks without a guaranteed
+		// ascending-height order, whichever true-participation height turns out
+		// to be the smallest always wins as the recorded activation — never a
+		// later height that merely happened to be processed first.
+		if SetFirstActiveBlockIfEarlier(chainID, addr, height) {
 			_ = database.UpsertFirstActiveBlock(db, chainID, addr, height)
 		}
 		return false

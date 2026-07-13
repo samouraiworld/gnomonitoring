@@ -90,3 +90,34 @@ func TestSigningToOperatorState(t *testing.T) {
 	setSigningToOperator(chainID, map[string]string{"g1sign": "g1op"})
 	require.Equal(t, map[string]string{"g1sign": "g1op"}, getSigningToOperator(chainID))
 }
+
+func TestCachedValopersState(t *testing.T) {
+	chainID := "test-cached-valopers-state"
+	require.Nil(t, getCachedValopers(chainID))
+
+	valopers := []Valoper{{Name: "A", Address: "g1opA", SigningAddress: "g1signA"}}
+	setCachedValopers(chainID, valopers)
+	require.Equal(t, valopers, getCachedValopers(chainID))
+}
+
+// TestClassifyValsetChanges_CachedValopersFallback exercises the scenario the
+// cached-valopers fallback exists for: a rotation that would be correlated
+// using the last known-good valoper snapshot, even though the fetch that
+// happened during THIS cycle failed (currentValopers empty for the classify
+// call, exactly as WatchNewValidators falls back to getCachedValopers when
+// InitMonikerMap returns no fresh data).
+func TestClassifyValsetChanges_CachedValopersFallback(t *testing.T) {
+	oldMap := map[string]string{"g1old": "Validaria"}
+	newMap := map[string]string{"g1new": "Validaria"}
+	prevSigningToOperator := map[string]string{"g1old": "g1operator"}
+	lastKnownGoodValopers := []Valoper{
+		{Name: "Validaria", Address: "g1operator", SigningAddress: "g1new"},
+	}
+
+	// currentValopers is the cached (not freshly-fetched) snapshot.
+	events := classifyValsetChanges(oldMap, newMap, prevSigningToOperator, lastKnownGoodValopers)
+	require.Len(t, events, 1)
+	require.Equal(t, ValidatorAddressChanged, events[0].Kind)
+	require.Equal(t, "g1old", events[0].OldAddr)
+	require.Equal(t, "g1new", events[0].NewAddr)
+}
