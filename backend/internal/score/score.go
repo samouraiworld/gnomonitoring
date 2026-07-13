@@ -26,6 +26,8 @@ type Weights struct {
 	DowntimeCap            int
 	WarningWeight          int
 	WarningCap             int
+	FreqWeight             int
+	FreqCap                int
 	ProposerMinExpected    int
 	SignWeight             float64
 	ProposerWeight         float64
@@ -40,6 +42,8 @@ func DefaultWeights() Weights {
 		DowntimeCap:            20,
 		WarningWeight:          2,
 		WarningCap:             20,
+		FreqWeight:             3,
+		FreqCap:                30,
 		ProposerMinExpected:    5,
 		SignWeight:             0.8,
 		ProposerWeight:         0.2,
@@ -62,6 +66,7 @@ type Inputs struct {
 	DowntimeBlocks int64
 	CriticalCount  int
 	WarningCount   int
+	IncidentCount  int // distinct WARNING/CRITICAL incidents (not raw alert rows)
 }
 
 // Result is the computed score plus the surfaced sub-metrics.
@@ -113,6 +118,10 @@ func Compute(in Inputs, w Weights) Result {
 	if warnPenalty > w.WarningCap {
 		warnPenalty = w.WarningCap
 	}
+	freqPenalty := in.IncidentCount * w.FreqWeight
+	if freqPenalty > w.FreqCap {
+		freqPenalty = w.FreqCap
+	}
 	downPenalty := 0
 	if w.DowntimeBlocksPerPoint > 0 {
 		downPenalty = int(in.DowntimeBlocks / int64(w.DowntimeBlocksPerPoint))
@@ -125,7 +134,7 @@ func Compute(in Inputs, w Weights) Result {
 	if in.MaxVotingPower > 0 && in.VotingPower > 0 {
 		severity = 1 + w.VpSeverityFactor*(float64(in.VotingPower)/float64(in.MaxVotingPower))
 	}
-	totalPenalty := float64(critPenalty+warnPenalty+downPenalty) * severity
+	totalPenalty := float64(critPenalty+warnPenalty+downPenalty+freqPenalty) * severity
 
 	s := int(math.Round(presence - totalPenalty))
 	if s < 0 {
@@ -164,6 +173,8 @@ const (
 	KeyDowntimeCap            = "report_score_downtime_cap"
 	KeyWarningWeight          = "report_score_warning_weight"
 	KeyWarningCap             = "report_score_warning_cap"
+	KeyFreqWeight             = "report_score_freq_weight"
+	KeyFreqCap                = "report_score_freq_cap"
 	KeyProposerMinExpected    = "report_score_proposer_min_expected"
 	KeySignWeight             = "report_score_sign_weight"
 	KeyProposerWeight         = "report_score_proposer_weight"
@@ -180,6 +191,8 @@ func WeightsFromConfig(cfg map[string]string) Weights {
 	w.DowntimeCap = numOr(cfg, KeyDowntimeCap, w.DowntimeCap, strconv.Atoi)
 	w.WarningWeight = numOr(cfg, KeyWarningWeight, w.WarningWeight, strconv.Atoi)
 	w.WarningCap = numOr(cfg, KeyWarningCap, w.WarningCap, strconv.Atoi)
+	w.FreqWeight = numOr(cfg, KeyFreqWeight, w.FreqWeight, strconv.Atoi)
+	w.FreqCap = numOr(cfg, KeyFreqCap, w.FreqCap, strconv.Atoi)
 	w.ProposerMinExpected = numOr(cfg, KeyProposerMinExpected, w.ProposerMinExpected, strconv.Atoi)
 	w.SignWeight = numOr(cfg, KeySignWeight, w.SignWeight, parseFloat64)
 	w.ProposerWeight = numOr(cfg, KeyProposerWeight, w.ProposerWeight, parseFloat64)
