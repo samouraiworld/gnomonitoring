@@ -30,6 +30,17 @@ Two services are available:
   - [🔗 Webhook Management (Discord / Slack)](#-webhook-management-discord--slack)
   - [📢 ALERTING](#-alerting)
   - [📝 Expose Metrics from API REST](#-expose-metrics-from-api-rest)
+    - [Participate Rate](#participate-rate)
+    - [Missing Block Metrics](#missing-block-metrics)
+    - [Tx Contrib Metrics](#tx-contrib-metrics)
+    - [Lastest incidents](#lastest-incidents)
+    - [Uptime Metrics](#uptime-metrics)
+    - [Operation time Metrics](#operation-time-metrics)
+    - [First Seen Metrics](#first-seen-metrics)
+    - [Block Height](#block-height)
+    - [Info](#info)
+    - [Addr Moniker](#addr-moniker)
+    - [Validator Health Report](#validator-health-report)
   - [👤 User Management (protected)](#-user-management-protected)
   - [🔔 Alert Contacts (protected)](#-alert-contacts-protected)
   - [🕘 Daily Report Schedule (protected)](#-daily-report-schedule-protected)
@@ -386,7 +397,7 @@ The disponible period for metrics:
 - current_year
 - all_time
 
-**Participate Rate:**
+##### Participate Rate
 
 The participation rate represents the percentage of blocks in which a validator successfully participated during a given time period.
 
@@ -401,7 +412,8 @@ Response:
   {"addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","moniker":"onbloc-val-02","participationRate":100}]
 ```
 
-**Missing Block Metrics:**
+##### Missing Block Metrics
+
 The Missing Block metric measures the total number of blocks that a validator failed to participate in during a given period
 
 ```bash
@@ -416,7 +428,8 @@ Response:
 {"moniker":"onbloc-val-01","addr":"g1kntcjkfplj0z44phajajwqkx5q4ry5yaft5q2h","missingBlock":1}...
 ```
 
-**Tx Contrib Metrics:**
+##### Tx Contrib Metrics
+
 The Tx Contribution metric measures how much a validator has contributed to the total number of transactions processed across all validators during a specific period.
 
 ```bash
@@ -430,7 +443,8 @@ Response:
 {"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","txContrib":22.9},...
 ```
 
-**Lastest incidents:**
+##### Lastest incidents
+
 The Latest Incidents metric retrieves the most recent critical or warning events (alerts) detected for validators within a specific time period.
 
 ```bash
@@ -445,7 +459,7 @@ Response:
 {"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","level":"WARNING","startHeight":78834,"endHeight":78838,"msg":"","sentAt":"2025-10-22T13:28:53.018836743-03:00"},
 ```
 
-**Uptime Metrics:**
+##### Uptime Metrics
 
 Validator Uptime represents the percentage of the last 500 blocks in which a validator was active and participated successfully.
 
@@ -460,7 +474,7 @@ Response:
 {"moniker":"gnocore-val-01","addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","uptime":100}]
 ```
 
-**Operation time Metrics:**
+##### Operation time Metrics
 
 Operation Time represents the number of days between a validator’s last successful participation and its most recent downtime.
 
@@ -477,7 +491,7 @@ Response:
 "lastUpDate":"2025-10-18 16:29:24.242186417+00:00","operationTime":4.4}....
 ```
 
-**First Seen Metrics:**
+##### First Seen Metrics
 
 Returns the first block date at which each validator was observed participating.
 
@@ -492,7 +506,7 @@ Response:
 {"addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","moniker":"onbloc-val-02","firstSeen":"2025-09-02 08:30:00+00:00"}]
 ```
 
-**Block Height:**
+##### Block Height
 
 Returns the last block height stored in the database.
 
@@ -506,7 +520,7 @@ Response:
 {"last_stored": 123456}
 ```
 
-**Info:**
+##### Info
 
 Returns the configured Gnoweb and RPC endpoint URLs.
 
@@ -520,7 +534,7 @@ Response:
 {"gnoweb":"https://test9.testnets.gno.land","rpc":"https://rpc.test9.testnets.gno.land"}
 ```
 
-**Addr Moniker:**
+##### Addr Moniker
 
 Returns the moniker for a given validator address.
 
@@ -534,7 +548,7 @@ Response:
 {"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01"}
 ```
 
-**Validator Health Report:**
+##### Validator Health Report
 
 Per-validator health score (0–100), tier, and alert metrics over four rolling periods. Always available, no authentication required, same as the other public dashboard endpoints above.
 
