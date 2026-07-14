@@ -116,6 +116,15 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Graceful degradation: if VP tracking has never produced a single data
+	// point for this chain (right after it's enabled, before InitMonikerMap's
+	// first successful cycle), don't apply the valset-membership filter at
+	// all. Otherwise "no VP captured yet" would be indistinguishable from
+	// "everyone departed" and hide every validator, contradicting the
+	// documented degraded state (vp=0 for everyone -> severity 1, proposer
+	// dropped, but validators still shown). Once at least one VP snapshot
+	// exists for the chain, resume the normal per-addr departure filter.
+	valsetFilterActive := len(vpByAddr) > 0
 
 	// Global (period-independent) recency signal: most recent alert per addr.
 	lastAlertByAddr, err := database.GetLastAlertTimes(db, chainID)
@@ -167,6 +176,15 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		sort.Strings(addrs)
 
 		for _, addr := range addrs {
+			// Skip departed validators here (before spending a score.Compute
+			// call and a report-entry allocation on data that gets discarded
+			// anyway) — see the valset-membership filter note below for why
+			// this check is skipped entirely when vpTrackingActive is false.
+			if valsetFilterActive {
+				if _, inValset := vpByAddr[addr]; !inValset {
+					continue
+				}
+			}
 			m := byAddrMerged[addr]
 			in := m.in
 			in.VotingPower = vpByAddr[addr]
@@ -211,8 +229,13 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		// vpByAddr only contains addrs with voting_power > 0 (GetValidatorVP) —
 		// a validator absent here has left the valset. Exclude it from the
 		// report entirely (every period), even under an explicit ?addr= match.
-		if _, inValset := vpByAddr[addr]; !inValset {
-			continue
+		// Gated by valsetFilterActive: skipped entirely during the graceful-
+		// degradation window (see above) so a chain with no VP data yet still
+		// shows everyone instead of excluding all of them.
+		if valsetFilterActive {
+			if _, inValset := vpByAddr[addr]; !inValset {
+				continue
+			}
 		}
 		rep := byAddr[addr]
 		if t, ok := lastAlertByAddr[addr]; ok {

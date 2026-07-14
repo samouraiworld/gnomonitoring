@@ -341,6 +341,65 @@ func TestGetValidatorReportHandlerExcludesDepartedValidators(t *testing.T) {
 	})
 }
 
+// TestGetValidatorReportHandlerNoVPDataYetShowsEveryone covers the documented
+// graceful-degradation case (CLAUDE.md: "before the first VP snapshot, vp=0
+// -> severity 1 + proposer dropped -> score = 100*sign_rate - alert_penalties"):
+// a chain that has never captured a single voting-power snapshot yet (no
+// addr_monikers row at all, e.g. right after a chain is enabled, before
+// InitMonikerMap's first successful cycle) must show every validator with
+// participation/alert history, not exclude everyone. The valset-membership
+// filter only kicks in once VP tracking has produced at least one data point
+// for the chain — otherwise "no VP captured yet" would be indistinguishable
+// from "everyone departed".
+func TestGetValidatorReportHandlerNoVPDataYetShowsEveryone(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now().UTC()
+
+	// No addr_monikers rows at all for this chain — simulates a chain before
+	// its first successful InitMonikerMap cycle.
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1nvp", Moniker: "no-vp-yet",
+		BlockHeight: 1, Date: now, Participated: true,
+	})
+
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"test12": {
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
+			Enabled:          true,
+		},
+	}
+	internal.EnabledChains = []string{"test12"}
+	internal.Config.DefaultChain = "test12"
+	defer func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/reports/validators?chain=test12", nil)
+	rec := httptest.NewRecorder()
+	GetValidatorReportHandler(rec, req, db)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out []validatorReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+	}
+	found := false
+	for _, rep := range out {
+		if rep.Addr == "g1nvp" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("validator must be shown when the chain has no VP data at all yet, got: %+v", out)
+	}
+}
+
 func TestGetValidatorReportHandlerInvalidChain(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
