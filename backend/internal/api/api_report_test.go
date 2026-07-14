@@ -30,6 +30,12 @@ func TestGetValidatorReportHandler(t *testing.T) {
 		ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon",
 		BlockHeight: 200, Date: now, Participated: true, TxContribution: true,
 	})
+	// Both must be currently in the valset (voting_power > 0) to appear in the
+	// report at all. g1aaa's VP is kept tiny relative to g1healthy's so the
+	// severity ramp on g1aaa's penalty rounds away to ~0 (1/1000 share), not
+	// perturbing the expected score below.
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1aaa", Moniker: "alpha", VotingPower: 1})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon", VotingPower: 1000})
 
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"test12": {
@@ -115,6 +121,8 @@ func TestGetValidatorReportHandlerAlertOnlyNoParticipation(t *testing.T) {
 		ChainID: "test12", Addr: "g1alertonly", Level: "CRITICAL",
 		StartHeight: 100, EndHeight: 130, Moniker: "alertonly-mon", SentAt: now,
 	})
+	// Must be currently in the valset (voting_power > 0) to appear at all.
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1alertonly", Moniker: "alertonly-mon", VotingPower: 1})
 
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"test12": {
@@ -187,6 +195,9 @@ func TestGetValidatorReportHandlerMissedAndLastAlert(t *testing.T) {
 		ChainID: "test12", Addr: "g1clean", Moniker: "clean-mon",
 		BlockHeight: 4, Date: now, Participated: true,
 	})
+	// Both must be currently in the valset (voting_power > 0) to appear at all.
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1miss", Moniker: "miss-mon", VotingPower: 1})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1clean", Moniker: "clean-mon", VotingPower: 1})
 
 	internal.Config.Chains = map[string]*internal.ChainConfig{
 		"test12": {
@@ -237,6 +248,155 @@ func TestGetValidatorReportHandlerMissedAndLastAlert(t *testing.T) {
 	}
 	if clean.DaysSinceLastAlert != nil {
 		t.Fatalf("g1clean days_since_last_alert should be nil, got %v", *clean.DaysSinceLastAlert)
+	}
+}
+
+// TestGetValidatorReportHandlerExcludesDepartedValidators covers the new
+// valset-membership filter: a validator absent from addr_monikers (or with
+// voting_power=0) has left the valset and must be excluded from the report
+// entirely, across every period, even when explicitly targeted via ?addr=.
+func TestGetValidatorReportHandlerExcludesDepartedValidators(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now().UTC()
+
+	// g1departed: has history this year but is no longer in the valset
+	// (no addr_monikers row at all — same as "never captured a VP snapshot").
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1departed", Moniker: "departed-mon",
+		BlockHeight: 1, Date: now, Participated: true,
+	})
+	db.Create(&database.AlertLog{
+		ChainID: "test12", Addr: "g1departed", Level: "CRITICAL",
+		StartHeight: 100, EndHeight: 130, Moniker: "departed-mon", SentAt: now,
+	})
+
+	// g1active: currently in the valset (voting_power > 0).
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1active", Moniker: "active-mon",
+		BlockHeight: 2, Date: now, Participated: true,
+	})
+	db.Create(&database.AddrMoniker{
+		ChainID: "test12", Addr: "g1active", Moniker: "active-mon", VotingPower: 5,
+	})
+
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"test12": {
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
+			Enabled:          true,
+		},
+	}
+	internal.EnabledChains = []string{"test12"}
+	internal.Config.DefaultChain = "test12"
+	defer func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
+	}()
+
+	t.Run("unfiltered report excludes the departed validator", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/reports/validators?chain=test12", nil)
+		rec := httptest.NewRecorder()
+		GetValidatorReportHandler(rec, req, db)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var out []validatorReport
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+		}
+		for _, rep := range out {
+			if rep.Addr == "g1departed" {
+				t.Fatalf("departed validator must be excluded from the report, got: %+v", rep)
+			}
+		}
+		found := false
+		for _, rep := range out {
+			if rep.Addr == "g1active" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("active validator must still be present, got: %+v", out)
+		}
+	})
+
+	t.Run("explicit addr= filter on a departed validator returns empty", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/reports/validators?chain=test12&addr=g1departed", nil)
+		rec := httptest.NewRecorder()
+		GetValidatorReportHandler(rec, req, db)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var out []validatorReport
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+		}
+		if len(out) != 0 {
+			t.Fatalf("want empty array for a departed validator's exact address, got: %+v", out)
+		}
+	})
+}
+
+// TestGetValidatorReportHandlerNoVPDataYetShowsEveryone covers the documented
+// graceful-degradation case (CLAUDE.md: "before the first VP snapshot, vp=0
+// -> severity 1 + proposer dropped -> score = 100*sign_rate - alert_penalties"):
+// a chain that has never captured a single voting-power snapshot yet (no
+// addr_monikers row at all, e.g. right after a chain is enabled, before
+// InitMonikerMap's first successful cycle) must show every validator with
+// participation/alert history, not exclude everyone. The valset-membership
+// filter only kicks in once VP tracking has produced at least one data point
+// for the chain — otherwise "no VP captured yet" would be indistinguishable
+// from "everyone departed".
+func TestGetValidatorReportHandlerNoVPDataYetShowsEveryone(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now().UTC()
+
+	// No addr_monikers rows at all for this chain — simulates a chain before
+	// its first successful InitMonikerMap cycle.
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1nvp", Moniker: "no-vp-yet",
+		BlockHeight: 1, Date: now, Participated: true,
+	})
+
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"test12": {
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
+			Enabled:          true,
+		},
+	}
+	internal.EnabledChains = []string{"test12"}
+	internal.Config.DefaultChain = "test12"
+	defer func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/reports/validators?chain=test12", nil)
+	rec := httptest.NewRecorder()
+	GetValidatorReportHandler(rec, req, db)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out []validatorReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+	}
+	found := false
+	for _, rep := range out {
+		if rep.Addr == "g1nvp" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("validator must be shown when the chain has no VP data at all yet, got: %+v", out)
 	}
 }
 

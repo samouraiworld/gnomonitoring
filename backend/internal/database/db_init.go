@@ -668,15 +668,16 @@ func CleanupSpuriousParticipations(db *gorm.DB) error {
 // db.DB().ExecContext directly hands the []string to pgx/v5's own
 // extended-protocol parameter encoding, which does bind it as a native
 // Postgres array, exactly as the native-binding rationale for this
-// approach intends.
+// approach intends. Shared with ZeroDepartedVotingPower via nativeSQLDB
+// (db.go) so this workaround is implemented in exactly one place.
 func CleanupTrailingGhostParticipations(ctx context.Context, db *gorm.DB, chainID string, currentAddrs []string) error {
 	if len(currentAddrs) == 0 {
 		return nil
 	}
 
-	sqlDB, err := db.DB()
+	sqlDB, err := nativeSQLDB(db, fmt.Sprintf("CleanupTrailingGhostParticipations(%s)", chainID))
 	if err != nil {
-		return fmt.Errorf("CleanupTrailingGhostParticipations(%s): %w", chainID, err)
+		return err
 	}
 
 	start := time.Now()

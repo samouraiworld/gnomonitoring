@@ -14,6 +14,41 @@ Two services are available:
 
 ---
 
+## 📑 Summary
+
+- [🛠️ Setup](#️-setup)
+  - [Requirements](#requirements)
+- [🧪 Local devnet (end-to-end testing)](#-local-devnet-end-to-end-testing)
+- [🌍 Multi-Chain Support](#-multi-chain-support)
+  - [Overview](#overview)
+  - [Configuration](#configuration)
+  - [API Endpoints with Chain Parameter](#api-endpoints-with-chain-parameter)
+  - [Webhook Management with Chain Scoping](#webhook-management-with-chain-scoping)
+  - [Telegram Bot Multi-Chain Support](#telegram-bot-multi-chain-support)
+  - [Prometheus Metrics with Chain Labels](#prometheus-metrics-with-chain-labels)
+  - [Known Limitations](#known-limitations)
+  - [🔗 Webhook Management (Discord / Slack)](#-webhook-management-discord--slack)
+  - [📢 ALERTING](#-alerting)
+  - [📝 Expose Metrics from API REST](#-expose-metrics-from-api-rest)
+    - [Participate Rate](#participate-rate)
+    - [Missing Block Metrics](#missing-block-metrics)
+    - [Tx Contrib Metrics](#tx-contrib-metrics)
+    - [Lastest incidents](#lastest-incidents)
+    - [Uptime Metrics](#uptime-metrics)
+    - [Operation time Metrics](#operation-time-metrics)
+    - [First Seen Metrics](#first-seen-metrics)
+    - [Block Height](#block-height)
+    - [Info](#info)
+    - [Addr Moniker](#addr-moniker)
+    - [Validator Health Report](#validator-health-report)
+  - [👤 User Management (protected)](#-user-management-protected)
+  - [🔔 Alert Contacts (protected)](#-alert-contacts-protected)
+  - [🕘 Daily Report Schedule (protected)](#-daily-report-schedule-protected)
+  - [📈 Prometheus Metrics](#-prometheus-metrics)
+  - [✉️ Telegram Bot](#️-telegram-bot)
+
+---
+
 ## 🛠️ Setup
 
 ### Requirements
@@ -362,7 +397,7 @@ The disponible period for metrics:
 - current_year
 - all_time
 
-**Participate Rate:**
+##### Participate Rate
 
 The participation rate represents the percentage of blocks in which a validator successfully participated during a given time period.
 
@@ -377,7 +412,8 @@ Response:
   {"addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","moniker":"onbloc-val-02","participationRate":100}]
 ```
 
-**Missing Block Metrics:**
+##### Missing Block Metrics
+
 The Missing Block metric measures the total number of blocks that a validator failed to participate in during a given period
 
 ```bash
@@ -392,7 +428,8 @@ Response:
 {"moniker":"onbloc-val-01","addr":"g1kntcjkfplj0z44phajajwqkx5q4ry5yaft5q2h","missingBlock":1}...
 ```
 
-**Tx Contrib Metrics:**
+##### Tx Contrib Metrics
+
 The Tx Contribution metric measures how much a validator has contributed to the total number of transactions processed across all validators during a specific period.
 
 ```bash
@@ -406,7 +443,8 @@ Response:
 {"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","txContrib":22.9},...
 ```
 
-**Lastest incidents:**
+##### Lastest incidents
+
 The Latest Incidents metric retrieves the most recent critical or warning events (alerts) detected for validators within a specific time period.
 
 ```bash
@@ -421,7 +459,7 @@ Response:
 {"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","level":"WARNING","startHeight":78834,"endHeight":78838,"msg":"","sentAt":"2025-10-22T13:28:53.018836743-03:00"},
 ```
 
-**Uptime Metrics:**
+##### Uptime Metrics
 
 Validator Uptime represents the percentage of the last 500 blocks in which a validator was active and participated successfully.
 
@@ -436,7 +474,7 @@ Response:
 {"moniker":"gnocore-val-01","addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","uptime":100}]
 ```
 
-**Operation time Metrics:**
+##### Operation time Metrics
 
 Operation Time represents the number of days between a validator’s last successful participation and its most recent downtime.
 
@@ -453,7 +491,7 @@ Response:
 "lastUpDate":"2025-10-18 16:29:24.242186417+00:00","operationTime":4.4}....
 ```
 
-**First Seen Metrics:**
+##### First Seen Metrics
 
 Returns the first block date at which each validator was observed participating.
 
@@ -468,7 +506,7 @@ Response:
 {"addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","moniker":"onbloc-val-02","firstSeen":"2025-09-02 08:30:00+00:00"}]
 ```
 
-**Block Height:**
+##### Block Height
 
 Returns the last block height stored in the database.
 
@@ -482,7 +520,7 @@ Response:
 {"last_stored": 123456}
 ```
 
-**Info:**
+##### Info
 
 Returns the configured Gnoweb and RPC endpoint URLs.
 
@@ -496,7 +534,7 @@ Response:
 {"gnoweb":"https://test9.testnets.gno.land","rpc":"https://rpc.test9.testnets.gno.land"}
 ```
 
-**Addr Moniker:**
+##### Addr Moniker
 
 Returns the moniker for a given validator address.
 
@@ -509,6 +547,70 @@ Response:
 ```json
 {"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01"}
 ```
+
+##### Validator Health Report
+
+Per-validator health score (0–100), tier, and alert metrics over four rolling periods. Always available, no authentication required, same as the other public dashboard endpoints above.
+
+```
+GET /api/reports/validators?chain=<chainID>[&addr=<validatorAddr>]
+```
+
+- `chain` (required) — must be one of the enabled chains in `config.yaml`. An unknown chain returns HTTP 400.
+- `addr` (optional) — filter to a single validator address. Omit to get every validator currently in the valset.
+
+```bash
+# Every validator currently in the valset for a chain
+curl -X GET 'localhost:8989/api/reports/validators?chain=test12'
+
+# A single validator
+curl -X GET 'localhost:8989/api/reports/validators?chain=test12&addr=g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t'
+```
+
+Response — a JSON array, one object per validator:
+
+```json
+[{"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01","days_since_last_alert":3,
+  "periods":{"current_month":{"score":91,"tier":"Excellent","sign_rate":100,"proposer_reliability":88.0,
+  "voting_power":1000,"critical_count":1,"warning_count":0,"incident_count":1,"downtime_blocks":30,"missed_blocks":0}, "...": "..."}}]
+```
+
+Top-level fields:
+
+- `addr` / `moniker` — validator address and display name.
+- `days_since_last_alert` — global (not per-period): full days since the validator's most recent WARNING/CRITICAL alert, `null` if it has never alerted.
+- `periods` — an object with all four keys always present: `last_24h`, `current_week`, `current_month`, `current_year`.
+
+Each period object carries:
+
+- `score` (0–100) / `tier` (`Excellent` ≥85, `Good` ≥60, `Watch` ≥30, `Critical` <30)
+- `sign_rate` — % of expected blocks actually signed this period (the base of the score)
+- `proposer_reliability` — % of expected block proposals actually made; `null` when the validator's expected proposal count is too low to be a meaningful signal (dropped from the score in that case)
+- `voting_power` — latest snapshot, refreshed every ~5 minutes
+- `critical_count` / `warning_count` — raw alert counts for the period (includes resends of the same ongoing incident)
+- `incident_count` — number of *distinct* incidents (consecutive alerts not separated by a RESOLVED collapse into one — an outage that escalates from WARNING to CRITICAL is still one incident). Unlike the raw counts above, this isn't inflated by resends, so it's the better signal for a validator that flaps on and off repeatedly versus one with a single long outage.
+- `downtime_blocks` — blocks lost to CRITICAL outages
+- `missed_blocks` — blocks not signed this period (display-only, already reflected in `sign_rate`)
+
+**Valset membership:** a validator that has left the valset (no current voting power) is excluded from the report entirely, across every period, even when targeted directly via `addr` — it doesn't linger with a decaying score. Membership is re-checked every ~5 minutes; a validator that just left may still appear for up to that window. On a chain that hasn't captured a single voting-power snapshot yet (e.g. right after being enabled), the filter is skipped entirely and every validator is shown — "no VP data yet" is never treated the same as "everyone left."
+
+**How the score is calculated** (0–100):
+
+1. **Availability base** — `100 × signed_blocks / total_blocks` for the period.
+2. **Proposer reliability** — how often the validator proposed a block versus its expected share by voting power; dropped when too few proposals are expected to be a meaningful signal.
+3. **Presence** — a weighted blend of the two above (default weights: 0.8 signing / 0.2 proposing).
+4. **Incident penalties** — points deducted per CRITICAL alert, per WARNING alert, per *distinct* incident (see `incident_count` above), and per block of CRITICAL downtime, each capped. Defaults: −6/critical (cap 60), −2/warning (cap 20), −3/incident (cap 30), −1 per 500 downtime blocks (cap 20).
+5. **Voting-power severity** — the total penalty is scaled up for higher-stake validators (up to ×1.5 for the top-VP validator by default), since their downtime matters more to consensus.
+
+Final score: `clamp(presence − total_penalty, 0, 100)`, mapped to a tier as above. All weights, caps, and the presence blend ratio are tunable via `admin_config` keys (`report_score_*`) without a redeploy.
+
+**Incident frequency (`incident_count`) and what it changes:** `critical_count`/`warning_count` count every alert row, including resends of the same ongoing outage — a validator down for days can rack up several CRITICAL rows for one continuous failure. `incident_count` collapses those into distinct incidents instead (an escalation from WARNING to CRITICAL with no recovery in between is still one incident), so a validator that flaps in and out repeatedly is penalized more than one with a single long outage of comparable total downtime, even though the raw counts and `downtime_blocks` look similar between the two. It's scored the same way as the others: `−report_score_freq_weight` per distinct incident (default 3), capped at `report_score_freq_cap` (default 30).
+
+**Does the score improve over time?** Depends on the period:
+
+- `last_24h` is a true rolling window — an incident from 25 hours ago automatically falls out of it. This is the only period that self-heals continuously, and the fastest signal of recent health.
+- `current_week` / `current_month` / `current_year` are calendar windows (Monday–Monday, 1st–1st, Jan 1–Jan 1), not rolling ones. `sign_rate` is cumulative from the period's start to now, so consistent good behavior *dilutes* a past bad stretch as more blocks accumulate — but the alert/incident counts for that period never decrease; they're just weighed against a growing total. The score only fully resets at the next calendar boundary.
+- `current_year` is the slowest to recover: an incident in January still weighs on the number for the rest of the year, until the next January 1 reset. Use `last_24h`/`current_week` to judge recent behavior and `current_year` for long-term track record — they're deliberately different signals, not the same number at different resolutions.
 
 ---
 

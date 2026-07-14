@@ -1,6 +1,8 @@
 package database
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -9,6 +11,25 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// nativeSQLDB returns the underlying *sql.DB for db, for statements that need
+// pgx v5's native placeholder binding instead of gorm's own db.Exec — e.g. a
+// Go []string bound as a real Postgres array via `<> ALL($N)`. gorm's
+// Statement.AddVar expands slice/array arguments into a scalar or IN-list
+// substitution before the query reaches the driver, which silently breaks
+// ALL($N) binding: a one-element []string{"g1bonded"} arrives as the bare
+// text literal 'g1bonded' instead of the array literal '{g1bonded}', and
+// Postgres then errors "malformed array literal" (the bug that motivated
+// this escape hatch in the first place). Shared by ZeroDepartedVotingPower
+// and CleanupTrailingGhostParticipations so the workaround lives in exactly
+// one place.
+func nativeSQLDB(db *gorm.DB, opName string) (*sql.DB, error) {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("%s: get sql.DB: %w", opName, err)
+	}
+	return sqlDB, nil
+}
 
 // ===================================State GovDao=====================================
 func InsertGovdao(db *gorm.DB, id int, chainID, url, title, tx, status string) error {
@@ -403,6 +424,42 @@ func UpsertAddrMonikerVPBatch(db *gorm.DB, chainID string, rows []AddrVP) error 
 		if err := db.Exec(q, args...).Error; err != nil {
 			return fmt.Errorf("UpsertAddrMonikerVPBatch(%s): %w", chainID, err)
 		}
+	}
+	return nil
+}
+
+// ZeroDepartedVotingPower zeroes voting_power for every addr_monikers row of
+// chainID whose address is absent from currentAddrs (the live /validators
+// snapshot). This is what makes voting_power > 0 a reliable "currently in the
+// valset" signal for the validator report roster filter — without it, a
+// validator's last known VP would otherwise stay frozen at a stale nonzero
+// value forever after it leaves, since UpsertAddrMonikerVPBatch only ever
+// upserts currently-bonded addresses and never touches anyone else.
+//
+// currentAddrs is bounded by the live valset size (never grows with chain
+// history), and the query is scoped by chain_id (the leading column of
+// uniq_chain_addr) — this runs once per ~5-minute InitMonikerMap cycle
+// against the small addr_monikers table, not a scan proportional to
+// daily_participations/alert_logs history.
+//
+// A deliberately empty currentAddrs is a no-op (never zero out everyone —
+// guards against a transient empty /validators response wiping all VP data).
+// Uses nativeSQLDB so currentAddrs binds as a real Postgres array for
+// <> ALL($2) — see that function's doc comment for why.
+func ZeroDepartedVotingPower(ctx context.Context, db *gorm.DB, chainID string, currentAddrs []string) error {
+	if len(currentAddrs) == 0 {
+		return nil
+	}
+	sqlDB, err := nativeSQLDB(db, fmt.Sprintf("ZeroDepartedVotingPower(%s)", chainID))
+	if err != nil {
+		return err
+	}
+	if _, err := sqlDB.ExecContext(ctx, `
+		UPDATE addr_monikers
+		SET voting_power = 0
+		WHERE chain_id = $1 AND addr <> ALL($2) AND voting_power <> 0
+	`, chainID, currentAddrs); err != nil {
+		return fmt.Errorf("ZeroDepartedVotingPower(%s): %w", chainID, err)
 	}
 	return nil
 }
