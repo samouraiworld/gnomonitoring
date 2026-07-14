@@ -572,7 +572,7 @@ Response — a JSON array, one object per validator:
 ```json
 [{"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01","days_since_last_alert":3,
   "periods":{"current_month":{"score":91,"tier":"Excellent","sign_rate":100,"proposer_reliability":88.0,
-  "voting_power":1000,"critical_count":1,"warning_count":0,"incident_count":1,"downtime_blocks":30,"missed_blocks":0}, "...": "..."}}]
+  "voting_power":1000,"critical_count":1,"warning_count":0,"incident_count":1,"incident_rate_per_week":0.47,"downtime_blocks":30,"missed_blocks":0}, "...": "..."}}]
 ```
 
 Top-level fields:
@@ -589,6 +589,7 @@ Each period object carries:
 - `voting_power` — latest snapshot, refreshed every ~5 minutes
 - `critical_count` / `warning_count` — raw alert counts for the period (includes resends of the same ongoing incident)
 - `incident_count` — number of *distinct* incidents (consecutive alerts not separated by a RESOLVED collapse into one — an outage that escalates from WARNING to CRITICAL is still one incident). Unlike the raw counts above, this isn't inflated by resends, so it's the better signal for a validator that flaps on and off repeatedly versus one with a single long outage.
+- `incident_rate_per_week` — `incident_count` normalized by elapsed days in the period (floor 1 day) and expressed as an incidents/week-equivalent rate. This, not the raw count, is what actually drives the frequency penalty — the same `incident_count` is penalized less when it's spread over `current_month`/`current_year` than when it's concentrated in `last_24h`.
 - `downtime_blocks` — blocks lost to CRITICAL outages
 - `missed_blocks` — blocks not signed this period (display-only, already reflected in `sign_rate`)
 
@@ -599,17 +600,19 @@ Each period object carries:
 1. **Availability base** — `100 × signed_blocks / total_blocks` for the period.
 2. **Proposer reliability** — how often the validator proposed a block versus its expected share by voting power; dropped when too few proposals are expected to be a meaningful signal.
 3. **Presence** — a weighted blend of the two above (default weights: 0.8 signing / 0.2 proposing).
-4. **Incident penalties** — points deducted per CRITICAL alert, per WARNING alert, per *distinct* incident (see `incident_count` above), and per block of CRITICAL downtime, each capped. Defaults: −6/critical (cap 60), −2/warning (cap 20), −3/incident (cap 30), −1 per 500 downtime blocks (cap 20).
+4. **Incident penalties** — points deducted per CRITICAL alert, per WARNING alert, per incident/week-equivalent rate (see `incident_rate_per_week` above), and per block of CRITICAL downtime, each capped. Defaults: −6/critical (cap 60), −2/warning (cap 20), −3/7 (≈−0.43) per incident/week-equivalent (cap 30), −1 per 500 downtime blocks (cap 20).
 5. **Voting-power severity** — the total penalty is scaled up for higher-stake validators (up to ×1.5 for the top-VP validator by default), since their downtime matters more to consensus.
 
 Final score: `clamp(presence − total_penalty, 0, 100)`, mapped to a tier as above. All weights, caps, and the presence blend ratio are tunable via `admin_config` keys (`report_score_*`) without a redeploy.
 
-**Incident frequency (`incident_count`) and what it changes:** `critical_count`/`warning_count` count every alert row, including resends of the same ongoing outage — a validator down for days can rack up several CRITICAL rows for one continuous failure. `incident_count` collapses those into distinct incidents instead (an escalation from WARNING to CRITICAL with no recovery in between is still one incident), so a validator that flaps in and out repeatedly is penalized more than one with a single long outage of comparable total downtime, even though the raw counts and `downtime_blocks` look similar between the two. It's scored the same way as the others: `−report_score_freq_weight` per distinct incident (default 3), capped at `report_score_freq_cap` (default 30).
+**Incident frequency (`incident_count` / `incident_rate_per_week`) and what it changes:** `critical_count`/`warning_count` count every alert row, including resends of the same ongoing outage — a validator down for days can rack up several CRITICAL rows for one continuous failure. `incident_count` collapses those into distinct incidents instead (an escalation from WARNING to CRITICAL with no recovery in between is still one incident), so a validator that flaps in and out repeatedly is penalized more than one with a single long outage of comparable total downtime, even though the raw counts and `downtime_blocks` look similar between the two.
+
+The penalty itself is driven by `incident_rate_per_week`, not the raw `incident_count`: the count is divided by elapsed days in the period (floored at 1 day) and expressed as an incidents/week-equivalent rate, so the *same* `incident_count` is penalized less the more it's diluted across a longer period. `last_24h` always has exactly 1 elapsed day, so its rate equals `incident_count × 7` — deliberately calibrated (default `report_score_freq_weight = 3/7 ≈ 0.43`) so that `last_24h` scoring is unchanged from the pre-rate-normalization behavior, while `current_month`/`current_year` taper the same incident count down in proportion to how spread out it is. Scored as `−report_score_freq_weight` per incident/week-equivalent (default ≈0.43), capped at `report_score_freq_cap` (default 30).
 
 **Does the score improve over time?** Depends on the period:
 
 - `last_24h` is a true rolling window — an incident from 25 hours ago automatically falls out of it. This is the only period that self-heals continuously, and the fastest signal of recent health.
-- `current_week` / `current_month` / `current_year` are calendar windows (Monday–Monday, 1st–1st, Jan 1–Jan 1), not rolling ones. `sign_rate` is cumulative from the period's start to now, so consistent good behavior *dilutes* a past bad stretch as more blocks accumulate — but the alert/incident counts for that period never decrease; they're just weighed against a growing total. The score only fully resets at the next calendar boundary.
+- `current_week` / `current_month` / `current_year` are calendar windows (Monday–Monday, 1st–1st, Jan 1–Jan 1), not rolling ones. `sign_rate` is cumulative from the period's start to now, so consistent good behavior *dilutes* a past bad stretch as more blocks accumulate — and the same is now true of the incident penalty: `incident_count` itself never decreases within the period, but `incident_rate_per_week` does, since its denominator (elapsed days) keeps growing even with no new incidents. `critical_count`/`warning_count` penalties don't benefit from this dilution — they're flat counts, only reset at the next calendar boundary.
 - `current_year` is the slowest to recover: an incident in January still weighs on the number for the rest of the year, until the next January 1 reset. Use `last_24h`/`current_week` to judge recent behavior and `current_year` for long-term track record — they're deliberately different signals, not the same number at different resolutions.
 
 ---
