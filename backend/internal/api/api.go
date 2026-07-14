@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,38 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
 	"gorm.io/gorm"
 )
+
+// allowedWebhookHosts maps a webhook "type" to the exact hostnames the
+// server is willing to POST alerts to. This is registration-time defense
+// against SSRF: without it, any authenticated user could register an
+// internal/loopback URL and have the server fire outbound requests at it on
+// every alert. See also the send-time DialContext guard in
+// internal/fonction.go, which additionally defends against DNS rebinding.
+var allowedWebhookHosts = map[string][]string{
+	"discord": {"discord.com", "discordapp.com"},
+	"slack":   {"hooks.slack.com"},
+}
+
+func validateWebhookURL(webhookType, rawURL string) error {
+	hosts, ok := allowedWebhookHosts[webhookType]
+	if !ok {
+		return fmt.Errorf("unsupported webhook type: %s", webhookType)
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid webhook URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("webhook URL must use https")
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, h := range hosts {
+		if host == h {
+			return nil
+		}
+	}
+	return fmt.Errorf("webhook URL host %q is not allowed for type %q", host, webhookType)
+}
 
 // GetChainIDFromRequest extracts and validates chainID from query parameter
 // Returns default chain if not specified
@@ -106,6 +139,10 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 	if webhook.UserID == "" || webhook.URL == "" || webhook.Type == "" || webhook.Description == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+	if err := validateWebhookURL(webhook.Type, webhook.URL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -203,6 +240,10 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 	webhook.UserID = userID
+	if err := validateWebhookURL(webhook.Type, webhook.URL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Validate chain_id if provided.
 	if webhook.ChainID != nil && *webhook.ChainID != "" {
@@ -272,6 +313,10 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	// ✅ Check Required fileds
 	if webhook.UserID == "" || webhook.URL == "" || webhook.Type == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+	if err := validateWebhookURL(webhook.Type, webhook.URL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -354,6 +399,10 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		return
 	}
 	webhook.UserID = userID
+	if err := validateWebhookURL(webhook.Type, webhook.URL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, nil, "webhook_validators")
 	if err != nil {
