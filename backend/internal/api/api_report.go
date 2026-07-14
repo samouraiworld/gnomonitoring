@@ -22,6 +22,7 @@ type periodScore struct {
 	CriticalCount       int      `json:"critical_count"`
 	WarningCount        int      `json:"warning_count"`
 	IncidentCount       int      `json:"incident_count"`
+	IncidentRatePerWeek float64  `json:"incident_rate_per_week"`
 	DowntimeBlocks      int64    `json:"downtime_blocks"`
 	MissedBlocks        int64    `json:"missed_blocks"`
 }
@@ -166,6 +167,11 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		periodDays, err := database.PeriodElapsedDays(period, now)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		byAddrMerged := mergeParticipationAndAlerts(partRows, alertRows, addrFilter)
 
@@ -191,6 +197,7 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 			in.SumVotingPower = vpSum
 			in.MaxVotingPower = vpMax
 			in.ChainBlocks = chainBlocks
+			in.PeriodDays = periodDays
 
 			rep, ok := byAddr[addr]
 			if !ok {
@@ -205,13 +212,14 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 			res := score.Compute(in, weights)
 			ps := periodScore{
 				Score: res.Score, Tier: string(res.Tier),
-				SignRate:       res.SignRate,
-				VotingPower:    in.VotingPower,
-				CriticalCount:  in.CriticalCount,
-				WarningCount:   in.WarningCount,
-				IncidentCount:  in.IncidentCount,
-				DowntimeBlocks: in.DowntimeBlocks,
-				MissedBlocks:   in.TotalBlocks - in.SignedBlocks,
+				SignRate:            res.SignRate,
+				VotingPower:         in.VotingPower,
+				CriticalCount:       in.CriticalCount,
+				WarningCount:        in.WarningCount,
+				IncidentCount:       in.IncidentCount,
+				IncidentRatePerWeek: res.IncidentRatePerWeek,
+				DowntimeBlocks:      in.DowntimeBlocks,
+				MissedBlocks:        in.TotalBlocks - in.SignedBlocks,
 			}
 			if res.ProposerScored {
 				pr := res.ProposerReliability

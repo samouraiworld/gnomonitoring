@@ -92,16 +92,16 @@ export default function Reports() {
   const handleExportCsv = () => {
     const headers = ['moniker', 'address', 'last_alert']
     for (const per of PERIOD_ORDER) {
-      headers.push(`${per}_score`, `${per}_tier`, `${per}_sign`, `${per}_vp`, `${per}_proposer`, `${per}_critical`, `${per}_warning`, `${per}_freq`, `${per}_downtime`, `${per}_missed`)
+      headers.push(`${per}_score`, `${per}_tier`, `${per}_sign`, `${per}_vp`, `${per}_proposer`, `${per}_critical`, `${per}_warning`, `${per}_freq`, `${per}_freq_rate`, `${per}_downtime`, `${per}_missed`)
     }
     const lines = sorted.map(r => {
       const cells = [r.moniker, r.addr, r.days_since_last_alert != null ? String(r.days_since_last_alert) : '']
       for (const per of PERIOD_ORDER) {
         const p = r.periods[per]
         if (p) {
-          cells.push(String(p.score), p.tier, p.sign_rate.toFixed(1), String(p.voting_power), p.proposer_reliability != null ? p.proposer_reliability.toFixed(1) : '', String(p.critical_count), String(p.warning_count), String(p.incident_count), String(p.downtime_blocks), String(p.missed_blocks))
+          cells.push(String(p.score), p.tier, p.sign_rate.toFixed(1), String(p.voting_power), p.proposer_reliability != null ? p.proposer_reliability.toFixed(1) : '', String(p.critical_count), String(p.warning_count), String(p.incident_count), p.incident_rate_per_week.toFixed(2), String(p.downtime_blocks), String(p.missed_blocks))
         } else {
-          cells.push('', '', '', '', '', '', '', '', '', '')
+          cells.push('', '', '', '', '', '', '', '', '', '', '')
         }
       }
       return cells.map(csvEscape).join(',')
@@ -265,7 +265,7 @@ export default function Reports() {
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('proposer')}><HeaderTip align="right" tip="Proposer reliability: proposed vs expected proposals (by VP share); “—” when too few proposals are expected to be meaningful.">Proposer %{sortIndicator('proposer')}</HeaderTip></th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('critical')}><HeaderTip align="right" tip="Number of CRITICAL alerts in the period (includes resends).">Critical{sortIndicator('critical')}</HeaderTip></th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('warning')}><HeaderTip align="right" tip="Number of WARNING alerts in the period (includes resends).">Warning{sortIndicator('warning')}</HeaderTip></th>
-                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('freq')}><HeaderTip align="right" tip="Distinct incidents this period — WARNING/CRITICAL alerts collapsed across resends, separated only by a RESOLVED. A better flapping signal than the raw Critical/Warning counts.">Freq{sortIndicator('freq')}</HeaderTip></th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('freq')}><HeaderTip align="right" tip="Distinct incidents this period (raw count, with the incidents/week-equivalent rate used for scoring in parentheses) — WARNING/CRITICAL alerts collapsed across resends, separated only by a RESOLVED. A better flapping signal than the raw Critical/Warning counts.">Freq{sortIndicator('freq')}</HeaderTip></th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('downtime')}><HeaderTip align="right" tip="Blocks of downtime summed over CRITICAL outages (CRITICAL only).">Downtime Blocks{sortIndicator('downtime')}</HeaderTip></th>
                 <th style={{ cursor: 'pointer' }} onClick={() => handleSort('missed')}><HeaderTip align="right" tip="Blocks not signed this period (total − signed). Already reflected in Sign % and Score.">Missed{sortIndicator('missed')}</HeaderTip></th>
               </tr>
@@ -287,7 +287,7 @@ export default function Reports() {
                     <td>{p && p.proposer_reliability != null ? `${p.proposer_reliability.toFixed(1)}%` : '—'}</td>
                     <td>{p ? p.critical_count : '—'}</td>
                     <td>{p ? p.warning_count : '—'}</td>
-                    <td>{p ? p.incident_count : '—'}</td>
+                    <td>{p ? `${p.incident_count} (${p.incident_rate_per_week.toFixed(2)}/wk)` : '—'}</td>
                     <td>{p ? p.downtime_blocks : '—'}</td>
                     <td>{p ? p.missed_blocks : '—'}</td>
                   </tr>

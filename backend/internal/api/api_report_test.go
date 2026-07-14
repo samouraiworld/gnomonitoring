@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 )
 
@@ -80,11 +82,34 @@ func TestGetValidatorReportHandler(t *testing.T) {
 	if p.CriticalCount != 1 || p.DowntimeBlocks != 30 {
 		t.Fatalf("current_month wrong: %+v", p)
 	}
-	// Score now also reflects the frequency penalty: 1 distinct incident (the
-	// single CRITICAL alert) @ default FreqWeight=3, on top of the existing
-	// critical penalty (@6): 100 - 6 - 3 = 91.
-	if p.Score != 91 || p.Tier != "Excellent" {
-		t.Fatalf("score wrong: got (%d,%s), want (91,Excellent)", p.Score, p.Tier)
+	// The frequency penalty now depends on elapsed days in the current month
+	// at test-run time (non-deterministic), so derive the expected value the
+	// same way production does instead of hardcoding a day-of-month-dependent
+	// number.
+	periodDays, err := database.PeriodElapsedDays("current_month", now)
+	if err != nil {
+		t.Fatalf("PeriodElapsedDays: %v", err)
+	}
+	weights := score.DefaultWeights()
+	incidentRatePerWeek := 1.0 / periodDays * 7
+	freqPenalty := incidentRatePerWeek * weights.FreqWeight
+	if freqPenalty > float64(weights.FreqCap) {
+		freqPenalty = float64(weights.FreqCap)
+	}
+	wantScore := int(math.Round(100 - float64(weights.CriticalWeight) - freqPenalty))
+	if p.Score != wantScore || p.Tier != "Excellent" {
+		t.Fatalf("score wrong: got (%d,%s), want (%d,Excellent)", p.Score, p.Tier, wantScore)
+	}
+	// current_month's elapsed-days figure is computed independently here (from
+	// the test's now) and inside the handler (from its own time.Now() at
+	// request time), so the two periodDays values differ by the wall-clock
+	// gap between test setup and the HTTP round-trip. That gap is immaterial
+	// to the ~13-day elapsed window but is enough to break bit-exact float
+	// equality, so compare with a tolerance that a dropped/zeroed field (off
+	// by the full ~0.53 rate) would still fail.
+	wantRate := incidentRatePerWeek
+	if diff := p.IncidentRatePerWeek - wantRate; diff > 1e-4 || diff < -1e-4 {
+		t.Fatalf("IncidentRatePerWeek = %v, want %v (diff %v)", p.IncidentRatePerWeek, wantRate, diff)
 	}
 	if p.IncidentCount != 1 {
 		t.Fatalf("want incident_count 1, got %d", p.IncidentCount)

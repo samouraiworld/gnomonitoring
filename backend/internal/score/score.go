@@ -26,7 +26,7 @@ type Weights struct {
 	DowntimeCap            int
 	WarningWeight          int
 	WarningCap             int
-	FreqWeight             int
+	FreqWeight             float64
 	FreqCap                int
 	ProposerMinExpected    int
 	SignWeight             float64
@@ -42,7 +42,7 @@ func DefaultWeights() Weights {
 		DowntimeCap:            20,
 		WarningWeight:          2,
 		WarningCap:             20,
-		FreqWeight:             3,
+		FreqWeight:             3.0 / 7.0,
 		FreqCap:                30,
 		ProposerMinExpected:    5,
 		SignWeight:             0.8,
@@ -56,17 +56,18 @@ func DefaultWeights() Weights {
 // in which case their components degrade to neutral (proposer dropped,
 // severity = 1).
 type Inputs struct {
-	SignedBlocks   int64 // participated_count over the period
-	TotalBlocks    int64 // total blocks this validator was expected to sign
-	ProposedBlocks int64 // proposed_count over the period
-	ChainBlocks    int64 // total blocks on the chain in the period
-	VotingPower    int64 // current voting power
-	MaxVotingPower int64 // max VP across the chain (severity normalization)
-	SumVotingPower int64 // sum of VP across the chain (vp share)
+	SignedBlocks   int64   // participated_count over the period
+	TotalBlocks    int64   // total blocks this validator was expected to sign
+	ProposedBlocks int64   // proposed_count over the period
+	ChainBlocks    int64   // total blocks on the chain in the period
+	VotingPower    int64   // current voting power
+	MaxVotingPower int64   // max VP across the chain (severity normalization)
+	SumVotingPower int64   // sum of VP across the chain (vp share)
 	DowntimeBlocks int64
 	CriticalCount  int
 	WarningCount   int
-	IncidentCount  int // distinct WARNING/CRITICAL incidents (not raw alert rows)
+	IncidentCount  int     // distinct WARNING/CRITICAL incidents (not raw alert rows)
+	PeriodDays     float64 // elapsed days in this period (floor 1); 0 when unset
 }
 
 // Result is the computed score plus the surfaced sub-metrics.
@@ -76,6 +77,7 @@ type Result struct {
 	SignRate            float64 // 0..100
 	ProposerReliability float64 // 0..100 (meaningful only when ProposerScored)
 	ProposerScored      bool
+	IncidentRatePerWeek float64 // IncidentCount normalized to incidents/week by PeriodDays
 }
 
 func Compute(in Inputs, w Weights) Result {
@@ -118,9 +120,13 @@ func Compute(in Inputs, w Weights) Result {
 	if warnPenalty > w.WarningCap {
 		warnPenalty = w.WarningCap
 	}
-	freqPenalty := in.IncidentCount * w.FreqWeight
-	if freqPenalty > w.FreqCap {
-		freqPenalty = w.FreqCap
+	incidentRatePerWeek := 0.0
+	if in.PeriodDays > 0 {
+		incidentRatePerWeek = float64(in.IncidentCount) / in.PeriodDays * 7
+	}
+	freqPenalty := incidentRatePerWeek * w.FreqWeight
+	if freqPenalty > float64(w.FreqCap) {
+		freqPenalty = float64(w.FreqCap)
 	}
 	downPenalty := 0
 	if w.DowntimeBlocksPerPoint > 0 {
@@ -134,7 +140,8 @@ func Compute(in Inputs, w Weights) Result {
 	if in.MaxVotingPower > 0 && in.VotingPower > 0 {
 		severity = 1 + w.VpSeverityFactor*(float64(in.VotingPower)/float64(in.MaxVotingPower))
 	}
-	totalPenalty := float64(critPenalty+warnPenalty+downPenalty+freqPenalty) * severity
+	totalPenalty := float64(critPenalty+warnPenalty+downPenalty) + freqPenalty
+	totalPenalty *= severity
 
 	s := int(math.Round(presence - totalPenalty))
 	if s < 0 {
@@ -149,6 +156,7 @@ func Compute(in Inputs, w Weights) Result {
 		SignRate:            signRate,
 		ProposerReliability: propRel,
 		ProposerScored:      propScored,
+		IncidentRatePerWeek: incidentRatePerWeek,
 	}
 }
 
@@ -191,7 +199,7 @@ func WeightsFromConfig(cfg map[string]string) Weights {
 	w.DowntimeCap = numOr(cfg, KeyDowntimeCap, w.DowntimeCap, strconv.Atoi)
 	w.WarningWeight = numOr(cfg, KeyWarningWeight, w.WarningWeight, strconv.Atoi)
 	w.WarningCap = numOr(cfg, KeyWarningCap, w.WarningCap, strconv.Atoi)
-	w.FreqWeight = numOr(cfg, KeyFreqWeight, w.FreqWeight, strconv.Atoi)
+	w.FreqWeight = numOr(cfg, KeyFreqWeight, w.FreqWeight, parseFloat64)
 	w.FreqCap = numOr(cfg, KeyFreqCap, w.FreqCap, strconv.Atoi)
 	w.ProposerMinExpected = numOr(cfg, KeyProposerMinExpected, w.ProposerMinExpected, strconv.Atoi)
 	w.SignWeight = numOr(cfg, KeySignWeight, w.SignWeight, parseFloat64)

@@ -145,3 +145,61 @@ func TestComputePartition(t *testing.T) {
 		}
 	})
 }
+
+// PeriodElapsedDays must be pure time arithmetic (no DB access) and must
+// floor to 1 day so a rate computed from it never spikes right at the start
+// of an in-progress period.
+func TestPeriodElapsedDays(t *testing.T) {
+	t.Run("last_24h is always exactly 1", func(t *testing.T) {
+		now := time.Date(2026, 7, 9, 2, 30, 0, 0, time.UTC)
+		days, err := PeriodElapsedDays("last_24h", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if days != 1 {
+			t.Fatalf("days = %v, want 1", days)
+		}
+	})
+
+	t.Run("current_month 10 minutes after month start floors to 1", func(t *testing.T) {
+		now := time.Date(2026, 7, 1, 0, 10, 0, 0, time.UTC)
+		days, err := PeriodElapsedDays("current_month", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if days != 1 {
+			t.Fatalf("days = %v, want 1 (floored)", days)
+		}
+	})
+
+	t.Run("current_year at midpoint is about 182 days", func(t *testing.T) {
+		now := time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC)
+		days, err := PeriodElapsedDays("current_year", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if days < 181 || days > 183 {
+			t.Fatalf("days = %v, want ~182", days)
+		}
+	})
+
+	t.Run("current_week partway through gives a value between 1 and 7", func(t *testing.T) {
+		// 2026-07-09 is a Thursday; current_week starts the preceding Monday
+		// (2026-07-06), so ~3 days have elapsed.
+		now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+		days, err := PeriodElapsedDays("current_week", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if days < 3 || days > 4 {
+			t.Fatalf("days = %v, want ~3.5 (Thursday noon, week started Monday)", days)
+		}
+	})
+
+	t.Run("invalid period returns an error", func(t *testing.T) {
+		_, err := PeriodElapsedDays("bogus", time.Now())
+		if err == nil {
+			t.Fatal("want error for invalid period, got nil")
+		}
+	})
+}
