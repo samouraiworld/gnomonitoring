@@ -2,10 +2,12 @@ package internal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -123,8 +125,54 @@ var Config config
 // EnabledChains holds the IDs of all chains with Enabled: true, sorted alphabetically.
 var EnabledChains []string
 
-// alertHTTPClient is reused across all webhook dispatches to enable TCP connection pooling.
-var alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+// isPublicUnicastIP reports whether ip is safe to connect to for an
+// outbound webhook: not loopback, not link-local (this also blocks the
+// 169.254.169.254 cloud metadata endpoint), not a private (RFC1918/RFC4193)
+// range, not unspecified, and not multicast.
+func isPublicUnicastIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	return true
+}
+
+// guardedDialContext resolves the target address and refuses to connect if
+// any resolved IP is not a public unicast address. This closes the
+// DNS-rebinding gap left by registration-time-only URL validation
+// (validateWebhookURL in internal/api/api.go): the allowlisted hostname
+// (discord.com, hooks.slack.com, ...) could in principle later resolve to an
+// internal address, and this check re-validates on every connection attempt,
+// not just once at webhook-registration time.
+func guardedDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range ips {
+		if !isPublicUnicastIP(ip) {
+			return nil, fmt.Errorf("refusing to dial non-public address %s (resolved from %s)", ip, host)
+		}
+	}
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+}
+
+// alertHTTPClient is reused across all webhook dispatches to enable TCP
+// connection pooling. Its transport re-validates the resolved IP on every
+// connection (see guardedDialContext) so a webhook host that later resolves
+// to a private/loopback address (DNS rebinding) is refused at send time, not
+// just at registration time.
+var alertHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		DialContext: guardedDialContext,
+	},
+}
 
 // LoadConfig reads config.yaml, validates chains, and initialises EnabledChains.
 func LoadConfig() {

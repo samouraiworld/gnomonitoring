@@ -1,7 +1,8 @@
-package internal_test
+package internal
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -369,5 +370,47 @@ func TestAlertMessageContainsChainID(t *testing.T) {
 				"telegram message must contain [%s]; got: %q", chainID, telegramMsg,
 			)
 		})
+	}
+}
+
+func TestIsPublicUnicastIP(t *testing.T) {
+	cases := []struct {
+		name string
+		ip   string
+		want bool
+	}{
+		{"public IPv4", "93.184.216.34", true},
+		{"loopback IPv4", "127.0.0.1", false},
+		{"loopback IPv6", "::1", false},
+		{"RFC1918 10.x", "10.0.0.5", false},
+		{"RFC1918 172.16.x", "172.16.0.5", false},
+		{"RFC1918 192.168.x", "192.168.1.5", false},
+		{"link-local", "169.254.169.254", false}, // cloud metadata endpoint
+		{"unspecified", "0.0.0.0", false},
+		{"multicast", "224.0.0.1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ip := net.ParseIP(tc.ip)
+			if ip == nil {
+				t.Fatalf("test fixture invalid IP: %s", tc.ip)
+			}
+			got := isPublicUnicastIP(ip)
+			if got != tc.want {
+				t.Fatalf("isPublicUnicastIP(%s) = %v, want %v", tc.ip, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAlertHTTPClient_RefusesLoopbackTarget(t *testing.T) {
+	// 127.0.0.1 is always loopback regardless of what's listening there —
+	// no need for a real server; the dial guard must reject before connecting.
+	_, err := alertHTTPClient.Get("http://127.0.0.1:1/should-not-connect")
+	if err == nil {
+		t.Fatal("expected error dialing a loopback address, got nil")
+	}
+	if !strings.Contains(err.Error(), "non-public address") {
+		t.Fatalf("error = %v, want it to mention the non-public-address guard", err)
 	}
 }
