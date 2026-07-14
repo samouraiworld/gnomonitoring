@@ -510,6 +510,34 @@ Response:
 {"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01"}
 ```
 
+**Validator Health Report:**
+
+Per-validator health score (0–100), tier, and alert metrics over four rolling periods (`last_24h`, `current_week`, `current_month`, `current_year`). Full field reference and tunable weights: [`docs/validator-report-api.md`](docs/validator-report-api.md).
+
+```bash
+curl -X GET 'localhost:8989/api/reports/validators?chain=test12'
+```
+
+Response:
+
+```json
+[{"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01","days_since_last_alert":3,
+  "periods":{"current_month":{"score":91,"tier":"Excellent","sign_rate":100,"proposer_reliability":88.0,
+  "voting_power":1000,"critical_count":1,"warning_count":0,"incident_count":1,"downtime_blocks":30,"missed_blocks":0}, "...": "..."}}]
+```
+
+Add `&addr=<validatorAddr>` to filter to a single validator. `chain` must be an enabled chain (see `config.yaml`); an unknown chain returns HTTP 400. Validators that have left the valset (no current voting power) are excluded from the report entirely, even when targeted directly via `addr`.
+
+**How the score is calculated** (see the linked doc for the full formula and tunable weights):
+
+1. **Availability base** — `100 × signed_blocks / total_blocks` for the period.
+2. **Proposer reliability** — how often the validator proposed a block versus its expected share by voting power; dropped when too few proposals are expected to be a meaningful signal.
+3. **Presence** — a weighted blend of the two above.
+4. **Incident penalties** — points deducted per CRITICAL alert, per WARNING alert, per *distinct* incident (flapping — consecutive alerts not separated by a resolution collapse into one, so a long outage isn't penalized the same as many short ones), and per block of CRITICAL downtime, each capped.
+5. **Voting-power severity** — the total penalty is scaled up for higher-stake validators, since their downtime matters more to consensus.
+
+Final score: `clamp(presence − total_penalty, 0, 100)`, mapped to a tier — Excellent (≥85), Good (≥60), Watch (≥30), Critical (<30).
+
 ---
 
 #### 👤 User Management (protected)
