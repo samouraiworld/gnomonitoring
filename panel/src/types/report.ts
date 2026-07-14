@@ -13,6 +13,7 @@ export interface PeriodScore {
   critical_count: number
   warning_count: number
   incident_count: number
+  incident_rate_per_week: number
   downtime_blocks: number
   missed_blocks: number
 }

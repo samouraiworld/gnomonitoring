@@ -11,7 +11,7 @@ const DEFAULT_WEIGHTS: Record<string, number> = {
   report_score_critical_cap: 60,
   report_score_warning_weight: 2,
   report_score_warning_cap: 20,
-  report_score_freq_weight: 3,
+  report_score_freq_weight: 0.43,
   report_score_freq_cap: 30,
   report_score_downtime_blocks_per_point: 500,
   report_score_downtime_cap: 20,
@@ -68,7 +68,7 @@ Proposer% is dropped when fewer than ${minExpected} proposals are expected → p
           <code className="score-legend-formula">{`penalties = (critical + warning + freq + downtime) × severity
   • −${criticalWeight} per CRITICAL alert (max ${criticalCap})
   • −${warningWeight} per WARNING alert (max ${warningCap})
-  • −${freqWeight} per distinct incident (max ${freqCap})
+  • −${freqWeight} per incident/week-equivalent (max ${freqCap})
   • −1 per ${downtimePerPoint} downtime blocks (max ${downtimeCap})
 severity = 1 + ${vpSeverity} × (VP / max VP)`}</code>
 
