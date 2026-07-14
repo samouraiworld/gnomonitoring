@@ -414,3 +414,9 @@ func TestAlertHTTPClient_RefusesLoopbackTarget(t *testing.T) {
 		t.Fatalf("error = %v, want it to mention the non-public-address guard", err)
 	}
 }
+
+// Note: No dedicated regression test for empty LookupIP result (nil error, empty slice).
+// This is a documented edge case on some resolver paths, but difficult to trigger
+// deterministically with real DNS lookups without mocking. The length check added
+// in guardedDialContext guards against index panic, and existing tests cover the
+// normal and reject-non-public paths.

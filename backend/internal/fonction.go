@@ -153,6 +153,9 @@ func guardedDialContext(ctx context.Context, network, addr string) (net.Conn, er
 	if err != nil {
 		return nil, err
 	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no addresses found for %s", host)
+	}
 	for _, ip := range ips {
 		if !isPublicUnicastIP(ip) {
 			return nil, fmt.Errorf("refusing to dial non-public address %s (resolved from %s)", ip, host)
