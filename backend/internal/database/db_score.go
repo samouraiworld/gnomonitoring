@@ -44,6 +44,27 @@ func periodBounds(period string, now time.Time) (time.Time, time.Time, error) {
 	}
 }
 
+// PeriodElapsedDays returns the elapsed portion of a report period, in days,
+// clamped to a 1-day floor so a rate computed from it never spikes right at
+// the start of an in-progress period (current_week/current_month/
+// current_year). last_24h always returns exactly 1 (fixed 24h window). Pure
+// time arithmetic — no DB access, safe to call once per period per request.
+func PeriodElapsedDays(period string, now time.Time) (float64, error) {
+	start, end, err := periodBounds(period, now)
+	if err != nil {
+		return 0, err
+	}
+	cursor := now.UTC()
+	if cursor.After(end) {
+		cursor = end
+	}
+	days := cursor.Sub(start).Hours() / 24
+	if days < 1 {
+		days = 1
+	}
+	return days, nil
+}
+
 // periodPartition describes how a report period splits across the durable daily
 // aggregate (complete past days) and the raw current-day rows, with the seam
 // anchored to aggregatedThrough to avoid double counting.
