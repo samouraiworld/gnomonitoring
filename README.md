@@ -566,6 +566,14 @@ Each period object carries:
 
 Final score: `clamp(presence − total_penalty, 0, 100)`, mapped to a tier as above. All weights, caps, and the presence blend ratio are tunable via `admin_config` keys (`report_score_*`) without a redeploy.
 
+**Incident frequency (`incident_count`) and what it changes:** `critical_count`/`warning_count` count every alert row, including resends of the same ongoing outage — a validator down for days can rack up several CRITICAL rows for one continuous failure. `incident_count` collapses those into distinct incidents instead (an escalation from WARNING to CRITICAL with no recovery in between is still one incident), so a validator that flaps in and out repeatedly is penalized more than one with a single long outage of comparable total downtime, even though the raw counts and `downtime_blocks` look similar between the two. It's scored the same way as the others: `−report_score_freq_weight` per distinct incident (default 3), capped at `report_score_freq_cap` (default 30).
+
+**Does the score improve over time?** Depends on the period:
+
+- `last_24h` is a true rolling window — an incident from 25 hours ago automatically falls out of it. This is the only period that self-heals continuously, and the fastest signal of recent health.
+- `current_week` / `current_month` / `current_year` are calendar windows (Monday–Monday, 1st–1st, Jan 1–Jan 1), not rolling ones. `sign_rate` is cumulative from the period's start to now, so consistent good behavior *dilutes* a past bad stretch as more blocks accumulate — but the alert/incident counts for that period never decrease; they're just weighed against a growing total. The score only fully resets at the next calendar boundary.
+- `current_year` is the slowest to recover: an incident in January still weighs on the number for the rest of the year, until the next January 1 reset. Use `last_24h`/`current_week` to judge recent behavior and `current_year` for long-term track record — they're deliberately different signals, not the same number at different resolutions.
+
 ---
 
 #### 👤 User Management (protected)
