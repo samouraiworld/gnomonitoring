@@ -72,8 +72,8 @@ func TestWeightsFromConfig_FreqKeys(t *testing.T) {
 
 func TestWeightsFromConfig_FreqDefaultsWhenMissing(t *testing.T) {
 	w := WeightsFromConfig(map[string]string{})
-	if w.FreqWeight != 0.43 || w.FreqCap != 30 {
-		t.Fatalf("want default FreqWeight=0.43 FreqCap=30, got %+v", w)
+	if w.FreqWeight != 3.0/7.0 || w.FreqCap != 30 {
+		t.Fatalf("want default FreqWeight=3/7 FreqCap=30, got %+v", w)
 	}
 }
 

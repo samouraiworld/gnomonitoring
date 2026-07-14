@@ -100,6 +100,17 @@ func TestGetValidatorReportHandler(t *testing.T) {
 	if p.Score != wantScore || p.Tier != "Excellent" {
 		t.Fatalf("score wrong: got (%d,%s), want (%d,Excellent)", p.Score, p.Tier, wantScore)
 	}
+	// current_month's elapsed-days figure is computed independently here (from
+	// the test's now) and inside the handler (from its own time.Now() at
+	// request time), so the two periodDays values differ by the wall-clock
+	// gap between test setup and the HTTP round-trip. That gap is immaterial
+	// to the ~13-day elapsed window but is enough to break bit-exact float
+	// equality, so compare with a tolerance that a dropped/zeroed field (off
+	// by the full ~0.53 rate) would still fail.
+	wantRate := incidentRatePerWeek
+	if diff := p.IncidentRatePerWeek - wantRate; diff > 1e-4 || diff < -1e-4 {
+		t.Fatalf("IncidentRatePerWeek = %v, want %v (diff %v)", p.IncidentRatePerWeek, wantRate, diff)
+	}
 	if p.IncidentCount != 1 {
 		t.Fatalf("want incident_count 1, got %d", p.IncidentCount)
 	}

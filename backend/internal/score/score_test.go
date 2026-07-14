@@ -92,7 +92,7 @@ func TestCompute_ProposerDroppedWhenExpectedBelowMin(t *testing.T) {
 
 func TestCompute_FreqPenaltyApplied(t *testing.T) {
 	// 100/100 signed, 2 distinct incidents, PeriodDays=1 (last_24h anchor):
-	// rate = 2/1*7 = 14/week; penalty = 14*0.43 = 6.02 -> score round(100-6.02)=94.
+	// rate = 2/1*7 = 14/week; penalty = 14*(3/7) = 6 exactly -> score round(100-6)=94.
 	// Same numeric result as the pre-change raw-count formula (2*3=6) by design.
 	r := Compute(Inputs{SignedBlocks: 100, TotalBlocks: 100, IncidentCount: 2, PeriodDays: 1}, DefaultWeights())
 	if r.Score != 94 {
@@ -104,7 +104,7 @@ func TestCompute_FreqPenaltyApplied(t *testing.T) {
 }
 
 func TestCompute_FreqPenaltyCapped(t *testing.T) {
-	// 100/100 signed, 20 incidents, PeriodDays=1: rate=140/week, penalty=140*0.43=60.2, capped at 30.
+	// 100/100 signed, 20 incidents, PeriodDays=1: rate=140/week, penalty=140*(3/7)=60, capped at 30.
 	r := Compute(Inputs{SignedBlocks: 100, TotalBlocks: 100, IncidentCount: 20, PeriodDays: 1}, DefaultWeights())
 	if r.Score != 70 {
 		t.Fatalf("score = %d, want 70 (penalty capped at 30)", r.Score)

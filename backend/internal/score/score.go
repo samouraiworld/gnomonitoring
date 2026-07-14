@@ -42,7 +42,7 @@ func DefaultWeights() Weights {
 		DowntimeCap:            20,
 		WarningWeight:          2,
 		WarningCap:             20,
-		FreqWeight:             0.43,
+		FreqWeight:             3.0 / 7.0,
 		FreqCap:                30,
 		ProposerMinExpected:    5,
 		SignWeight:             0.8,

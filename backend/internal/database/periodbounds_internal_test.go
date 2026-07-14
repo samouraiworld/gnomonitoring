@@ -183,6 +183,19 @@ func TestPeriodElapsedDays(t *testing.T) {
 		}
 	})
 
+	t.Run("current_week partway through gives a value between 1 and 7", func(t *testing.T) {
+		// 2026-07-09 is a Thursday; current_week starts the preceding Monday
+		// (2026-07-06), so ~3 days have elapsed.
+		now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+		days, err := PeriodElapsedDays("current_week", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if days < 3 || days > 4 {
+			t.Fatalf("days = %v, want ~3.5 (Thursday noon, week started Monday)", days)
+		}
+	})
+
 	t.Run("invalid period returns an error", func(t *testing.T) {
 		_, err := PeriodElapsedDays("bogus", time.Now())
 		if err == nil {
