@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -10,6 +11,25 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// nativeSQLDB returns the underlying *sql.DB for db, for statements that need
+// pgx v5's native placeholder binding instead of gorm's own db.Exec — e.g. a
+// Go []string bound as a real Postgres array via `<> ALL($N)`. gorm's
+// Statement.AddVar expands slice/array arguments into a scalar or IN-list
+// substitution before the query reaches the driver, which silently breaks
+// ALL($N) binding: a one-element []string{"g1bonded"} arrives as the bare
+// text literal 'g1bonded' instead of the array literal '{g1bonded}', and
+// Postgres then errors "malformed array literal" (the bug that motivated
+// this escape hatch in the first place). Shared by ZeroDepartedVotingPower
+// and CleanupTrailingGhostParticipations so the workaround lives in exactly
+// one place.
+func nativeSQLDB(db *gorm.DB, opName string) (*sql.DB, error) {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("%s: get sql.DB: %w", opName, err)
+	}
+	return sqlDB, nil
+}
 
 // ===================================State GovDao=====================================
 func InsertGovdao(db *gorm.DB, id int, chainID, url, title, tx, status string) error {
@@ -424,16 +444,15 @@ func UpsertAddrMonikerVPBatch(db *gorm.DB, chainID string, rows []AddrVP) error 
 //
 // A deliberately empty currentAddrs is a no-op (never zero out everyone —
 // guards against a transient empty /validators response wiping all VP data).
-// Uses the native db.DB()/ExecContext + $1/$2 placeholders (not gorm's
-// db.Exec) so currentAddrs binds as a real Postgres array for <> ALL($2),
-// matching the precedent in CleanupTrailingGhostParticipations.
+// Uses nativeSQLDB so currentAddrs binds as a real Postgres array for
+// <> ALL($2) — see that function's doc comment for why.
 func ZeroDepartedVotingPower(ctx context.Context, db *gorm.DB, chainID string, currentAddrs []string) error {
 	if len(currentAddrs) == 0 {
 		return nil
 	}
-	sqlDB, err := db.DB()
+	sqlDB, err := nativeSQLDB(db, fmt.Sprintf("ZeroDepartedVotingPower(%s)", chainID))
 	if err != nil {
-		return fmt.Errorf("ZeroDepartedVotingPower(%s): %w", chainID, err)
+		return err
 	}
 	if _, err := sqlDB.ExecContext(ctx, `
 		UPDATE addr_monikers
