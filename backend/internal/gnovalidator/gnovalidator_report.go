@@ -20,6 +20,15 @@ type ValidatorRate struct {
 	Moniker string
 }
 
+// ReportYesterdayUTC returns the UTC calendar day preceding now, formatted as
+// the daily report's date key ("2006-01-02"). Always computed from UTC, never
+// from a recipient's configured timezone — daily_participations/agregas are
+// UTC-bucketed (see db_init.go's session-timezone pin), so using any other
+// timezone here desyncs the report from the data it's summarizing.
+func ReportYesterdayUTC(now time.Time) string {
+	return now.UTC().AddDate(0, 0, -1).Format("2006-01-02")
+}
+
 // reportLinkLine returns the daily-report link line for a chain when the
 // per-chain report toggle is on and a base URL is configured, else "".
 func reportLinkLine(db *gorm.DB, chainID string) string {
@@ -116,7 +125,7 @@ func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *
 	case snap.IsStuck:
 		msg = FormatStuckReport(chainID, snap)
 	default:
-		yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
+		yesterday := ReportYesterdayUTC(time.Now())
 		rates, minBlock, maxBlock := CalculateRate(db, chainID, yesterday)
 		if len(rates) == 0 {
 			log.Printf("[report][%s] no participation data for %s, skipping", chainID, yesterday)
