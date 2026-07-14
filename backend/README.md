@@ -101,7 +101,7 @@ curl "http://localhost:8989/Participation?period=current_week"
 
 #### Get Validator Health Report
 
-Per-validator health score, tier, and alert metrics over four rolling periods (`last_24h`, `current_week`, `current_month`, `current_year`). Full field reference, tunable weights, and a sample response: [`docs/validator-report-api.md`](../docs/validator-report-api.md).
+Per-validator health score, tier, and alert metrics over four rolling periods (`last_24h`, `current_week`, `current_month`, `current_year`).
 
 ```bash
 GET /api/reports/validators?chain=<chainID>[&addr=<validatorAddr>]
@@ -116,7 +116,7 @@ curl "http://localhost:8989/api/reports/validators?chain=test12&addr=g1..."
 
 `chain` must be one of the enabled chains (see `config.yaml`); an unknown chain returns HTTP 400. Validators that have left the valset (no current voting power) are excluded from the report entirely, even when targeted directly via `addr`.
 
-**How the score is calculated** (0–100, see the linked doc for the full formula and tunable weights):
+**How the score is calculated** (0–100):
 
 1. **Availability base** — `100 × signed_blocks / total_blocks` for the period.
 2. **Proposer reliability** — how often the validator proposed a block versus its expected share by voting power; dropped for validators with too few expected proposals to be meaningful.

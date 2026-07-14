@@ -512,13 +512,24 @@ Response:
 
 **Validator Health Report:**
 
-Per-validator health score (0–100), tier, and alert metrics over four rolling periods (`last_24h`, `current_week`, `current_month`, `current_year`). Full field reference and tunable weights: [`docs/validator-report-api.md`](docs/validator-report-api.md).
+Per-validator health score (0–100), tier, and alert metrics over four rolling periods. Always available, no authentication required, same as the other public dashboard endpoints above.
 
-```bash
-curl -X GET 'localhost:8989/api/reports/validators?chain=test12'
+```
+GET /api/reports/validators?chain=<chainID>[&addr=<validatorAddr>]
 ```
 
-Response:
+- `chain` (required) — must be one of the enabled chains in `config.yaml`. An unknown chain returns HTTP 400.
+- `addr` (optional) — filter to a single validator address. Omit to get every validator currently in the valset.
+
+```bash
+# Every validator currently in the valset for a chain
+curl -X GET 'localhost:8989/api/reports/validators?chain=test12'
+
+# A single validator
+curl -X GET 'localhost:8989/api/reports/validators?chain=test12&addr=g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t'
+```
+
+Response — a JSON array, one object per validator:
 
 ```json
 [{"addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t","moniker":"gnocore-val-01","days_since_last_alert":3,
@@ -526,17 +537,34 @@ Response:
   "voting_power":1000,"critical_count":1,"warning_count":0,"incident_count":1,"downtime_blocks":30,"missed_blocks":0}, "...": "..."}}]
 ```
 
-Add `&addr=<validatorAddr>` to filter to a single validator. `chain` must be an enabled chain (see `config.yaml`); an unknown chain returns HTTP 400. Validators that have left the valset (no current voting power) are excluded from the report entirely, even when targeted directly via `addr`.
+Top-level fields:
 
-**How the score is calculated** (see the linked doc for the full formula and tunable weights):
+- `addr` / `moniker` — validator address and display name.
+- `days_since_last_alert` — global (not per-period): full days since the validator's most recent WARNING/CRITICAL alert, `null` if it has never alerted.
+- `periods` — an object with all four keys always present: `last_24h`, `current_week`, `current_month`, `current_year`.
+
+Each period object carries:
+
+- `score` (0–100) / `tier` (`Excellent` ≥85, `Good` ≥60, `Watch` ≥30, `Critical` <30)
+- `sign_rate` — % of expected blocks actually signed this period (the base of the score)
+- `proposer_reliability` — % of expected block proposals actually made; `null` when the validator's expected proposal count is too low to be a meaningful signal (dropped from the score in that case)
+- `voting_power` — latest snapshot, refreshed every ~5 minutes
+- `critical_count` / `warning_count` — raw alert counts for the period (includes resends of the same ongoing incident)
+- `incident_count` — number of *distinct* incidents (consecutive alerts not separated by a RESOLVED collapse into one — an outage that escalates from WARNING to CRITICAL is still one incident). Unlike the raw counts above, this isn't inflated by resends, so it's the better signal for a validator that flaps on and off repeatedly versus one with a single long outage.
+- `downtime_blocks` — blocks lost to CRITICAL outages
+- `missed_blocks` — blocks not signed this period (display-only, already reflected in `sign_rate`)
+
+**Valset membership:** a validator that has left the valset (no current voting power) is excluded from the report entirely, across every period, even when targeted directly via `addr` — it doesn't linger with a decaying score. Membership is re-checked every ~5 minutes; a validator that just left may still appear for up to that window. On a chain that hasn't captured a single voting-power snapshot yet (e.g. right after being enabled), the filter is skipped entirely and every validator is shown — "no VP data yet" is never treated the same as "everyone left."
+
+**How the score is calculated** (0–100):
 
 1. **Availability base** — `100 × signed_blocks / total_blocks` for the period.
 2. **Proposer reliability** — how often the validator proposed a block versus its expected share by voting power; dropped when too few proposals are expected to be a meaningful signal.
-3. **Presence** — a weighted blend of the two above.
-4. **Incident penalties** — points deducted per CRITICAL alert, per WARNING alert, per *distinct* incident (flapping — consecutive alerts not separated by a resolution collapse into one, so a long outage isn't penalized the same as many short ones), and per block of CRITICAL downtime, each capped.
-5. **Voting-power severity** — the total penalty is scaled up for higher-stake validators, since their downtime matters more to consensus.
+3. **Presence** — a weighted blend of the two above (default weights: 0.8 signing / 0.2 proposing).
+4. **Incident penalties** — points deducted per CRITICAL alert, per WARNING alert, per *distinct* incident (see `incident_count` above), and per block of CRITICAL downtime, each capped. Defaults: −6/critical (cap 60), −2/warning (cap 20), −3/incident (cap 30), −1 per 500 downtime blocks (cap 20).
+5. **Voting-power severity** — the total penalty is scaled up for higher-stake validators (up to ×1.5 for the top-VP validator by default), since their downtime matters more to consensus.
 
-Final score: `clamp(presence − total_penalty, 0, 100)`, mapped to a tier — Excellent (≥85), Good (≥60), Watch (≥30), Critical (<30).
+Final score: `clamp(presence − total_penalty, 0, 100)`, mapped to a tier as above. All weights, caps, and the presence blend ratio are tunable via `admin_config` keys (`report_score_*`) without a redeploy.
 
 ---
 
