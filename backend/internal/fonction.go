@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
 	"log"
 	"net"
 	"net/http"
@@ -512,7 +511,6 @@ func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moni
 		ID      int
 		ChainID *string
 	}
-	var fullMsg string
 	var webhooks []Webhook
 	if err := db.Model(&database.WebhookValidator{}).
 		Where("chain_id = ? OR chain_id IS NULL", chainID).
@@ -520,131 +518,66 @@ func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moni
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 
-	chainLabel := fmt.Sprintf("[%s] ", chainID)
+	var alertLevel AlertLevel
+	var emoji string
+	switch level {
+	case "CRITICAL":
+		alertLevel = AlertCritical
+		emoji = "🚨"
+	case "WARNING":
+		alertLevel = AlertWarning
+		emoji = "⚠️"
+	}
+
+	data := AlertData{
+		ChainID: chainID,
+		Level:   alertLevel,
+		Emoji:   emoji,
+		Title:   level,
+		Date:    today,
+		Fields: []AlertField{
+			{Name: "addr", Value: addr},
+			{Name: "moniker", Value: moniker},
+			{Name: "missed blocks", Value: fmt.Sprintf("%d (%d -> %d)", missed, start_height, end_height)},
+		},
+	}
 
 	for _, wh := range webhooks {
+		whData := data
+		if level == "CRITICAL" && (wh.Type == "discord" || wh.Type == "slack") {
+			type tag struct{ MentionTag string }
+			var res []tag
+			if err := db.Model(&database.AlertContact{}).
+				Select("mention_tag").
+				Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
+				Find(&res).Error; err != nil {
+				return fmt.Errorf("failed to fetch mentions: %w", err)
+			}
+			for _, r := range res {
+				whData.Mentions = append(whData.Mentions, r.MentionTag)
+			}
+		}
 
-		// ================== Build msg ===============
-
-		var emoji, prefix string
 		switch wh.Type {
 		case "discord":
-			if level == "CRITICAL" {
-				emoji = "🚨"
-				prefix = "**"
-
-				type tag struct{ MentionTag string }
-				var res []tag
-				err := db.Model(&database.AlertContact{}).
-					Select("mention_tag").
-					Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
-					Find(&res).Error
-
-				fullMsg = fmt.Sprintf(
-					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				)
-				if err != nil {
-					return fmt.Errorf("failed to fetch mentions: %w", err)
-				}
-				for _, r := range res {
-					fullMsg += "\n<@" + r.MentionTag + ">"
-				}
-			}
-			if level == "WARNING" {
-				emoji = "⚠️"
-				prefix = ""
-				fullMsg = fmt.Sprintf(
-					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				)
-
-			}
-			log.Println(fullMsg)
-			sendErr := SendDiscordAlert(fullMsg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			content, embed := RenderAlertDiscordEmbed(whData)
+			if err := SendDiscordAlertEmbed(content, embed, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		case "slack":
-			if level == "CRITICAL" {
-				emoji = "🚨"
-				prefix = "*"
-
-				type tag struct{ MentionTag string }
-				log.Printf("TYPE SLACK")
-				var res []tag
-				err := db.Model(&database.AlertContact{}).
-					Select("mention_tag").
-					Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
-					Find(&res).Error
-				if err != nil {
-					return fmt.Errorf("failed to fetch mentions: %w", err)
-				}
-				fullMsg = fmt.Sprintf(
-					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				)
-				for _, r := range res {
-					fullMsg += "\n <@" + r.MentionTag + ">"
-				}
-			}
-			if level == "WARNING" {
-				emoji = "⚠️"
-				prefix = ""
-				fullMsg = fmt.Sprintf(
-					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				)
-			}
-			sendErr := SendSlackAlert(fullMsg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			blocks := RenderAlertSlackBlocks(whData)
+			if err := SendSlackBlocks(blocks, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		default:
 			continue
 		}
-
-	}
-	// ======================================== TELEGRAM
-	if level == "CRITICAL" {
-		emoji := "🚨"
-		fullMsg = fmt.Sprintf(
-			"%s%s <b>%s</b> %s\n"+
-				"addr: <code>%s</code>\n"+
-				"moniker: <b>%s</b>\n"+
-				"missed %d blocks (%d → %d)",
-			html.EscapeString(chainLabel),
-			emoji,
-			html.EscapeString(level),
-			html.EscapeString(today),
-			html.EscapeString(addr),
-			html.EscapeString(moniker),
-			missed, start_height, end_height,
-		)
 	}
 
-	if level == "WARNING" {
-		emoji := "⚠️"
-		fullMsg = fmt.Sprintf(
-			"%s%s <b>%s</b> %s\n"+
-				"addr: <code>%s</code>\n"+
-				"moniker: <b>%s</b>\n"+
-				"missed %d blocks (%d → %d)",
-			html.EscapeString(chainLabel),
-			emoji,
-			html.EscapeString(level),
-			html.EscapeString(today),
-			html.EscapeString(addr),
-			html.EscapeString(moniker),
-			missed, start_height, end_height,
-		)
-	}
-
-	if err := telegram.MsgTelegramAlert(fullMsg, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
+	text := RenderAlertTelegramHTML(data)
+	if err := telegram.MsgTelegramAlert(text, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramAlert: %v", err)
 	}
 
