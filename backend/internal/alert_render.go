@@ -126,6 +126,13 @@ func RenderAlertSlackBlocks(d AlertData) []SlackBlock {
 		})
 	}
 
+	if d.Date != "" {
+		blocks = append(blocks, SlackBlock{
+			Type:     "context",
+			Elements: []SlackText{{Type: "mrkdwn", Text: d.Date}},
+		})
+	}
+
 	if len(d.Mentions) > 0 {
 		mentionText := make([]string, len(d.Mentions))
 		for i, m := range d.Mentions {

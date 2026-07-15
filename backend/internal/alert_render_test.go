@@ -167,3 +167,33 @@ func TestRenderAlertTelegramHTML_DescriptionNoFields(t *testing.T) {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+func TestRenderAlertSlackBlocks_DateInContextBlock(t *testing.T) {
+	d := AlertData{ChainID: "test12", Emoji: "⚠️", Title: "WARNING", Date: "2026-03-19"}
+	blocks := RenderAlertSlackBlocks(d)
+
+	last := blocks[len(blocks)-1]
+	if last.Type != "context" {
+		t.Fatalf("last block type = %q, want context", last.Type)
+	}
+	if len(last.Elements) != 1 || last.Elements[0].Text != "2026-03-19" {
+		t.Fatalf("context elements = %+v", last.Elements)
+	}
+}
+
+func TestRenderAlertSlackBlocks_DateBeforeMentions(t *testing.T) {
+	d := AlertData{ChainID: "test12", Emoji: "🚨", Title: "CRITICAL", Date: "2026-03-19", Mentions: []string{"111"}}
+	blocks := RenderAlertSlackBlocks(d)
+
+	if len(blocks) < 3 {
+		t.Fatalf("expected header + date-context + mentions-context, got %d blocks: %+v", len(blocks), blocks)
+	}
+	dateBlock := blocks[len(blocks)-2]
+	mentionsBlock := blocks[len(blocks)-1]
+	if dateBlock.Type != "context" || dateBlock.Elements[0].Text != "2026-03-19" {
+		t.Fatalf("date block = %+v, want context with date text", dateBlock)
+	}
+	if mentionsBlock.Type != "context" || mentionsBlock.Elements[0].Text != "<@111>" {
+		t.Fatalf("mentions block = %+v, want context with mention text", mentionsBlock)
+	}
+}
