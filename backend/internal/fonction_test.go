@@ -2,7 +2,6 @@ package internal
 
 import (
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -318,60 +317,39 @@ func TestMissingSeriesCTEChainFilter(t *testing.T) {
 }
 
 // TestAlertMessageContainsChainID verifies that the formatted alert message
-// strings produced by SendAllValidatorAlerts include a "[chainID] " prefix so
+// strings produced by the alert renderers include a "[chainID]" indicator so
 // that recipients can identify which chain triggered the alert.
 func TestAlertMessageContainsChainID(t *testing.T) {
 	chainIDs := []string{"betanet", "gnoland1", "staging", "test-chain-99"}
 
 	for _, chainID := range chainIDs {
 		t.Run(chainID, func(t *testing.T) {
-			chainLabel := fmt.Sprintf("[%s] ", chainID)
+			data := AlertData{
+				ChainID: chainID,
+				Level:   AlertWarning,
+				Emoji:   "⚠️",
+				Title:   "WARNING",
+				Date:    "2026-03-19",
+				Fields: []AlertField{
+					{Name: "addr", Value: "g1testaddr"},
+					{Name: "moniker", Value: "TestValidator"},
+					{Name: "missed blocks", Value: "5 (1000 -> 1004)"},
+				},
+			}
 
-			// Reproduce the WARNING message format from SendAllValidatorAlerts
-			// (discord / slack branch).
-			level := "WARNING"
-			emoji := "⚠️"
-			prefix := ""
-			today := "2026-03-19"
-			addr := "g1testaddr"
-			moniker := "TestValidator"
-			missed := 5
-			var startHeight, endHeight int64 = 1000, 1004
+			_, embed := RenderAlertDiscordEmbed(data)
+			assert.Contains(t, embed.Title, "["+chainID+"]",
+				"discord embed title must contain [%s]; got: %q", chainID, embed.Title)
 
-			discordMsg := fmt.Sprintf(
-				"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-				chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, startHeight, endHeight,
-			)
+			blocks := RenderAlertSlackBlocks(data)
+			require.NotEmpty(t, blocks)
+			require.NotNil(t, blocks[0].Text)
+			assert.Contains(t, blocks[0].Text.Text, "["+chainID+"]",
+				"slack header must contain [%s]; got: %q", chainID, blocks[0].Text.Text)
 
-			assert.True(t,
-				strings.HasPrefix(discordMsg, "["+chainID+"]"),
-				"discord WARNING message must start with [%s]; got: %q", chainID, discordMsg,
-			)
-
-			// Reproduce the CRITICAL message format (discord / slack branch).
-			level = "CRITICAL"
-			emoji = "🚨"
-			prefix = "**"
-
-			discordCriticalMsg := fmt.Sprintf(
-				"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-				chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, startHeight, endHeight,
-			)
-
-			assert.True(t,
-				strings.HasPrefix(discordCriticalMsg, "["+chainID+"]"),
-				"discord CRITICAL message must start with [%s]; got: %q", chainID, discordCriticalMsg,
-			)
-
-			// Reproduce the Telegram HTML message format.
-			telegramMsg := fmt.Sprintf(
-				"[%s] 🚨 <b>%s</b> %s\naddr: <code>%s</code>\nmoniker: <b>%s</b>\nmissed %d blocks (%d → %d)",
-				chainID, level, today, addr, moniker, missed, startHeight, endHeight,
-			)
-
-			assert.Contains(t, telegramMsg, "["+chainID+"]",
-				"telegram message must contain [%s]; got: %q", chainID, telegramMsg,
-			)
+			telegramText := RenderAlertTelegramHTML(data)
+			assert.Contains(t, telegramText, "["+chainID+"]",
+				"telegram message must contain [%s]; got: %q", chainID, telegramText)
 		})
 	}
 }
