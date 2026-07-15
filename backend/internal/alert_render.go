@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"html"
 	"strings"
 )
 
@@ -136,4 +137,34 @@ func RenderAlertSlackBlocks(d AlertData) []SlackBlock {
 		})
 	}
 	return blocks
+}
+
+// RenderAlertTelegramHTML formats d as an HTML message body for Telegram's
+// parse_mode=HTML. Every interpolated value is HTML-escaped. Field values
+// whose name mentions "addr" render in <code> (matches the existing
+// convention for addresses in the daily report renderer).
+func RenderAlertTelegramHTML(d AlertData) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("<b>[%s] %s %s</b>\n",
+		html.EscapeString(d.ChainID), html.EscapeString(d.Emoji), html.EscapeString(d.Title)))
+
+	if d.Description != "" {
+		sb.WriteString(html.EscapeString(d.Description) + "\n")
+	}
+
+	for _, f := range d.Fields {
+		name := html.EscapeString(f.Name)
+		value := html.EscapeString(f.Value)
+		if strings.Contains(strings.ToLower(f.Name), "addr") {
+			sb.WriteString(fmt.Sprintf("<b>%s</b>: <code>%s</code>\n", name, value))
+		} else {
+			sb.WriteString(fmt.Sprintf("<b>%s</b>: %s\n", name, value))
+		}
+	}
+
+	if d.Date != "" {
+		sb.WriteString(html.EscapeString(d.Date) + "\n")
+	}
+
+	return strings.TrimRight(sb.String(), "\n")
 }

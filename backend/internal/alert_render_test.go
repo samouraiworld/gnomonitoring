@@ -125,3 +125,45 @@ func TestRenderAlertSlackBlocks_DescriptionOnlyNoFields(t *testing.T) {
 		t.Fatalf("section text = %q", blocks[1].Text.Text)
 	}
 }
+
+func TestRenderAlertTelegramHTML_TitleAndFields(t *testing.T) {
+	d := AlertData{
+		ChainID: "test12", Emoji: "🚨", Title: "CRITICAL", Date: "2026-03-19",
+		Fields: []AlertField{
+			{Name: "addr", Value: "g1addr"},
+			{Name: "missed blocks", Value: "5 (1000 -> 1004)"},
+		},
+	}
+	got := RenderAlertTelegramHTML(d)
+
+	want := "<b>[test12] 🚨 CRITICAL</b>\n" +
+		"<b>addr</b>: <code>g1addr</code>\n" +
+		"<b>missed blocks</b>: 5 (1000 -&gt; 1004)\n" +
+		"2026-03-19"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRenderAlertTelegramHTML_EscapesFieldValues(t *testing.T) {
+	d := AlertData{
+		ChainID: "test12", Emoji: "⚠️", Title: "WARNING",
+		Fields: []AlertField{{Name: "moniker", Value: "<script>"}},
+	}
+	got := RenderAlertTelegramHTML(d)
+	if strings.Contains(got, "<script>") {
+		t.Fatalf("moniker must be HTML-escaped, got:\n%s", got)
+	}
+	if !strings.Contains(got, "&lt;script&gt;") {
+		t.Fatalf("expected escaped moniker, got:\n%s", got)
+	}
+}
+
+func TestRenderAlertTelegramHTML_DescriptionNoFields(t *testing.T) {
+	d := AlertData{ChainID: "test12", Emoji: "✅", Title: "Activity Restored", Description: "Gno.land is back to normal."}
+	got := RenderAlertTelegramHTML(d)
+	want := "<b>[test12] ✅ Activity Restored</b>\nGno.land is back to normal."
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
