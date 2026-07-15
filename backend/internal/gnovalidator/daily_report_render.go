@@ -3,6 +3,7 @@ package gnovalidator
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
@@ -77,4 +78,35 @@ func BuildDailyReportData(db *gorm.DB, chainID, date string, snap ChainHealthSna
 		AllHealthy:    len(problems) == 0,
 		ReportLink:    reportLinkURL(db, chainID),
 	}, nil
+}
+
+// RenderDailyReportPlainText formats DailyReportData as a plain-text report.
+// Used for logging and as the textual basis for channels without a richer
+// renderer.
+func RenderDailyReportPlainText(d DailyReportData) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📊 [%s] Daily Summary — %s\n", d.ChainID, d.Date))
+	if d.ChainSummary != "" {
+		sb.WriteString(d.ChainSummary + "\n")
+	}
+	if d.AllHealthy {
+		sb.WriteString(fmt.Sprintf("✅ All %d validators healthy\n", d.TotalCount))
+	} else {
+		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention:\n", len(d.Problems), d.TotalCount))
+		for _, p := range d.Problems {
+			sb.WriteString(fmt.Sprintf("  %s (%s) — Tier: %s | Score: %d | Missed: %d\n",
+				p.Moniker, p.Addr, p.Tier, p.Score, p.MissedBlocks))
+		}
+	}
+	for _, vc := range d.ValsetChanges {
+		if vc.NewPower == 0 {
+			sb.WriteString(fmt.Sprintf("Valset: block #%d — %s removed\n", vc.BlockNum, vc.Address))
+		} else {
+			sb.WriteString(fmt.Sprintf("Valset: block #%d — %s added (power: %d)\n", vc.BlockNum, vc.Address, vc.NewPower))
+		}
+	}
+	if d.ReportLink != "" {
+		sb.WriteString("📊 Full report: " + d.ReportLink + "\n")
+	}
+	return sb.String()
 }

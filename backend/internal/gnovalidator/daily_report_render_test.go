@@ -1,10 +1,12 @@
 package gnovalidator
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 )
 
@@ -68,5 +70,34 @@ func TestBuildDailyReportData_AllHealthyWhenNoProblems(t *testing.T) {
 	}
 	if len(data.Problems) != 0 {
 		t.Fatalf("Problems must be empty when AllHealthy, got: %+v", data.Problems)
+	}
+}
+
+func TestRenderDailyReportPlainText_AllHealthy(t *testing.T) {
+	d := DailyReportData{
+		ChainID: "test12", Date: "2025-11-02",
+		ChainSummary: "🟢 Block #100 (5s ago) — Consensus: round 0 — Normal",
+		TotalCount:   3, AllHealthy: true,
+	}
+	got := RenderDailyReportPlainText(d)
+	want := "📊 [test12] Daily Summary — 2025-11-02\n" +
+		"🟢 Block #100 (5s ago) — Consensus: round 0 — Normal\n" +
+		"✅ All 3 validators healthy\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRenderDailyReportPlainText_WithProblems(t *testing.T) {
+	d := DailyReportData{
+		ChainID: "test12", Date: "2025-11-02",
+		TotalCount: 2, AllHealthy: false,
+		Problems: []database.ValidatorReportEntry{
+			{Addr: "g1bad", Moniker: "bad-mon", Score: 10, Tier: score.TierCritical, MissedBlocks: 400},
+		},
+	}
+	got := RenderDailyReportPlainText(d)
+	if !strings.Contains(got, "bad-mon") || !strings.Contains(got, "Critical") || !strings.Contains(got, "10") {
+		t.Fatalf("expected problem validator details in output, got:\n%s", got)
 	}
 }
