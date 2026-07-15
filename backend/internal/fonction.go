@@ -161,8 +161,20 @@ func guardedDialContext(ctx context.Context, network, addr string) (net.Conn, er
 			return nil, fmt.Errorf("refusing to dial non-public address %s (resolved from %s)", ip, host)
 		}
 	}
+	// Try every validated address in order rather than only ips[0]: a
+	// transient issue reaching the first resolved address (e.g. an IPv6
+	// address during a partial network/IPv6 outage) shouldn't fail the whole
+	// dial when another already-validated address would have worked.
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 // alertHTTPClient is reused across all webhook dispatches to enable TCP

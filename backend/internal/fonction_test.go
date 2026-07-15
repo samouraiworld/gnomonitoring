@@ -423,6 +423,14 @@ func TestAlertHTTPClient_RefusesLoopbackTarget(t *testing.T) {
 // deterministically with real DNS lookups without mocking. The length check added
 // in guardedDialContext guards against index panic, and existing tests cover the
 // normal and reject-non-public paths.
+//
+// Note: No dedicated regression test for the multi-address dial fallback
+// either (guardedDialContext tries every resolved, validated IP in order,
+// not just the first). Reliably forcing a hostname to resolve to two+ IPs
+// where the first is unreachable and the second isn't requires a mock
+// resolver; the happy-path single-IP case is already covered by
+// TestSendDiscordEmbed_PostsEmbedsArray/TestSendSlackBlocks_PostsBlocksArray
+// below (both dial an httptest server through a real, if swapped, client).
 
 func TestSendDiscordEmbed_PostsEmbedsArray(t *testing.T) {
 	var captured map[string]any

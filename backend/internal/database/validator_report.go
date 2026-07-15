@@ -37,23 +37,28 @@ type mergedValidatorInputs struct {
 	moniker string
 }
 
-// BuildChainValidatorReport computes every valset-filtered validator's score
-// for one chain and one report period ("last_24h", "current_week",
-// "current_month", "current_year"). When addrFilter is non-empty, only that
-// address is considered (still subject to the valset filter — a departed
-// validator's exact address returns an empty slice, not an error).
-//
-// Valset-membership filtering: a validator absent from GetValidatorVP's
-// result has left the valset and is excluded, UNLESS the chain has never
-// captured a single VP snapshot yet (graceful degradation for a
-// newly-enabled chain). Importantly, this function intentionally includes
-// current valset members even if they have zero participation/alert history
-// (e.g., newly-joined validators), scoring them at 0/Critical. This is a
-// deliberate design choice (not just a port of GetValidatorReportHandler):
-// per the documented scoring principle, a validator with no participation
-// data scores 0/Critical, so such validators should be visible in the report
-// rather than silently omitted.
-func BuildChainValidatorReport(db *gorm.DB, chainID, period, addrFilter string) ([]ValidatorReportEntry, error) {
+// ValidatorReportContext holds the report inputs that don't vary by report
+// period: admin-config-derived score weights, the current voting-power
+// snapshot, and the active-validator roster. A caller that needs several
+// periods for the same chain in one request (e.g. GetValidatorReportHandler,
+// which reports last_24h/current_week/current_month/current_year together)
+// loads it once with LoadValidatorReportContext and passes it to every
+// BuildChainValidatorReport call, instead of BuildChainValidatorReport
+// re-querying admin_config, addr_monikers, and the validator roster on every
+// single period call.
+type ValidatorReportContext struct {
+	Weights            score.Weights
+	VPByAddr           map[string]int64
+	VPSum              int64
+	VPMax              int64
+	ValsetFilterActive bool
+	Roster             []ValidatorIdentity
+}
+
+// LoadValidatorReportContext fetches the period-independent report inputs
+// for chainID. See ValidatorReportContext's doc comment for why callers that
+// need multiple periods should load this once and reuse it.
+func LoadValidatorReportContext(db *gorm.DB, chainID string) (*ValidatorReportContext, error) {
 	cfgRows, err := GetAllAdminConfigs(db)
 	if err != nil {
 		return nil, err
@@ -62,18 +67,52 @@ func BuildChainValidatorReport(db *gorm.DB, chainID, period, addrFilter string) 
 	for _, c := range cfgRows {
 		cfg[c.Key] = c.Value
 	}
-	weights := score.WeightsFromConfig(cfg)
 
 	vpByAddr, vpSum, vpMax, err := GetValidatorVP(db, chainID)
 	if err != nil {
 		return nil, err
 	}
-	valsetFilterActive := len(vpByAddr) > 0
 
 	roster, err := GetChainValidators(db, chainID)
 	if err != nil {
 		return nil, err
 	}
+
+	return &ValidatorReportContext{
+		Weights:            score.WeightsFromConfig(cfg),
+		VPByAddr:           vpByAddr,
+		VPSum:              vpSum,
+		VPMax:              vpMax,
+		ValsetFilterActive: len(vpByAddr) > 0,
+		Roster:             roster,
+	}, nil
+}
+
+// BuildChainValidatorReport computes every valset-filtered validator's score
+// for one chain and one report period ("last_24h", "current_week",
+// "current_month", "current_year"), using the period-independent inputs
+// already loaded into ctx (see LoadValidatorReportContext). When addrFilter
+// is non-empty, only that address is considered (still subject to the
+// valset filter — a departed validator's exact address returns an empty
+// slice, not an error).
+//
+// Valset-membership filtering: a validator absent from ctx.VPByAddr has left
+// the valset and is excluded, UNLESS the chain has never captured a single VP
+// snapshot yet (graceful degradation for a newly-enabled chain, signaled by
+// ctx.ValsetFilterActive). Importantly, this function intentionally includes
+// current valset members even if they have zero participation/alert history
+// (e.g., newly-joined validators), scoring them at 0/Critical. This is a
+// deliberate design choice (not just a port of GetValidatorReportHandler):
+// per the documented scoring principle, a validator with no participation
+// data scores 0/Critical, so such validators should be visible in the report
+// rather than silently omitted.
+func BuildChainValidatorReport(db *gorm.DB, ctx *ValidatorReportContext, chainID, period, addrFilter string) ([]ValidatorReportEntry, error) {
+	weights := ctx.Weights
+	vpByAddr := ctx.VPByAddr
+	vpSum := ctx.VPSum
+	vpMax := ctx.VPMax
+	valsetFilterActive := ctx.ValsetFilterActive
+	roster := ctx.Roster
 
 	byAddr := map[string]*ValidatorReportEntry{}
 	order := []string{}
@@ -209,6 +248,15 @@ func BuildChainValidatorReport(db *gorm.DB, chainID, period, addrFilter string) 
 			}
 		}
 		e := byAddr[addr]
+		// Always set voting power from the canonical vpByAddr/vpSum snapshot,
+		// not just when the merge loop above ran for this addr: a valset
+		// member seeded only via the vpAddrs branch (zero participation/alert
+		// history this period, e.g. a newly-joined validator) never enters
+		// `merged`, so it would otherwise keep its VotingPower/SumVotingPower
+		// at the Go zero value even though vpByAddr already has the real,
+		// RPC-sourced figure for it.
+		e.VotingPower = vpByAddr[addr]
+		e.SumVotingPower = vpSum
 		if e.SignRate == 0 && e.Score == 0 && e.Tier == "" {
 			// Roster member with no merged data this period: same zero-value
 			// score every absent period gets in GetValidatorReportHandler.

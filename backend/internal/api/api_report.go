@@ -55,31 +55,26 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	}
 	addrFilter := r.URL.Query().Get("addr")
 
-	cfgRows, err := database.GetAllAdminConfigs(db)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	cfg := make(map[string]string, len(cfgRows))
-	for _, c := range cfgRows {
-		cfg[c.Key] = c.Value
-	}
-	weights := score.WeightsFromConfig(cfg)
-
-	vpByAddr, _, _, err := database.GetValidatorVP(db, chainID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// Loaded once and reused across every period below (see
+	// ValidatorReportContext's doc comment): admin-config score weights, the
+	// current VP snapshot, and the validator roster don't vary by period, so
+	// re-fetching them on each of the 4 BuildChainValidatorReport calls would
+	// be 4x the necessary admin_config/addr_monikers/roster round trips.
+	//
 	// Graceful degradation: if VP tracking has never produced a single data
 	// point for this chain (right after it's enabled, before InitMonikerMap's
-	// first successful cycle), don't apply the valset-membership filter at
-	// all. Otherwise "no VP captured yet" would be indistinguishable from
-	// "everyone departed" and hide every validator, contradicting the
-	// documented degraded state (vp=0 for everyone -> severity 1, proposer
-	// dropped, but validators still shown). Once at least one VP snapshot
-	// exists for the chain, resume the normal per-addr departure filter.
-	valsetFilterActive := len(vpByAddr) > 0
+	// first successful cycle), ctx.ValsetFilterActive is false and the
+	// valset-membership filter below is skipped entirely. Otherwise "no VP
+	// captured yet" would be indistinguishable from "everyone departed" and
+	// hide every validator, contradicting the documented degraded state (vp=0
+	// for everyone -> severity 1, proposer dropped, but validators still
+	// shown). Once at least one VP snapshot exists for the chain, resume the
+	// normal per-addr departure filter.
+	ctx, err := database.LoadValidatorReportContext(db, chainID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	// Global (period-independent) recency signal: most recent alert per addr.
 	lastAlertByAddr, err := database.GetLastAlertTimes(db, chainID)
@@ -94,7 +89,7 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	order := []string{}
 
 	for _, period := range reportPeriods {
-		entries, err := database.BuildChainValidatorReport(db, chainID, period, addrFilter)
+		entries, err := database.BuildChainValidatorReport(db, ctx, chainID, period, addrFilter)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -124,19 +119,20 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		}
 	}
 
-	emptyRes := score.Compute(score.Inputs{}, weights)
+	emptyRes := score.Compute(score.Inputs{}, ctx.Weights)
 	emptyPeriod := periodScore{Score: emptyRes.Score, Tier: string(emptyRes.Tier)}
 
 	out := make([]validatorReport, 0, len(order))
 	for _, addr := range order {
-		// vpByAddr only contains addrs with voting_power > 0 (GetValidatorVP) —
-		// a validator absent here has left the valset. Exclude it from the
-		// report entirely (every period), even under an explicit ?addr= match.
-		// Gated by valsetFilterActive: skipped entirely during the graceful-
-		// degradation window (see above) so a chain with no VP data yet still
-		// shows everyone instead of excluding all of them.
-		if valsetFilterActive {
-			if _, inValset := vpByAddr[addr]; !inValset {
+		// ctx.VPByAddr only contains addrs with voting_power > 0
+		// (GetValidatorVP) — a validator absent here has left the valset.
+		// Exclude it from the report entirely (every period), even under an
+		// explicit ?addr= match. Gated by ctx.ValsetFilterActive: skipped
+		// entirely during the graceful-degradation window (see above) so a
+		// chain with no VP data yet still shows everyone instead of excluding
+		// all of them.
+		if ctx.ValsetFilterActive {
+			if _, inValset := ctx.VPByAddr[addr]; !inValset {
 				continue
 			}
 		}

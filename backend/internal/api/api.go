@@ -31,6 +31,21 @@ var allowedWebhookHosts = map[string][]string{
 	"slack":   {"hooks.slack.com"},
 }
 
+// requireChainID validates that chainID is present, non-empty, and names a
+// currently configured chain. Webhook registration (validator and GovDAO)
+// requires chain_id: a webhook_validators/webhook_gov_daos row with no
+// chain_id makes chain-scoping ambiguous across dispatch paths — e.g. the
+// daily-report webhook dispatch treats a NULL chain_id as "every chain" while
+// the plain-text alert path filters strictly by chain_id and never matches a
+// NULL row, so the same webhook would silently receive different reports
+// depending on which code path fires.
+func requireChainID(chainID *string) error {
+	if chainID == nil || *chainID == "" {
+		return fmt.Errorf("chain_id is required")
+	}
+	return internal.Config.ValidateChainID(*chainID)
+}
+
 func validateWebhookURL(webhookType, rawURL string) error {
 	hosts, ok := allowedWebhookHosts[webhookType]
 	if !ok {
@@ -146,12 +161,11 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	// Optional chain scoping: validate chain_id if provided.
-	if webhook.ChainID != nil && *webhook.ChainID != "" {
-		if err := internal.Config.ValidateChainID(*webhook.ChainID); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+	// chain_id is required: see requireChainID's doc comment for why an
+	// unscoped webhook is no longer allowed.
+	if err := requireChainID(webhook.ChainID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// Check if webhook exist
@@ -173,13 +187,8 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	// Send sample proposal for the chosen chain (or default chain if none specified).
-	var chainIDForSample string
-	if webhook.ChainID != nil && *webhook.ChainID != "" {
-		chainIDForSample = *webhook.ChainID
-	} else {
-		chainIDForSample = internal.Config.DefaultChain
-	}
+	// Send a sample proposal for the webhook's chain (chain_id is required, see above).
+	chainIDForSample := *webhook.ChainID
 
 	govdaolist, err := database.GetLastGovDaoInfoByChain(db, chainIDForSample)
 	if err != nil {
@@ -245,9 +254,11 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	// Validate chain_id if provided.
-	if webhook.ChainID != nil && *webhook.ChainID != "" {
-		if err := internal.Config.ValidateChainID(*webhook.ChainID); err != nil {
+	// chain_id is required on update too: a client can't clear it back to
+	// unscoped. Omitting the field entirely (nil) leaves the existing,
+	// already-required chain_id untouched — see UpdateMonitoringWebhook.
+	if webhook.ChainID != nil {
+		if err := requireChainID(webhook.ChainID); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -320,16 +331,13 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		return
 	}
 
-	// Optional chain scoping: read chain_id from body (already decoded into webhook.ChainID).
-	// Validate it if provided.
-	var chainID string
-	if webhook.ChainID != nil && *webhook.ChainID != "" {
-		if err := internal.Config.ValidateChainID(*webhook.ChainID); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		chainID = *webhook.ChainID
+	// chain_id is required: see requireChainID's doc comment for why an
+	// unscoped webhook is no longer allowed.
+	if err := requireChainID(webhook.ChainID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
+	chainID := *webhook.ChainID
 
 	// ✅ Check if webhook exist
 	var exists bool

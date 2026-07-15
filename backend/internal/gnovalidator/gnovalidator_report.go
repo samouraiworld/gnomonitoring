@@ -99,7 +99,7 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 				chains = []string{internal.Config.DefaultChain}
 			}
 			for _, chainID := range chains {
-				SendDailyStatsForUser(db, chainID, &userID, nil, loc)
+				SendDailyStatsForUser(db, chainID, &userID, nil)
 			}
 		case <-reload:
 			timer.Stop()
@@ -129,7 +129,7 @@ func SheduleTelegramReport(chatID int64, chainID string, hour, minute int, timez
 		select {
 		case <-timer.C:
 			log.Printf("[report][%s] sending for chat %d", chainID, chatID)
-			SendDailyStatsForUser(db, chainID, nil, &chatID, loc)
+			SendDailyStatsForUser(db, chainID, nil, &chatID)
 		case <-reload:
 			timer.Stop()
 			log.Printf("[report][%s] reloading schedule for chat %d", chainID, chatID)
@@ -190,7 +190,7 @@ func dispatchPlainTextReport(db *gorm.DB, chainID, msg string, userID *string, c
 	}
 }
 
-func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *int64, loc *time.Location) {
+func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *int64) {
 	snap := FetchChainHealthSnapshot(db, chainID)
 
 	if snap.IsDisabled {
@@ -205,13 +205,13 @@ func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *
 	}
 
 	yesterday := ReportYesterdayUTC(time.Now())
-	rates, minBlock, _ := CalculateRate(db, chainID, yesterday)
+	rates, minBlock, maxBlock := CalculateRate(db, chainID, yesterday)
 	if len(rates) == 0 {
 		log.Printf("[report][%s] no participation data for %s, skipping", chainID, yesterday)
 		return
 	}
 
-	data, err := BuildDailyReportData(db, chainID, yesterday, snap, minBlock)
+	data, err := BuildDailyReportData(db, chainID, yesterday, snap, minBlock, maxBlock)
 	if err != nil {
 		log.Printf("[report][%s] BuildDailyReportData error: %v", chainID, err)
 		return

@@ -36,7 +36,9 @@ func TestBuildChainValidatorReport_ExcludesDepartedValidator(t *testing.T) {
 		ChainID: "test12", Addr: "g1active", Moniker: "active-mon", VotingPower: 5,
 	})
 
-	entries, err := database.BuildChainValidatorReport(db, "test12", "current_year", "")
+	ctx, err := database.LoadValidatorReportContext(db, "test12")
+	require.NoError(t, err)
+	entries, err := database.BuildChainValidatorReport(db, ctx, "test12", "current_year", "")
 	require.NoError(t, err)
 
 	for _, e := range entries {
@@ -61,13 +63,20 @@ func TestBuildChainValidatorReport_RosterMemberWithNoDataScoresZeroCritical(t *t
 		ChainID: "test12", Addr: "g1new", Moniker: "new-mon", VotingPower: 3,
 	})
 
-	entries, err := database.BuildChainValidatorReport(db, "test12", "last_24h", "")
+	ctx, err := database.LoadValidatorReportContext(db, "test12")
+	require.NoError(t, err)
+	entries, err := database.BuildChainValidatorReport(db, ctx, "test12", "last_24h", "")
 	require.NoError(t, err)
 
 	require.Len(t, entries, 1)
 	assert.Equal(t, "g1new", entries[0].Addr)
 	assert.Equal(t, 0, entries[0].Score)
 	assert.Equal(t, score.TierCritical, entries[0].Tier)
+	// g1new's real voting power (3, from its addr_monikers row) must still be
+	// reported even though it never entered the participation/alert merge —
+	// regression test for the zero-VP bug on zero-history valset members.
+	assert.Equal(t, int64(3), entries[0].VotingPower)
+	assert.Equal(t, int64(3), entries[0].SumVotingPower)
 }
 
 func TestBuildChainValidatorReport_AddrFilter(t *testing.T) {
@@ -83,7 +92,9 @@ func TestBuildChainValidatorReport_AddrFilter(t *testing.T) {
 	})
 	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1b", Moniker: "b", VotingPower: 1})
 
-	entries, err := database.BuildChainValidatorReport(db, "test12", "current_year", "g1a")
+	ctx, err := database.LoadValidatorReportContext(db, "test12")
+	require.NoError(t, err)
+	entries, err := database.BuildChainValidatorReport(db, ctx, "test12", "current_year", "g1a")
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "g1a", entries[0].Addr)

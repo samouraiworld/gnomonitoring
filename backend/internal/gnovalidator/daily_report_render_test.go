@@ -26,7 +26,7 @@ func TestBuildDailyReportData_PartitionsProblemsByTier(t *testing.T) {
 	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1critical", Moniker: "critical-mon", VotingPower: 2})
 
 	snap := ChainHealthSnapshot{RPCReachable: false}
-	data, err := BuildDailyReportData(db, "test12", "2025-11-02", snap, 1)
+	data, err := BuildDailyReportData(db, "test12", "2025-11-02", snap, 1, 100)
 	if err != nil {
 		t.Fatalf("BuildDailyReportData error: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestBuildDailyReportData_AllHealthyWhenNoProblems(t *testing.T) {
 	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon", VotingPower: 5})
 
 	snap := ChainHealthSnapshot{RPCReachable: false}
-	data, err := BuildDailyReportData(db, "test12", "2025-11-02", snap, 1)
+	data, err := BuildDailyReportData(db, "test12", "2025-11-02", snap, 1, 100)
 	if err != nil {
 		t.Fatalf("BuildDailyReportData error: %v", err)
 	}
@@ -74,32 +74,83 @@ func TestBuildDailyReportData_AllHealthyWhenNoProblems(t *testing.T) {
 	}
 }
 
-func TestBuildDailyReportData_TruncatesBeyondMaxProblemsShown(t *testing.T) {
+// TestBuildDailyReportData_KeepsFullUntruncatedProblemsList pins the fix
+// that BuildDailyReportData no longer truncates Problems itself: truncation
+// is now per-channel (see truncateProblems), applied independently by each
+// renderer at its own limit, since Discord/Slack/Telegram have very
+// different real transport limits.
+func TestBuildDailyReportData_KeepsFullUntruncatedProblemsList(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
-	// Seed more valset members than maxProblemsShown, each with a voting-power
-	// row but zero participation history (score 0/Critical, same shape as the
-	// documented g1critical case), so all of them land in Problems.
-	const seeded = maxProblemsShown + 5
+	// Seed more valset members than the tightest channel limit
+	// (maxProblemsDiscord), each with a voting-power row but zero
+	// participation history (score 0/Critical, same shape as the documented
+	// g1critical case), so all of them land in Problems.
+	const seeded = maxProblemsDiscord + 5
 	for i := 0; i < seeded; i++ {
 		addr := fmt.Sprintf("g1critical%02d", i)
 		db.Create(&database.AddrMoniker{ChainID: "test12", Addr: addr, Moniker: "", VotingPower: 1})
 	}
 
 	snap := ChainHealthSnapshot{RPCReachable: false}
-	data, err := BuildDailyReportData(db, "test12", "2025-11-02", snap, 1)
+	data, err := BuildDailyReportData(db, "test12", "2025-11-02", snap, 1, 100)
 	if err != nil {
 		t.Fatalf("BuildDailyReportData error: %v", err)
 	}
 
-	if len(data.Problems) != maxProblemsShown {
-		t.Fatalf("len(Problems) = %d, want %d", len(data.Problems), maxProblemsShown)
-	}
-	if data.TruncatedCount != seeded-maxProblemsShown {
-		t.Fatalf("TruncatedCount = %d, want %d", data.TruncatedCount, seeded-maxProblemsShown)
+	if len(data.Problems) != seeded {
+		t.Fatalf("len(Problems) = %d, want %d (full, untruncated list)", len(data.Problems), seeded)
 	}
 	if data.AllHealthy {
 		t.Fatalf("AllHealthy = true, want false when Problems is non-empty")
+	}
+}
+
+func TestTruncateProblems(t *testing.T) {
+	all := make([]database.ValidatorReportEntry, 25)
+	for i := range all {
+		all[i] = database.ValidatorReportEntry{Addr: fmt.Sprintf("g1%02d", i)}
+	}
+
+	shown, truncatedCount := truncateProblems(all, 20)
+	if len(shown) != 20 || truncatedCount != 5 {
+		t.Fatalf("truncateProblems(25 items, limit 20) = (%d shown, %d truncated), want (20, 5)", len(shown), truncatedCount)
+	}
+
+	shown, truncatedCount = truncateProblems(all, 30)
+	if len(shown) != 25 || truncatedCount != 0 {
+		t.Fatalf("truncateProblems(25 items, limit 30) = (%d shown, %d truncated), want (25, 0)", len(shown), truncatedCount)
+	}
+}
+
+func TestBuildDailyReportData_SetsBlockRangeFromCalculateRateWindow(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	now := time.Now().UTC()
+
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon",
+		BlockHeight: 1, Date: now, Participated: true,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon", VotingPower: 5})
+
+	snap := ChainHealthSnapshot{RPCReachable: false}
+	data, err := BuildDailyReportData(db, "test12", "2025-11-02", snap, 850990, 851134)
+	if err != nil {
+		t.Fatalf("BuildDailyReportData error: %v", err)
+	}
+	if data.BlockRangeStart != 850990 || data.BlockRangeEnd != 851134 {
+		t.Fatalf("BlockRange = [%d,%d], want [850990,851134]", data.BlockRangeStart, data.BlockRangeEnd)
+	}
+}
+
+func TestRenderDailyReportPlainText_ReportWindow(t *testing.T) {
+	d := DailyReportData{
+		ChainID: "test12", Date: "2025-11-02", TotalCount: 1, AllHealthy: true,
+		BlockRangeStart: 850990, BlockRangeEnd: 851134,
+	}
+	got := RenderDailyReportPlainText(d)
+	if !strings.Contains(got, "Report window: blocks 850990–851134") {
+		t.Fatalf("expected a report-window line, got:\n%s", got)
 	}
 }
 
@@ -227,19 +278,24 @@ func emptyMonikerProblem() database.ValidatorReportEntry {
 	}
 }
 
-func TestRenderDailyReportPlainText_EmptyMonikerFallsBackToAddr(t *testing.T) {
+// TestRenderDailyReportPlainText_EmptyMonikerFallsBackToUnknown pins the
+// codebase-wide "unknown" sentinel convention (see isResolvedMoniker in
+// valoper.go, FormatMissedBlocksLast24h in health.go): an unresolved moniker
+// must render as "unknown", not the raw address, so it's recognizable as
+// "still needs a moniker" rather than mistaken for a resolved display name.
+func TestRenderDailyReportPlainText_EmptyMonikerFallsBackToUnknown(t *testing.T) {
 	p := emptyMonikerProblem()
 	d := DailyReportData{
 		ChainID: "test12", Date: "2025-11-02", TotalCount: 1,
 		Problems: []database.ValidatorReportEntry{p},
 	}
 	got := RenderDailyReportPlainText(d)
-	if !strings.Contains(got, p.Addr) {
-		t.Fatalf("expected the address to appear as a fallback display name, got:\n%s", got)
+	if !strings.Contains(got, "unknown ("+p.Addr+")") {
+		t.Fatalf("expected \"unknown (%s)\" as the display name, got:\n%s", p.Addr, got)
 	}
 }
 
-func TestRenderDailyReportDiscordEmbed_EmptyMonikerFallsBackToAddr(t *testing.T) {
+func TestRenderDailyReportDiscordEmbed_EmptyMonikerFallsBackToUnknown(t *testing.T) {
 	p := emptyMonikerProblem()
 	d := DailyReportData{
 		ChainID: "test12", Date: "2025-11-02", TotalCount: 1,
@@ -252,12 +308,12 @@ func TestRenderDailyReportDiscordEmbed_EmptyMonikerFallsBackToAddr(t *testing.T)
 	if embed.Fields[0].Name == "" {
 		t.Fatalf("Discord embed field Name must never be empty (Discord rejects the whole request), got: %+v", embed.Fields[0])
 	}
-	if embed.Fields[0].Name != p.Addr {
-		t.Fatalf("Fields[0].Name = %q, want fallback to Addr %q", embed.Fields[0].Name, p.Addr)
+	if embed.Fields[0].Name != "unknown" {
+		t.Fatalf("Fields[0].Name = %q, want fallback to \"unknown\"", embed.Fields[0].Name)
 	}
 }
 
-func TestRenderDailyReportSlackBlocks_EmptyMonikerFallsBackToAddr(t *testing.T) {
+func TestRenderDailyReportSlackBlocks_EmptyMonikerFallsBackToUnknown(t *testing.T) {
 	p := emptyMonikerProblem()
 	d := DailyReportData{
 		ChainID: "test12", Date: "2025-11-02", TotalCount: 1,
@@ -267,77 +323,134 @@ func TestRenderDailyReportSlackBlocks_EmptyMonikerFallsBackToAddr(t *testing.T) 
 
 	found := false
 	for _, b := range blocks {
-		if b.Type == "section" && b.Text != nil && strings.Contains(b.Text.Text, p.Addr) {
+		if b.Type == "section" && b.Text != nil && strings.Contains(b.Text.Text, "*unknown*") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("expected a section block mentioning the fallback address %q, got: %+v", p.Addr, blocks)
+		t.Fatalf("expected a section block with \"*unknown*\" as the display name, got: %+v", blocks)
 	}
 }
 
-func TestRenderDailyReportTelegramHTML_EmptyMonikerFallsBackToAddr(t *testing.T) {
+func TestRenderDailyReportTelegramHTML_EmptyMonikerFallsBackToUnknown(t *testing.T) {
 	p := emptyMonikerProblem()
 	d := DailyReportData{
 		ChainID: "test12", Date: "2025-11-02", TotalCount: 1,
 		Problems: []database.ValidatorReportEntry{p},
 	}
 	text, _, _ := RenderDailyReportTelegramHTML(d)
-	if !strings.Contains(text, p.Addr) {
-		t.Fatalf("expected the address to appear as a fallback display name, got:\n%s", text)
+	if !strings.Contains(text, "<b>unknown</b>") {
+		t.Fatalf("expected \"<b>unknown</b>\" as the display name, got:\n%s", text)
 	}
-	// The rendered <b>...</b> display-name segment must not be left blank.
-	if strings.Contains(text, "<b></b>") {
-		t.Fatalf("display-name segment must not be empty, got:\n%s", text)
+}
+
+// manyProblems builds n distinct Watch/Critical problem-validator fixtures,
+// used to exercise per-channel truncation (see truncateProblems).
+func manyProblems(n int) []database.ValidatorReportEntry {
+	problems := make([]database.ValidatorReportEntry, n)
+	for i := range problems {
+		problems[i] = database.ValidatorReportEntry{
+			Addr: fmt.Sprintf("g1%03d", i), Moniker: fmt.Sprintf("m%03d", i),
+			Score: 10, Tier: score.TierCritical, MissedBlocks: 5,
+		}
 	}
+	return problems
 }
 
 func TestRenderDailyReportPlainText_TruncatedCountAddsSummaryLine(t *testing.T) {
 	base := DailyReportData{
 		ChainID: "test12", Date: "2025-11-02", TotalCount: 30,
-		Problems: []database.ValidatorReportEntry{
-			{Addr: "g1", Moniker: "m1", Score: 10, Tier: score.TierCritical, MissedBlocks: 5},
-		},
 		ReportLink: "https://example.com/reports/test12",
 	}
 
 	withTruncation := base
-	withTruncation.TruncatedCount = 7
+	withTruncation.Problems = manyProblems(maxProblemsPlainText + 7)
 	got := RenderDailyReportPlainText(withTruncation)
 	if !strings.Contains(got, "7 more") {
-		t.Fatalf("expected a '+N more' summary line when TruncatedCount > 0, got:\n%s", got)
+		t.Fatalf("expected a '+N more' summary line when Problems exceeds maxProblemsPlainText, got:\n%s", got)
 	}
 
 	noTruncation := base
-	noTruncation.TruncatedCount = 0
+	noTruncation.Problems = []database.ValidatorReportEntry{
+		{Addr: "g1", Moniker: "m1", Score: 10, Tier: score.TierCritical, MissedBlocks: 5},
+	}
 	got = RenderDailyReportPlainText(noTruncation)
 	if strings.Contains(got, "more") {
-		t.Fatalf("did not expect a '+N more' summary line when TruncatedCount == 0, got:\n%s", got)
+		t.Fatalf("did not expect a '+N more' summary line when Problems is within the limit, got:\n%s", got)
+	}
+}
+
+// TestReportLinkAppearsExactlyOnceWhenTruncated is a regression test: the
+// report link used to appear both inline in the "…and N more" text and again
+// in each renderer's own footer/context block/trailing line/button. Seeds
+// more problems than the highest per-channel limit (maxProblemsPlainText/
+// maxProblemsTelegram, both 60) so every renderer truncates.
+func TestReportLinkAppearsExactlyOnceWhenTruncated(t *testing.T) {
+	d := DailyReportData{
+		ChainID: "test12", Date: "2025-11-02", TotalCount: 90,
+		Problems:   manyProblems(maxProblemsPlainText + 7),
+		ReportLink: "https://example.com/reports/test12",
+	}
+
+	plain := RenderDailyReportPlainText(d)
+	if n := strings.Count(plain, d.ReportLink); n != 1 {
+		t.Fatalf("plain text: report link appeared %d times, want 1:\n%s", n, plain)
+	}
+
+	embed := RenderDailyReportDiscordEmbed(d)
+	discordText := embed.Description
+	for _, f := range embed.Fields {
+		discordText += f.Name + f.Value
+	}
+	if embed.Footer != nil {
+		discordText += embed.Footer.Text
+	}
+	if n := strings.Count(discordText, d.ReportLink); n != 1 {
+		t.Fatalf("discord embed: report link appeared %d times, want 1: %+v", n, embed)
+	}
+
+	slackBlocks := RenderDailyReportSlackBlocks(d)
+	var slackText string
+	for _, b := range slackBlocks {
+		if b.Text != nil {
+			slackText += b.Text.Text
+		}
+		for _, e := range b.Elements {
+			slackText += e.Text
+		}
+	}
+	if n := strings.Count(slackText, d.ReportLink); n != 1 {
+		t.Fatalf("slack blocks: report link appeared %d times, want 1: %+v", n, slackBlocks)
+	}
+
+	text, _, buttonURL := RenderDailyReportTelegramHTML(d)
+	if buttonURL != d.ReportLink {
+		t.Fatalf("telegram: buttonURL = %q, want %q", buttonURL, d.ReportLink)
+	}
+	if strings.Contains(text, d.ReportLink) {
+		t.Fatalf("telegram: report link must appear only via the button, not in the message body:\n%s", text)
 	}
 }
 
 func TestRenderDailyReportDiscordEmbed_TruncatedCountAddsField(t *testing.T) {
-	base := DailyReportData{
-		ChainID: "test12", Date: "2025-11-02", TotalCount: 30,
-		Problems: []database.ValidatorReportEntry{
-			{Addr: "g1", Moniker: "m1", Score: 10, Tier: score.TierCritical, MissedBlocks: 5},
-		},
-	}
+	base := DailyReportData{ChainID: "test12", Date: "2025-11-02", TotalCount: 30}
 
 	withTruncation := base
-	withTruncation.TruncatedCount = 7
+	withTruncation.Problems = manyProblems(maxProblemsDiscord + 7)
 	embed := RenderDailyReportDiscordEmbed(withTruncation)
-	if len(embed.Fields) != 2 {
-		t.Fatalf("expected an extra field summarizing truncated problems, got: %+v", embed.Fields)
+	if len(embed.Fields) != maxProblemsDiscord+1 {
+		t.Fatalf("expected %d problem fields plus one truncation-summary field, got: %d fields", maxProblemsDiscord+1, len(embed.Fields))
 	}
 	if !strings.Contains(embed.Fields[len(embed.Fields)-1].Value, "7 more") {
 		t.Fatalf("expected the last field to mention the truncated count, got: %+v", embed.Fields[len(embed.Fields)-1])
 	}
 
 	noTruncation := base
-	noTruncation.TruncatedCount = 0
+	noTruncation.Problems = []database.ValidatorReportEntry{
+		{Addr: "g1", Moniker: "m1", Score: 10, Tier: score.TierCritical, MissedBlocks: 5},
+	}
 	embed = RenderDailyReportDiscordEmbed(noTruncation)
 	if len(embed.Fields) != 1 {
-		t.Fatalf("did not expect an extra field when TruncatedCount == 0, got: %+v", embed.Fields)
+		t.Fatalf("did not expect an extra field when Problems is within the limit, got: %+v", embed.Fields)
 	}
 }
