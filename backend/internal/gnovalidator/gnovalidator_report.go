@@ -15,6 +15,11 @@ import (
 // to break the import cycle between gnovalidator and telegram.
 var SendTelegramMessage func(token string, chatID int64, text string) error
 
+// SendTelegramMessageWithButton is a function variable set by the telegram
+// package at startup, mirroring SendTelegramMessage's import-cycle-avoidance
+// pattern. buttonURL == "" means "send text only, no button".
+var SendTelegramMessageWithButton func(token string, chatID int64, text, buttonText, buttonURL string) error
+
 type ValidatorRate struct {
 	Rate    float64
 	Moniker string

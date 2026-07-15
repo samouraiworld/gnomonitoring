@@ -18,6 +18,10 @@ import (
 
 var telegramHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
+// telegramAPIBaseURL is the Telegram Bot API base URL. It is a package
+// variable (not a const) so tests can point it at an httptest server.
+var telegramAPIBaseURL = "https://api.telegram.org"
+
 //	type chat struct {
 //		ID int64 `json:"id"`
 //	}
@@ -59,7 +63,8 @@ type tgEntity struct {
 
 type InlineKeyboardButton struct {
 	Text         string `json:"text"`
-	CallbackData string `json:"callback_data"`
+	CallbackData string `json:"callback_data,omitempty"`
+	URL          string `json:"url,omitempty"`
 }
 
 type InlineKeyboardMarkup struct {
@@ -133,7 +138,7 @@ func SendMessageTelegram(botToken string, chatID int64, text string) error {
 }
 
 func SendMessageTelegramWithMarkup(botToken string, chatID int64, text string, markup *InlineKeyboardMarkup) error {
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
+	apiURL := fmt.Sprintf("%s/bot%s/sendMessage", telegramAPIBaseURL, botToken)
 
 	body := map[string]any{
 		"chat_id":                  chatID,
@@ -172,6 +177,22 @@ func SendMessageTelegramWithMarkup(botToken string, chatID int64, text string, m
 		return fmt.Errorf("telegram http %d: %s", resp.StatusCode, res.Description)
 	}
 	return nil
+}
+
+// SendMessageTelegramWithLinkButton sends a message with a single inline
+// "link" button (opens buttonURL when tapped) when buttonURL is non-empty,
+// or a plain message otherwise. Used by the daily report to replace the
+// old plain-text "Validator report: <url>" line with a tappable button.
+func SendMessageTelegramWithLinkButton(botToken string, chatID int64, text, buttonText, buttonURL string) error {
+	var markup *InlineKeyboardMarkup
+	if buttonURL != "" {
+		markup = &InlineKeyboardMarkup{
+			InlineKeyboard: [][]InlineKeyboardButton{
+				{{Text: buttonText, URL: buttonURL}},
+			},
+		}
+	}
+	return SendMessageTelegramWithMarkup(botToken, chatID, text, markup)
 }
 
 func EditMessageTelegramWithMarkup(botToken string, chatID int64, messageID int, text string, markup *InlineKeyboardMarkup) error {
