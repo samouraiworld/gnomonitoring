@@ -55,7 +55,7 @@ const (
 	alertColorCritical = 0xE74C3C
 	alertColorWarning  = 0xF39C12
 	alertColorResolved = 0x2ECC71
-	alertColorInfo      = 0x3498DB
+	alertColorInfo     = 0x3498DB
 )
 
 func alertColor(level AlertLevel) int {
@@ -150,6 +150,10 @@ func RenderAlertSlackBlocks(d AlertData) []SlackBlock {
 // parse_mode=HTML. Every interpolated value is HTML-escaped. Field values
 // whose name mentions "addr" render in <code> (matches the existing
 // convention for addresses in the daily report renderer).
+//
+// d.Mentions is intentionally not rendered here: unlike Discord's <@id> or
+// Slack's <@id>, Telegram has no equivalent per-user mention syntax callers
+// populate Mentions with, so there is nothing valid to emit.
 func RenderAlertTelegramHTML(d AlertData) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("<b>[%s] %s %s</b>\n",
