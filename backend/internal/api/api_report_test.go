@@ -425,6 +425,67 @@ func TestGetValidatorReportHandlerNoVPDataYetShowsEveryone(t *testing.T) {
 	}
 }
 
+// TestGetValidatorReportHandlerShowsZeroHistoryValsetMember covers the
+// behavior change introduced when GetValidatorReportHandler started
+// delegating to database.BuildChainValidatorReport: a current valset member
+// (voting_power > 0 in addr_monikers) with zero participation/alert history
+// for a period must still appear in the report, scored at 0/Critical, rather
+// than being silently omitted. This matches the documented scoring principle
+// that a validator with no participation rows scores 0/Critical.
+func TestGetValidatorReportHandlerShowsZeroHistoryValsetMember(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	// g1newjoin: currently in the valset, but has never signed a block or
+	// triggered an alert — no DailyParticipation or AlertLog rows at all.
+	db.Create(&database.AddrMoniker{
+		ChainID: "test12", Addr: "g1newjoin", Moniker: "newjoin-mon", VotingPower: 10,
+	})
+
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"test12": {
+			RPCEndpoints:     []string{"http://localhost:26657"},
+			GraphqlEndpoints: []string{"http://localhost:8080/graphql/query"},
+			GnowebEndpoints:  []string{"http://localhost:8080"},
+			Enabled:          true,
+		},
+	}
+	internal.EnabledChains = []string{"test12"}
+	internal.Config.DefaultChain = "test12"
+	defer func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
+	}()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/reports/validators?chain=test12", nil)
+	rec := httptest.NewRecorder()
+	GetValidatorReportHandler(rec, req, db)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out []validatorReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, rec.Body.String())
+	}
+	byAddr := make(map[string]validatorReport, len(out))
+	for _, rep := range out {
+		byAddr[rep.Addr] = rep
+	}
+
+	rep, ok := byAddr["g1newjoin"]
+	if !ok {
+		t.Fatalf("zero-history valset member g1newjoin must still appear in the report, got: %+v", out)
+	}
+	p, ok := rep.Periods["last_24h"]
+	if !ok {
+		t.Fatalf("missing last_24h period for g1newjoin: %+v", rep)
+	}
+	if p.Score != 0 || p.Tier != "Critical" {
+		t.Fatalf("g1newjoin last_24h score wrong: got (%d,%s), want (0,Critical)", p.Score, p.Tier)
+	}
+}
+
 func TestGetValidatorReportHandlerInvalidChain(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 

@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
@@ -37,51 +36,6 @@ type validatorReport struct {
 	Periods            map[string]periodScore `json:"periods"`
 }
 
-// merged carries one validator's score inputs plus the moniker discovered while
-// joining participation and alert rows for a period.
-type merged struct {
-	in      score.Inputs
-	moniker string
-}
-
-// mergeParticipationAndAlerts joins per-validator participation and alert rows
-// into one map keyed by address, honoring an optional address filter. Moniker is
-// taken from alert rows (participation rows carry no moniker here).
-func mergeParticipationAndAlerts(partRows []database.ParticipationRaw, alertRows []database.ValidatorScoreRaw, addrFilter string) map[string]*merged {
-	out := map[string]*merged{}
-	ensure := func(addr string) *merged {
-		m, ok := out[addr]
-		if !ok {
-			m = &merged{}
-			out[addr] = m
-		}
-		return m
-	}
-	for _, p := range partRows {
-		if addrFilter != "" && p.Addr != addrFilter {
-			continue
-		}
-		m := ensure(p.Addr)
-		m.in.SignedBlocks = p.SignedBlocks
-		m.in.TotalBlocks = p.TotalBlocks
-		m.in.ProposedBlocks = p.ProposedBlocks
-	}
-	for _, a := range alertRows {
-		if addrFilter != "" && a.Addr != addrFilter {
-			continue
-		}
-		m := ensure(a.Addr)
-		m.in.CriticalCount = a.CriticalCount
-		m.in.WarningCount = a.WarningCount
-		m.in.IncidentCount = a.IncidentCount
-		m.in.DowntimeBlocks = a.DowntimeBlocks
-		if a.Moniker != "" {
-			m.moniker = a.Moniker
-		}
-	}
-	return out
-}
-
 // GetValidatorReportHandler serves GET /api/reports/validators?chain=X[&addr=Z].
 // It is always available regardless of the per-chain report toggle.
 func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
@@ -112,7 +66,7 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	}
 	weights := score.WeightsFromConfig(cfg)
 
-	vpByAddr, vpSum, vpMax, err := database.GetValidatorVP(db, chainID)
+	vpByAddr, _, _, err := database.GetValidatorVP(db, chainID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -139,93 +93,34 @@ func GetValidatorReportHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	byAddr := map[string]*validatorReport{}
 	order := []string{}
 
-	// Seed the full active-validator roster so healthy validators (no alerts)
-	// appear with a clean score, not just validators that have alerted.
-	roster, err := database.GetChainValidators(db, chainID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	for _, v := range roster {
-		if addrFilter != "" && v.Addr != addrFilter {
-			continue
-		}
-		if _, ok := byAddr[v.Addr]; !ok {
-			byAddr[v.Addr] = &validatorReport{Addr: v.Addr, Moniker: v.Moniker, Periods: map[string]periodScore{}}
-			order = append(order, v.Addr)
-		}
-	}
-
 	for _, period := range reportPeriods {
-		alertRows, err := database.GetValidatorScores(db, chainID, period)
+		entries, err := database.BuildChainValidatorReport(db, chainID, period, addrFilter)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		partRows, chainBlocks, err := database.GetValidatorParticipation(db, chainID, period)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		periodDays, err := database.PeriodElapsedDays(period, now)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		byAddrMerged := mergeParticipationAndAlerts(partRows, alertRows, addrFilter)
-
-		addrs := make([]string, 0, len(byAddrMerged))
-		for addr := range byAddrMerged {
-			addrs = append(addrs, addr)
-		}
-		sort.Strings(addrs)
-
-		for _, addr := range addrs {
-			// Skip departed validators here (before spending a score.Compute
-			// call and a report-entry allocation on data that gets discarded
-			// anyway) — see the valset-membership filter note below for why
-			// this check is skipped entirely when vpTrackingActive is false.
-			if valsetFilterActive {
-				if _, inValset := vpByAddr[addr]; !inValset {
-					continue
-				}
-			}
-			m := byAddrMerged[addr]
-			in := m.in
-			in.VotingPower = vpByAddr[addr]
-			in.SumVotingPower = vpSum
-			in.MaxVotingPower = vpMax
-			in.ChainBlocks = chainBlocks
-			in.PeriodDays = periodDays
-
-			rep, ok := byAddr[addr]
+		for _, e := range entries {
+			rep, ok := byAddr[e.Addr]
 			if !ok {
-				rep = &validatorReport{Addr: addr, Moniker: m.moniker, Periods: map[string]periodScore{}}
-				byAddr[addr] = rep
-				order = append(order, addr)
+				rep = &validatorReport{Addr: e.Addr, Moniker: e.Moniker, Periods: map[string]periodScore{}}
+				byAddr[e.Addr] = rep
+				order = append(order, e.Addr)
 			}
 			if rep.Moniker == "" {
-				rep.Moniker = m.moniker
+				rep.Moniker = e.Moniker
 			}
-
-			res := score.Compute(in, weights)
-			ps := periodScore{
-				Score: res.Score, Tier: string(res.Tier),
-				SignRate:            res.SignRate,
-				VotingPower:         in.VotingPower,
-				CriticalCount:       in.CriticalCount,
-				WarningCount:        in.WarningCount,
-				IncidentCount:       in.IncidentCount,
-				IncidentRatePerWeek: res.IncidentRatePerWeek,
-				DowntimeBlocks:      in.DowntimeBlocks,
-				MissedBlocks:        in.TotalBlocks - in.SignedBlocks,
+			rep.Periods[period] = periodScore{
+				Score: e.Score, Tier: string(e.Tier),
+				SignRate:            e.SignRate,
+				ProposerReliability: e.ProposerReliability,
+				VotingPower:         e.VotingPower,
+				CriticalCount:       e.CriticalCount,
+				WarningCount:        e.WarningCount,
+				IncidentCount:       e.IncidentCount,
+				IncidentRatePerWeek: e.IncidentRatePerWeek,
+				DowntimeBlocks:      e.DowntimeBlocks,
+				MissedBlocks:        e.MissedBlocks,
 			}
-			if res.ProposerScored {
-				pr := res.ProposerReliability
-				ps.ProposerReliability = &pr
-			}
-			rep.Periods[period] = ps
 		}
 	}
 
