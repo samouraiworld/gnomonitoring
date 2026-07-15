@@ -177,6 +177,10 @@ var alertHTTPClient = &http.Client{
 	},
 }
 
+// testHTTPClient is used in tests to bypass SSRF protection (allows localhost).
+// Set by tests to enable testing with httptest.Server.
+var testHTTPClient *http.Client
+
 // LoadConfig reads config.yaml, validates chains, and initialises EnabledChains.
 func LoadConfig() {
 	data, err := os.ReadFile("config.yaml")
@@ -351,6 +355,55 @@ func (c *config) GetEnabledChainIDs() []string {
 	sort.Strings(ids)
 	return ids
 }
+// DiscordEmbed mirrors the subset of Discord's embed object this project
+// uses. See https://discord.com/developers/docs/resources/channel#embed-object
+// for the full schema.
+type DiscordEmbed struct {
+	Title       string              `json:"title,omitempty"`
+	Description string              `json:"description,omitempty"`
+	Color       int                 `json:"color,omitempty"`
+	Fields      []DiscordEmbedField `json:"fields,omitempty"`
+	Footer      *DiscordEmbedFooter `json:"footer,omitempty"`
+}
+
+type DiscordEmbedField struct {
+	Name   string `json:"name"`
+	Value  string `json:"value"`
+	Inline bool   `json:"inline,omitempty"`
+}
+
+type DiscordEmbedFooter struct {
+	Text string `json:"text"`
+}
+
+// SendDiscordEmbed posts a single rich embed to a Discord webhook, used by
+// the daily report for a channel-appropriate rendering instead of a plain
+// text message (see SendDiscordAlert for the plain-text incident-alert path,
+// unchanged).
+func SendDiscordEmbed(embed DiscordEmbed, webhookURL string) error {
+	payload := map[string]any{"embeds": []DiscordEmbed{embed}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal discord embed: %w", err)
+	}
+
+	client := alertHTTPClient
+	if testHTTPClient != nil {
+		client = testHTTPClient
+	}
+
+	resp, err := client.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("error sending Discord embed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("discord webhook HTTP status: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func SendDiscordAlert(msg string, webhookURL string) error {
 	payload := map[string]string{"content": msg}
 	body, _ := json.Marshal(payload)

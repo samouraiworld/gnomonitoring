@@ -101,3 +101,30 @@ func TestRenderDailyReportPlainText_WithProblems(t *testing.T) {
 		t.Fatalf("expected problem validator details in output, got:\n%s", got)
 	}
 }
+
+func TestRenderDailyReportDiscordEmbed_ColorReflectsWorstTier(t *testing.T) {
+	d := DailyReportData{
+		ChainID: "test12", Date: "2025-11-02", TotalCount: 1,
+		Problems: []database.ValidatorReportEntry{
+			{Addr: "g1", Moniker: "m1", Score: 10, Tier: score.TierCritical, MissedBlocks: 5},
+		},
+	}
+	embed := RenderDailyReportDiscordEmbed(d)
+	if embed.Color != 0xE74C3C {
+		t.Fatalf("Color = %#x, want %#x (critical red)", embed.Color, 0xE74C3C)
+	}
+	if len(embed.Fields) != 1 || embed.Fields[0].Name != "m1" {
+		t.Fatalf("expected one field for the problem validator, got: %+v", embed.Fields)
+	}
+}
+
+func TestRenderDailyReportDiscordEmbed_HealthyIsGreenWithSingleField(t *testing.T) {
+	d := DailyReportData{ChainID: "test12", Date: "2025-11-02", TotalCount: 4, AllHealthy: true}
+	embed := RenderDailyReportDiscordEmbed(d)
+	if embed.Color != 0x2ECC71 {
+		t.Fatalf("Color = %#x, want %#x (healthy green)", embed.Color, 0x2ECC71)
+	}
+	if len(embed.Fields) != 1 {
+		t.Fatalf("expected a single status field, got: %+v", embed.Fields)
+	}
+}

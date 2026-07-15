@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
 	"gorm.io/gorm"
@@ -109,4 +110,63 @@ func RenderDailyReportPlainText(d DailyReportData) string {
 		sb.WriteString("📊 Full report: " + d.ReportLink + "\n")
 	}
 	return sb.String()
+}
+
+const (
+	discordColorCritical = 0xE74C3C
+	discordColorWarning  = 0xF39C12
+	discordColorHealthy  = 0x2ECC71
+)
+
+// RenderDailyReportDiscordEmbed builds a single Discord embed summarizing
+// the daily report: color reflects the worst tier among Problems (red for
+// any Critical, orange for Watch-only, green when AllHealthy), with one
+// field per problem validator.
+func RenderDailyReportDiscordEmbed(d DailyReportData) internal.DiscordEmbed {
+	color := discordColorHealthy
+	hasCritical, hasWatch := false, false
+	for _, p := range d.Problems {
+		switch p.Tier {
+		case score.TierCritical:
+			hasCritical = true
+		case score.TierWatch:
+			hasWatch = true
+		}
+	}
+	switch {
+	case hasCritical:
+		color = discordColorCritical
+	case hasWatch:
+		color = discordColorWarning
+	}
+
+	var fields []internal.DiscordEmbedField
+	if d.AllHealthy {
+		fields = append(fields, internal.DiscordEmbedField{
+			Name:  "Status",
+			Value: fmt.Sprintf("✅ All %d validators healthy", d.TotalCount),
+		})
+	} else {
+		for _, p := range d.Problems {
+			vpPct := ""
+			if p.SumVotingPower > 0 {
+				vpPct = fmt.Sprintf(" | VP: %.1f%%", float64(p.VotingPower)/float64(p.SumVotingPower)*100)
+			}
+			fields = append(fields, internal.DiscordEmbedField{
+				Name:  p.Moniker,
+				Value: fmt.Sprintf("Tier: %s | Score: %d | Missed: %d%s", p.Tier, p.Score, p.MissedBlocks, vpPct),
+			})
+		}
+	}
+
+	embed := internal.DiscordEmbed{
+		Title:       fmt.Sprintf("[%s] Daily Summary — %s", d.ChainID, d.Date),
+		Description: d.ChainSummary,
+		Color:       color,
+		Fields:      fields,
+	}
+	if d.ReportLink != "" {
+		embed.Footer = &internal.DiscordEmbedFooter{Text: "Full report: " + d.ReportLink}
+	}
+	return embed
 }

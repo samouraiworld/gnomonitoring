@@ -1,8 +1,11 @@
 package internal
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -420,3 +423,29 @@ func TestAlertHTTPClient_RefusesLoopbackTarget(t *testing.T) {
 // deterministically with real DNS lookups without mocking. The length check added
 // in guardedDialContext guards against index panic, and existing tests cover the
 // normal and reject-non-public paths.
+
+func TestSendDiscordEmbed_PostsEmbedsArray(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	// Set testHTTPClient to bypass SSRF protection for this test.
+	testHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { testHTTPClient = nil }()
+
+	embed := DiscordEmbed{Title: "t", Description: "d", Color: 0xE74C3C}
+	if err := SendDiscordEmbed(embed, srv.URL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	embeds, ok := captured["embeds"].([]any)
+	if !ok || len(embeds) != 1 {
+		t.Fatalf("expected a single-element embeds array, got: %+v", captured)
+	}
+	got := embeds[0].(map[string]any)
+	if got["title"] != "t" || got["description"] != "d" {
+		t.Fatalf("embed fields not passed through, got: %+v", got)
+	}
+}
