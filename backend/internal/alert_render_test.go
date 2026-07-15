@@ -81,3 +81,47 @@ func TestRenderAlertDiscordEmbed_DescriptionPassthrough(t *testing.T) {
 		t.Fatalf("Description = %q, want passthrough of AlertData.Description", embed.Description)
 	}
 }
+
+func TestRenderAlertSlackBlocks_HeaderAndFieldsSection(t *testing.T) {
+	d := AlertData{
+		ChainID: "test12", Emoji: "⚠️", Title: "WARNING",
+		Fields: []AlertField{{Name: "addr", Value: "g1addr"}, {Name: "moniker", Value: "mon1"}},
+	}
+	blocks := RenderAlertSlackBlocks(d)
+
+	if len(blocks) != 2 {
+		t.Fatalf("len(blocks) = %d, want 2 (header + fields section)", len(blocks))
+	}
+	if blocks[0].Type != "header" || blocks[0].Text.Text != "[test12] ⚠️ WARNING" {
+		t.Fatalf("header block = %+v", blocks[0])
+	}
+	wantSection := "*addr*: g1addr\n*moniker*: mon1"
+	if blocks[1].Type != "section" || blocks[1].Text.Text != wantSection {
+		t.Fatalf("section block = %+v, want text %q", blocks[1], wantSection)
+	}
+}
+
+func TestRenderAlertSlackBlocks_MentionsInContextBlock(t *testing.T) {
+	d := AlertData{ChainID: "test12", Emoji: "🚨", Title: "CRITICAL", Mentions: []string{"111", "222"}}
+	blocks := RenderAlertSlackBlocks(d)
+
+	last := blocks[len(blocks)-1]
+	if last.Type != "context" {
+		t.Fatalf("last block type = %q, want context", last.Type)
+	}
+	if len(last.Elements) != 1 || last.Elements[0].Text != "<@111> <@222>" {
+		t.Fatalf("context elements = %+v", last.Elements)
+	}
+}
+
+func TestRenderAlertSlackBlocks_DescriptionOnlyNoFields(t *testing.T) {
+	d := AlertData{ChainID: "test12", Emoji: "✅", Title: "Activity Restored", Description: "Gno.land is back to normal."}
+	blocks := RenderAlertSlackBlocks(d)
+
+	if len(blocks) != 2 {
+		t.Fatalf("len(blocks) = %d, want 2 (header + description section)", len(blocks))
+	}
+	if blocks[1].Text.Text != "Gno.land is back to normal." {
+		t.Fatalf("section text = %q", blocks[1].Text.Text)
+	}
+}

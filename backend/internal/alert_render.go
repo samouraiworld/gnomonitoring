@@ -99,3 +99,41 @@ func RenderAlertDiscordEmbed(d AlertData) (content string, embed DiscordEmbed) {
 	}
 	return content, embed
 }
+
+// RenderAlertSlackBlocks builds a Slack Block Kit message for d: a header,
+// a single section combining Description (if any) and one "*Name*: Value"
+// line per Field, and a context block with mentions when present.
+func RenderAlertSlackBlocks(d AlertData) []SlackBlock {
+	blocks := []SlackBlock{
+		{
+			Type: "header",
+			Text: &SlackText{Type: "plain_text", Text: fmt.Sprintf("[%s] %s %s", d.ChainID, d.Emoji, d.Title)},
+		},
+	}
+
+	var lines []string
+	if d.Description != "" {
+		lines = append(lines, d.Description)
+	}
+	for _, f := range d.Fields {
+		lines = append(lines, fmt.Sprintf("*%s*: %s", f.Name, f.Value))
+	}
+	if len(lines) > 0 {
+		blocks = append(blocks, SlackBlock{
+			Type: "section",
+			Text: &SlackText{Type: "mrkdwn", Text: strings.Join(lines, "\n")},
+		})
+	}
+
+	if len(d.Mentions) > 0 {
+		mentionText := make([]string, len(d.Mentions))
+		for i, m := range d.Mentions {
+			mentionText[i] = "<@" + m + ">"
+		}
+		blocks = append(blocks, SlackBlock{
+			Type:     "context",
+			Elements: []SlackText{{Type: "mrkdwn", Text: strings.Join(mentionText, " ")}},
+		})
+	}
+	return blocks
+}
