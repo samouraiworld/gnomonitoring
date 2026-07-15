@@ -666,7 +666,7 @@ func SendResolveValidator(chainID, addr, moniker string, resumeHeight int64, db 
 	return nil
 }
 
-func SendInfoValidator(chainID, msg string, level string, db *gorm.DB) error {
+func SendInfoValidator(chainID string, data AlertData, db *gorm.DB) error {
 	type Webhook struct {
 		UserID  string
 		URL     string
@@ -684,22 +684,21 @@ func SendInfoValidator(chainID, msg string, level string, db *gorm.DB) error {
 	for _, wh := range webhooks {
 		switch wh.Type {
 		case "discord":
-			sendErr := SendDiscordAlert(msg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			content, embed := RenderAlertDiscordEmbed(data)
+			if err := SendDiscordAlertEmbed(content, embed, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		case "slack":
-			sendErr := SendSlackAlert(msg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			blocks := RenderAlertSlackBlocks(data)
+			if err := SendSlackBlocks(blocks, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		}
 	}
-	if err := telegram.MsgTelegramChain(msg, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
+	text := RenderAlertTelegramHTML(data)
+	if err := telegram.MsgTelegramChain(text, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramChain: %v", err)
 	}
 	return nil
