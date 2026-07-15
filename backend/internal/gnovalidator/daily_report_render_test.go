@@ -128,3 +128,29 @@ func TestRenderDailyReportDiscordEmbed_HealthyIsGreenWithSingleField(t *testing.
 		t.Fatalf("expected a single status field, got: %+v", embed.Fields)
 	}
 }
+
+func TestRenderDailyReportSlackBlocks_OneSectionPerProblem(t *testing.T) {
+	d := DailyReportData{
+		ChainID: "test12", Date: "2025-11-02", TotalCount: 2,
+		Problems: []database.ValidatorReportEntry{
+			{Addr: "g1", Moniker: "m1", Score: 10, Tier: score.TierCritical, MissedBlocks: 5},
+			{Addr: "g2", Moniker: "m2", Score: 40, Tier: score.TierWatch, MissedBlocks: 2},
+		},
+		ReportLink: "https://example.com/reports/test12",
+	}
+	blocks := RenderDailyReportSlackBlocks(d)
+
+	sectionCount := 0
+	for _, b := range blocks {
+		if b.Type == "section" && b.Text != nil && strings.Contains(b.Text.Text, "m1") {
+			sectionCount++
+		}
+	}
+	if sectionCount == 0 {
+		t.Fatalf("expected a section block mentioning m1, got: %+v", blocks)
+	}
+	lastBlock := blocks[len(blocks)-1]
+	if lastBlock.Type != "context" {
+		t.Fatalf("expected the last block to be a context block with the report link, got: %+v", lastBlock)
+	}
+}

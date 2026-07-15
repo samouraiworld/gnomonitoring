@@ -450,3 +450,45 @@ func TestSendDiscordEmbed_PostsEmbedsArray(t *testing.T) {
 		t.Fatalf("embed fields not passed through, got: %+v", got)
 	}
 }
+
+func TestSendSlackBlocks_PostsBlocksArray(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	// Swap alertHTTPClient to bypass SSRF protection for this test.
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
+
+	blocks := []SlackBlock{
+		{Type: "section", Text: &SlackText{Type: "mrkdwn", Text: "hello"}},
+	}
+	if err := SendSlackBlocks(blocks, srv.URL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, ok := captured["blocks"].([]any)
+	if !ok || len(got) != 1 {
+		t.Fatalf("expected a single-element blocks array, got: %+v", captured)
+	}
+}
+
+func TestSendSlackBlocks_NonOKStatusIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	// Swap alertHTTPClient to bypass SSRF protection for this test.
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
+
+	err := SendSlackBlocks([]SlackBlock{{Type: "section"}}, srv.URL)
+	if err == nil {
+		t.Fatal("expected an error for a non-200 response, got nil")
+	}
+}

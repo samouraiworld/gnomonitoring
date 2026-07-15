@@ -170,3 +170,48 @@ func RenderDailyReportDiscordEmbed(d DailyReportData) internal.DiscordEmbed {
 	}
 	return embed
 }
+
+// RenderDailyReportSlackBlocks builds a Slack Block Kit message summarizing
+// the daily report: a header, a chain-summary section, one section per
+// problem validator (or a single "all healthy" section), and a context block
+// with the report link when set.
+func RenderDailyReportSlackBlocks(d DailyReportData) []internal.SlackBlock {
+	var blocks []internal.SlackBlock
+
+	blocks = append(blocks, internal.SlackBlock{
+		Type: "header",
+		Text: &internal.SlackText{Type: "plain_text", Text: fmt.Sprintf("[%s] Daily Summary — %s", d.ChainID, d.Date)},
+	})
+	if d.ChainSummary != "" {
+		blocks = append(blocks, internal.SlackBlock{
+			Type: "section",
+			Text: &internal.SlackText{Type: "mrkdwn", Text: d.ChainSummary},
+		})
+	}
+	blocks = append(blocks, internal.SlackBlock{Type: "divider"})
+
+	if d.AllHealthy {
+		blocks = append(blocks, internal.SlackBlock{
+			Type: "section",
+			Text: &internal.SlackText{Type: "mrkdwn", Text: fmt.Sprintf("✅ All %d validators healthy", d.TotalCount)},
+		})
+	} else {
+		for _, p := range d.Problems {
+			blocks = append(blocks, internal.SlackBlock{
+				Type: "section",
+				Text: &internal.SlackText{
+					Type: "mrkdwn",
+					Text: fmt.Sprintf("*%s* (`%s`)\nTier: %s | Score: %d | Missed: %d", p.Moniker, p.Addr, p.Tier, p.Score, p.MissedBlocks),
+				},
+			})
+		}
+	}
+
+	if d.ReportLink != "" {
+		blocks = append(blocks, internal.SlackBlock{
+			Type:     "context",
+			Elements: []internal.SlackText{{Type: "mrkdwn", Text: "Full report: " + d.ReportLink}},
+		})
+	}
+	return blocks
+}

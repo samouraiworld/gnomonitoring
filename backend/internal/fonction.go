@@ -427,6 +427,44 @@ func SendSlackAlert(msg string, webhookURL string) error {
 	}
 	return nil
 }
+
+// SlackBlock mirrors the subset of Slack's Block Kit this project uses. See
+// https://api.slack.com/block-kit for the full schema.
+type SlackBlock struct {
+	Type     string      `json:"type"`
+	Text     *SlackText  `json:"text,omitempty"`
+	Elements []SlackText `json:"elements,omitempty"`
+}
+
+type SlackText struct {
+	Type string `json:"type"` // "mrkdwn" or "plain_text"
+	Text string `json:"text"`
+}
+
+// SendSlackBlocks posts a Block Kit message to a Slack incoming webhook,
+// used by the daily report for a channel-appropriate rendering instead of a
+// plain text message (see SendSlackAlert for the plain-text incident-alert
+// path, unchanged). Unlike SendSlackAlert, this returns a non-nil error on a
+// non-2xx response rather than only logging it.
+func SendSlackBlocks(blocks []SlackBlock, webhookURL string) error {
+	payload := map[string]any{"blocks": blocks}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal slack blocks: %w", err)
+	}
+
+	resp, err := alertHTTPClient.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("error sending Slack blocks: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("slack webhook HTTP status: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moniker string, start_height, end_height int64, db *gorm.DB) error {
 	type Webhook struct {
 		UserID  string
