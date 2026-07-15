@@ -459,6 +459,51 @@ func TestSendDiscordEmbed_PostsEmbedsArray(t *testing.T) {
 	}
 }
 
+func TestSendDiscordAlertEmbed_PostsContentAndEmbeds(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
+
+	embed := DiscordEmbed{Title: "t", Color: 0xE74C3C}
+	if err := SendDiscordAlertEmbed("<@111>", embed, srv.URL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if captured["content"] != "<@111>" {
+		t.Fatalf("content not passed through, got: %+v", captured)
+	}
+	embeds, ok := captured["embeds"].([]any)
+	if !ok || len(embeds) != 1 {
+		t.Fatalf("expected a single-element embeds array, got: %+v", captured)
+	}
+}
+
+func TestSendDiscordAlertEmbed_OmitsContentWhenEmpty(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
+
+	if err := SendDiscordAlertEmbed("", DiscordEmbed{Title: "t"}, srv.URL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, present := captured["content"]; present {
+		t.Fatalf("content key must be absent when empty, got: %+v", captured)
+	}
+}
+
 func TestSendSlackBlocks_PostsBlocksArray(t *testing.T) {
 	var captured map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

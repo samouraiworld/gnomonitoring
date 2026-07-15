@@ -407,6 +407,33 @@ func SendDiscordEmbed(embed DiscordEmbed, webhookURL string) error {
 	return nil
 }
 
+// SendDiscordAlertEmbed posts a single rich embed alongside a plain-text
+// content string to a Discord webhook. content carries @mentions, which
+// Discord does not parse when written inside an embed (see
+// RenderAlertDiscordEmbed); an empty content is omitted from the payload
+// entirely rather than sent as "".
+func SendDiscordAlertEmbed(content string, embed DiscordEmbed, webhookURL string) error {
+	payload := map[string]any{"embeds": []DiscordEmbed{embed}}
+	if content != "" {
+		payload["content"] = content
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal discord alert embed: %w", err)
+	}
+
+	resp, err := alertHTTPClient.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("error sending Discord alert embed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("discord webhook HTTP status: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func SendDiscordAlert(msg string, webhookURL string) error {
 	payload := map[string]string{"content": msg}
 	body, _ := json.Marshal(payload)
