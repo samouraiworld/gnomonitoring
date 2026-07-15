@@ -2,6 +2,7 @@ package gnovalidator
 
 import (
 	"fmt"
+	"html"
 	"sort"
 	"strings"
 
@@ -214,4 +215,29 @@ func RenderDailyReportSlackBlocks(d DailyReportData) []internal.SlackBlock {
 		})
 	}
 	return blocks
+}
+
+// RenderDailyReportTelegramHTML formats DailyReportData as an HTML message
+// (Telegram parse_mode=HTML) plus an optional link-button's text/URL. Callers
+// pass buttonURL to SendTelegramMessageWithButton (empty means "no button").
+func RenderDailyReportTelegramHTML(d DailyReportData) (text, buttonText, buttonURL string) {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📊 <b>[%s] Daily Summary — %s</b>\n", html.EscapeString(d.ChainID), d.Date))
+	if d.ChainSummary != "" {
+		sb.WriteString(html.EscapeString(d.ChainSummary) + "\n")
+	}
+	if d.AllHealthy {
+		sb.WriteString(fmt.Sprintf("✅ All %d validators healthy\n", d.TotalCount))
+	} else {
+		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention:\n", len(d.Problems), d.TotalCount))
+		for _, p := range d.Problems {
+			sb.WriteString(fmt.Sprintf("  <b>%s</b> (<code>%s</code>) — Tier: %s | Score: %d | Missed: %d\n",
+				html.EscapeString(p.Moniker), html.EscapeString(p.Addr), p.Tier, p.Score, p.MissedBlocks))
+		}
+	}
+
+	if d.ReportLink != "" {
+		return sb.String(), "📊 Rapport complet", d.ReportLink
+	}
+	return sb.String(), "", ""
 }

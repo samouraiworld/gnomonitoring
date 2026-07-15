@@ -154,3 +154,35 @@ func TestRenderDailyReportSlackBlocks_OneSectionPerProblem(t *testing.T) {
 		t.Fatalf("expected the last block to be a context block with the report link, got: %+v", lastBlock)
 	}
 }
+
+func TestRenderDailyReportTelegramHTML_EscapesMonikerAndSetsButton(t *testing.T) {
+	d := DailyReportData{
+		ChainID: "test12", Date: "2025-11-02", TotalCount: 1,
+		Problems: []database.ValidatorReportEntry{
+			{Addr: "g1", Moniker: "<script>", Score: 10, Tier: score.TierCritical, MissedBlocks: 5},
+		},
+		ReportLink: "https://example.com/reports/test12",
+	}
+	text, buttonText, buttonURL := RenderDailyReportTelegramHTML(d)
+
+	if strings.Contains(text, "<script>") {
+		t.Fatalf("moniker must be HTML-escaped, got:\n%s", text)
+	}
+	if !strings.Contains(text, "&lt;script&gt;") {
+		t.Fatalf("expected escaped moniker in output, got:\n%s", text)
+	}
+	if buttonURL != "https://example.com/reports/test12" {
+		t.Fatalf("buttonURL = %q, want the report link", buttonURL)
+	}
+	if buttonText == "" {
+		t.Fatalf("buttonText must not be empty when a button is shown")
+	}
+}
+
+func TestRenderDailyReportTelegramHTML_NoButtonWhenNoReportLink(t *testing.T) {
+	d := DailyReportData{ChainID: "test12", Date: "2025-11-02", TotalCount: 3, AllHealthy: true}
+	_, _, buttonURL := RenderDailyReportTelegramHTML(d)
+	if buttonURL != "" {
+		t.Fatalf("buttonURL = %q, want empty when ReportLink is unset", buttonURL)
+	}
+}
