@@ -1,9 +1,6 @@
 package gnovalidator
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
@@ -14,39 +11,65 @@ import (
 func TestDispatchDailyReportToWebhooks_SendsEmbedToDiscordAndBlocksToSlack(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
-	// The outbound webhook client (internal.alertHTTPClient) rejects loopback
-	// destinations by design (SSRF hardening). Point it at a plain client for
-	// the duration of this test so it can reach the httptest.Server below,
-	// mirroring the same-package swap pattern in internal/fonction_test.go —
-	// exposed here via SetAlertHTTPClientForTest since alertHTTPClient itself
-	// is unexported and this test lives outside package internal.
-	restore := internal.SetAlertHTTPClientForTest(&http.Client{})
-	defer restore()
+	// Swap the package-level sendDiscordEmbed/sendSlackBlocks function
+	// variables (see their declaration in gnovalidator_report.go) for fakes
+	// that record their arguments, instead of going through real HTTP and
+	// the SSRF-guarded alertHTTPClient in package internal.
+	origSendDiscordEmbed := sendDiscordEmbed
+	origSendSlackBlocks := sendSlackBlocks
+	defer func() {
+		sendDiscordEmbed = origSendDiscordEmbed
+		sendSlackBlocks = origSendSlackBlocks
+	}()
 
-	var discordBody, slackBody map[string]any
-	discordSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&discordBody)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer discordSrv.Close()
-	slackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&slackBody)
-		w.Write([]byte("ok"))
-	}))
-	defer slackSrv.Close()
+	var discordEmbed internal.DiscordEmbed
+	var discordURL string
+	var discordCalled bool
+	sendDiscordEmbed = func(embed internal.DiscordEmbed, webhookURL string) error {
+		discordEmbed = embed
+		discordURL = webhookURL
+		discordCalled = true
+		return nil
+	}
 
-	db.Create(&database.WebhookValidator{UserID: "u1", URL: discordSrv.URL, Type: "discord", Description: "d"})
-	db.Create(&database.WebhookValidator{UserID: "u1", URL: slackSrv.URL, Type: "slack", Description: "s"})
+	var slackBlocks []internal.SlackBlock
+	var slackURL string
+	var slackCalled bool
+	sendSlackBlocks = func(blocks []internal.SlackBlock, webhookURL string) error {
+		slackBlocks = blocks
+		slackURL = webhookURL
+		slackCalled = true
+		return nil
+	}
+
+	const discordWebhookURL = "https://discord.com/api/webhooks/fake"
+	const slackWebhookURL = "https://hooks.slack.com/services/fake"
+
+	db.Create(&database.WebhookValidator{UserID: "u1", URL: discordWebhookURL, Type: "discord", Description: "d"})
+	db.Create(&database.WebhookValidator{UserID: "u1", URL: slackWebhookURL, Type: "slack", Description: "s"})
 
 	data := DailyReportData{ChainID: "test12", Date: "2025-11-02", TotalCount: 1, AllHealthy: true}
 	if err := dispatchDailyReportToWebhooks(db, "u1", "test12", data); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, ok := discordBody["embeds"]; !ok {
-		t.Fatalf("expected an embeds payload sent to the Discord webhook, got: %+v", discordBody)
+	if !discordCalled {
+		t.Fatalf("expected sendDiscordEmbed to be called for the discord-type webhook")
 	}
-	if _, ok := slackBody["blocks"]; !ok {
-		t.Fatalf("expected a blocks payload sent to the Slack webhook, got: %+v", slackBody)
+	if discordURL != discordWebhookURL {
+		t.Fatalf("expected discord embed sent to %s, got %s", discordWebhookURL, discordURL)
+	}
+	if discordEmbed.Title == "" && discordEmbed.Description == "" && len(discordEmbed.Fields) == 0 {
+		t.Fatalf("expected a non-empty embed sent to the Discord webhook, got: %+v", discordEmbed)
+	}
+
+	if !slackCalled {
+		t.Fatalf("expected sendSlackBlocks to be called for the slack-type webhook")
+	}
+	if slackURL != slackWebhookURL {
+		t.Fatalf("expected slack blocks sent to %s, got %s", slackWebhookURL, slackURL)
+	}
+	if len(slackBlocks) == 0 {
+		t.Fatalf("expected a non-empty blocks payload sent to the Slack webhook, got: %+v", slackBlocks)
 	}
 }

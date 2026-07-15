@@ -177,19 +177,6 @@ var alertHTTPClient = &http.Client{
 	},
 }
 
-// SetAlertHTTPClientForTest overrides the package-level alertHTTPClient used
-// by all outbound webhook dispatch (SendDiscordEmbed, SendSlackBlocks, ...)
-// and returns a function that restores the original client. Test-only:
-// production code must never call this. It exists so that tests in other
-// packages — which cannot reassign the unexported alertHTTPClient variable
-// directly — can still point outbound requests at an httptest.Server,
-// mirroring the same-package swap already used in fonction_test.go.
-func SetAlertHTTPClientForTest(c *http.Client) (restore func()) {
-	orig := alertHTTPClient
-	alertHTTPClient = c
-	return func() { alertHTTPClient = orig }
-}
-
 // LoadConfig reads config.yaml, validates chains, and initialises EnabledChains.
 func LoadConfig() {
 	data, err := os.ReadFile("config.yaml")

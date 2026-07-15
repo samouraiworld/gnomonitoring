@@ -20,6 +20,13 @@ var SendTelegramMessage func(token string, chatID int64, text string) error
 // pattern. buttonURL == "" means "send text only, no button".
 var SendTelegramMessageWithButton func(token string, chatID int64, text, buttonText, buttonURL string) error
 
+// sendDiscordEmbed and sendSlackBlocks are function variables (not direct
+// internal.SendDiscordEmbed/SendSlackBlocks calls) so tests in this package
+// can substitute a fake sender instead of needing real HTTP through the
+// SSRF-guarded alertHTTPClient in package internal.
+var sendDiscordEmbed = internal.SendDiscordEmbed
+var sendSlackBlocks = internal.SendSlackBlocks
+
 type ValidatorRate struct {
 	Rate    float64
 	Moniker string
@@ -147,12 +154,12 @@ func dispatchDailyReportToWebhooks(db *gorm.DB, userID, chainID string, data Dai
 		switch wh.Type {
 		case "discord":
 			embed := RenderDailyReportDiscordEmbed(data)
-			if err := internal.SendDiscordEmbed(embed, wh.URL); err != nil {
+			if err := sendDiscordEmbed(embed, wh.URL); err != nil {
 				log.Printf("❌ Failed to send daily report embed to %s: %v", wh.URL, err)
 			}
 		case "slack":
 			blocks := RenderDailyReportSlackBlocks(data)
-			if err := internal.SendSlackBlocks(blocks, wh.URL); err != nil {
+			if err := sendSlackBlocks(blocks, wh.URL); err != nil {
 				log.Printf("❌ Failed to send daily report blocks to %s: %v", wh.URL, err)
 			}
 		default:
