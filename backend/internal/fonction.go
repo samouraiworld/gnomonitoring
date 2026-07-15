@@ -615,7 +615,7 @@ func SendUserReportAlert(userID, chainID, msg string, db *gorm.DB) error {
 
 	return nil
 }
-func SendResolveValidator(chainID, msg string, addr string, db *gorm.DB) error {
+func SendResolveValidator(chainID, addr, moniker string, resumeHeight int64, db *gorm.DB) error {
 	type Webhook struct {
 		UserID  string
 		URL     string
@@ -630,25 +630,36 @@ func SendResolveValidator(chainID, msg string, addr string, db *gorm.DB) error {
 		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
+
+	data := AlertData{
+		ChainID: chainID,
+		Level:   AlertResolved,
+		Emoji:   "✅",
+		Title:   "RESOLVED",
+		Fields: []AlertField{
+			{Name: "validator", Value: fmt.Sprintf("%s (%s)", moniker, addr)},
+			{Name: "resolved at block", Value: fmt.Sprintf("%d", resumeHeight)},
+		},
+	}
+
 	for _, wh := range webhooks {
 		switch wh.Type {
 		case "discord":
-			sendErr := SendDiscordAlert(msg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			content, embed := RenderAlertDiscordEmbed(data)
+			if err := SendDiscordAlertEmbed(content, embed, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		case "slack":
-			sendErr := SendSlackAlert(msg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			blocks := RenderAlertSlackBlocks(data)
+			if err := SendSlackBlocks(blocks, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		}
 	}
-	if err := telegram.MsgTelegramAlert(msg, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
+	text := RenderAlertTelegramHTML(data)
+	if err := telegram.MsgTelegramAlert(text, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramAlert: %v", err)
 	}
 

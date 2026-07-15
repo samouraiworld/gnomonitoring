@@ -606,9 +606,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 			continue
 		}
 
-		resolveMsg := fmt.Sprintf("[%s] ✅ RESOLVED: No more missed blocks for %s (%s) at Block %d",
-			chainID, a.Moniker, a.Addr, resumeHeight)
-		if err := internal.SendResolveValidator(chainID, resolveMsg, a.Addr, db); err != nil {
+		if err := internal.SendResolveValidator(chainID, a.Addr, a.Moniker, resumeHeight, db); err != nil {
 			log.Printf("[validator][%s] SendResolveValidator error: %v", chainID, err)
 		}
 		if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
