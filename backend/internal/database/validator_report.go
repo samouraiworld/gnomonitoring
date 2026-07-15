@@ -46,9 +46,13 @@ type mergedValidatorInputs struct {
 // Valset-membership filtering: a validator absent from GetValidatorVP's
 // result has left the valset and is excluded, UNLESS the chain has never
 // captured a single VP snapshot yet (graceful degradation for a
-// newly-enabled chain — see GetValidatorReportHandler's identical comment in
-// internal/api/api_report.go, which this function's behavior must keep
-// matching).
+// newly-enabled chain). Importantly, this function intentionally includes
+// current valset members even if they have zero participation/alert history
+// (e.g., newly-joined validators), scoring them at 0/Critical. This is a
+// deliberate design choice (not just a port of GetValidatorReportHandler):
+// per the documented scoring principle, a validator with no participation
+// data scores 0/Critical, so such validators should be visible in the report
+// rather than silently omitted.
 func BuildChainValidatorReport(db *gorm.DB, chainID, period, addrFilter string) ([]ValidatorReportEntry, error) {
 	cfgRows, err := GetAllAdminConfigs(db)
 	if err != nil {
@@ -89,9 +93,17 @@ func BuildChainValidatorReport(db *gorm.DB, chainID, period, addrFilter string) 
 		seed(v.Addr, v.Moniker)
 	}
 	// Also seed current valset members, even if they have no participation
-	// history (e.g., newly-joined validators).
+	// history (e.g., newly-joined validators). This is intentional: validators
+	// who just joined the valset should be visible in the report at 0/Critical
+	// rather than silently omitted, consistent with the design principle that
+	// a validator with no participation data scores 0/Critical.
 	if valsetFilterActive {
+		vpAddrs := make([]string, 0, len(vpByAddr))
 		for addr := range vpByAddr {
+			vpAddrs = append(vpAddrs, addr)
+		}
+		sort.Strings(vpAddrs)
+		for _, addr := range vpAddrs {
 			if addrFilter != "" && addr != addrFilter {
 				continue
 			}
