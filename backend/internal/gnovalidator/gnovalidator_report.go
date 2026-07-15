@@ -34,9 +34,9 @@ func ReportYesterdayUTC(now time.Time) string {
 	return now.UTC().AddDate(0, 0, -1).Format("2006-01-02")
 }
 
-// reportLinkLine returns the daily-report link line for a chain when the
-// per-chain report toggle is on and a base URL is configured, else "".
-func reportLinkLine(db *gorm.DB, chainID string) string {
+// reportLinkURL returns the daily-report URL for a chain when the per-chain
+// report toggle is on and a base URL is configured, else "".
+func reportLinkURL(db *gorm.DB, chainID string) string {
 	enabled, err := database.GetAdminConfig(db, "validator_report_enabled."+chainID)
 	if err != nil || strings.ToLower(strings.TrimSpace(enabled)) != "true" {
 		return ""
@@ -49,7 +49,18 @@ func reportLinkLine(db *gorm.DB, chainID string) string {
 	if base == "" {
 		return ""
 	}
-	return fmt.Sprintf("\n📊 Validator report: %s/reports/%s", base, chainID)
+	return fmt.Sprintf("%s/reports/%s", base, chainID)
+}
+
+// reportLinkLine returns the daily-report link line (as a standalone
+// "\n📊 ..." suffix) for plain-text report bodies. Kept for the
+// stuck/disabled report variants, which are not channel-rendered.
+func reportLinkLine(db *gorm.DB, chainID string) string {
+	url := reportLinkURL(db, chainID)
+	if url == "" {
+		return ""
+	}
+	return fmt.Sprintf("\n📊 Validator report: %s", url)
 }
 
 func SheduleUserReport(userID string, hour, minute int, timezone string, db *gorm.DB, reload <-chan struct{}) {
