@@ -205,13 +205,13 @@ func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *
 	}
 
 	yesterday := ReportYesterdayUTC(time.Now())
-	rates, minBlock, maxBlock := CalculateRate(db, chainID, yesterday)
+	rates, minBlock, _ := CalculateRate(db, chainID, yesterday)
 	if len(rates) == 0 {
 		log.Printf("[report][%s] no participation data for %s, skipping", chainID, yesterday)
 		return
 	}
 
-	data, err := BuildDailyReportData(db, chainID, yesterday, snap, minBlock, maxBlock)
+	data, err := BuildDailyReportData(db, chainID, yesterday, snap, minBlock)
 	if err != nil {
 		log.Printf("[report][%s] BuildDailyReportData error: %v", chainID, err)
 		return

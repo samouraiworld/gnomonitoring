@@ -12,6 +12,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// maxProblemsShown caps how many problem validators each renderer includes
+// inline. Without a cap, a chain-wide incident (halt, mass downtime) can push
+// every validator into Problems at once, and the resulting payload can
+// exceed Discord's 25-field embed limit, Slack's 50-block message limit, or
+// Telegram's 4096-char message limit — each causing a delivery failure
+// exactly when the report matters most.
+const maxProblemsShown = 20
+
 // DailyReportData is the channel-neutral summary of one chain's daily
 // report. Each channel renderer (plain text, Discord embed, Slack Block Kit,
 // Telegram HTML) consumes the same DailyReportData built once per report.
@@ -21,18 +29,46 @@ type DailyReportData struct {
 	ChainSummary  string
 	ValsetChanges []ValsetChange
 	// Problems holds validators in tier Watch or Critical for the last_24h
-	// period, sorted worst (lowest score) first. Empty when AllHealthy.
+	// period, sorted worst (lowest score) first, capped at maxProblemsShown.
+	// Empty when AllHealthy.
 	Problems   []database.ValidatorReportEntry
 	TotalCount int
 	AllHealthy bool
 	ReportLink string
+	// TruncatedCount is the number of additional Watch/Critical validators
+	// beyond maxProblemsShown that are not included in Problems.
+	TruncatedCount int
+}
+
+// problemDisplayName returns the validator's moniker, falling back to its
+// address when no moniker is known (e.g. a newly-joined valset member with
+// no participation history yet to source a moniker from). An empty display
+// name would break Discord's embed-field-name requirement and reads as a
+// blank line everywhere else, so every renderer uses this instead of p.Moniker directly.
+func problemDisplayName(p database.ValidatorReportEntry) string {
+	if p.Moniker != "" {
+		return p.Moniker
+	}
+	return p.Addr
+}
+
+// truncatedSummaryText returns the plain (unescaped, unformatted) "N more"
+// summary line for a DailyReportData whose Problems list was capped at
+// maxProblemsShown. Callers embed it in their channel-specific formatting
+// (plain text line, Discord field value, Slack block text, Telegram HTML).
+// Only call when d.TruncatedCount > 0.
+func truncatedSummaryText(d DailyReportData) string {
+	if d.ReportLink != "" {
+		return fmt.Sprintf("…and %d more (see full report: %s)", d.TruncatedCount, d.ReportLink)
+	}
+	return fmt.Sprintf("…and %d more", d.TruncatedCount)
 }
 
 // BuildDailyReportData assembles a DailyReportData for chainID's healthy-chain
 // daily report. snap is the already-fetched ChainHealthSnapshot (same one
-// SendDailyStatsForUser passes to FormatHealthyReport); minBlock/maxBlock
-// bound the valset-changes window, exactly as FormatHealthyReport does today.
-func BuildDailyReportData(db *gorm.DB, chainID, date string, snap ChainHealthSnapshot, minBlock, maxBlock int64) (DailyReportData, error) {
+// SendDailyStatsForUser passes to FormatHealthyReport); minBlock bounds the
+// valset-changes window, exactly as FormatHealthyReport does today.
+func BuildDailyReportData(db *gorm.DB, chainID, date string, snap ChainHealthSnapshot, minBlock int64) (DailyReportData, error) {
 	entries, err := database.BuildChainValidatorReport(db, chainID, "last_24h", "")
 	if err != nil {
 		return DailyReportData{}, err
@@ -50,6 +86,12 @@ func BuildDailyReportData(db *gorm.DB, chainID, date string, snap ChainHealthSna
 		}
 		return problems[i].Addr < problems[j].Addr
 	})
+
+	var truncatedCount int
+	if len(problems) > maxProblemsShown {
+		truncatedCount = len(problems) - maxProblemsShown
+		problems = problems[:maxProblemsShown]
+	}
 
 	var chainSummary string
 	if snap.RPCReachable {
@@ -71,14 +113,15 @@ func BuildDailyReportData(db *gorm.DB, chainID, date string, snap ChainHealthSna
 	}
 
 	return DailyReportData{
-		ChainID:       chainID,
-		Date:          date,
-		ChainSummary:  chainSummary,
-		ValsetChanges: recentChanges,
-		Problems:      problems,
-		TotalCount:    len(entries),
-		AllHealthy:    len(problems) == 0,
-		ReportLink:    reportLinkURL(db, chainID),
+		ChainID:        chainID,
+		Date:           date,
+		ChainSummary:   chainSummary,
+		ValsetChanges:  recentChanges,
+		Problems:       problems,
+		TotalCount:     len(entries),
+		AllHealthy:     len(problems) == 0 && truncatedCount == 0,
+		ReportLink:     reportLinkURL(db, chainID),
+		TruncatedCount: truncatedCount,
 	}, nil
 }
 
@@ -97,7 +140,10 @@ func RenderDailyReportPlainText(d DailyReportData) string {
 		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention:\n", len(d.Problems), d.TotalCount))
 		for _, p := range d.Problems {
 			sb.WriteString(fmt.Sprintf("  %s (%s) — Tier: %s | Score: %d | Missed: %d\n",
-				p.Moniker, p.Addr, p.Tier, p.Score, p.MissedBlocks))
+				problemDisplayName(p), p.Addr, p.Tier, p.Score, p.MissedBlocks))
+		}
+		if d.TruncatedCount > 0 {
+			sb.WriteString("  " + truncatedSummaryText(d) + "\n")
 		}
 	}
 	for _, vc := range d.ValsetChanges {
@@ -154,8 +200,14 @@ func RenderDailyReportDiscordEmbed(d DailyReportData) internal.DiscordEmbed {
 				vpPct = fmt.Sprintf(" | VP: %.1f%%", float64(p.VotingPower)/float64(p.SumVotingPower)*100)
 			}
 			fields = append(fields, internal.DiscordEmbedField{
-				Name:  p.Moniker,
+				Name:  problemDisplayName(p),
 				Value: fmt.Sprintf("Tier: %s | Score: %d | Missed: %d%s", p.Tier, p.Score, p.MissedBlocks, vpPct),
+			})
+		}
+		if d.TruncatedCount > 0 {
+			fields = append(fields, internal.DiscordEmbedField{
+				Name:  "…",
+				Value: truncatedSummaryText(d),
 			})
 		}
 	}
@@ -202,8 +254,14 @@ func RenderDailyReportSlackBlocks(d DailyReportData) []internal.SlackBlock {
 				Type: "section",
 				Text: &internal.SlackText{
 					Type: "mrkdwn",
-					Text: fmt.Sprintf("*%s* (`%s`)\nTier: %s | Score: %d | Missed: %d", p.Moniker, p.Addr, p.Tier, p.Score, p.MissedBlocks),
+					Text: fmt.Sprintf("*%s* (`%s`)\nTier: %s | Score: %d | Missed: %d", problemDisplayName(p), p.Addr, p.Tier, p.Score, p.MissedBlocks),
 				},
+			})
+		}
+		if d.TruncatedCount > 0 {
+			blocks = append(blocks, internal.SlackBlock{
+				Type:     "context",
+				Elements: []internal.SlackText{{Type: "mrkdwn", Text: truncatedSummaryText(d)}},
 			})
 		}
 	}
@@ -232,7 +290,10 @@ func RenderDailyReportTelegramHTML(d DailyReportData) (text, buttonText, buttonU
 		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention:\n", len(d.Problems), d.TotalCount))
 		for _, p := range d.Problems {
 			sb.WriteString(fmt.Sprintf("  <b>%s</b> (<code>%s</code>) — Tier: %s | Score: %d | Missed: %d\n",
-				html.EscapeString(p.Moniker), html.EscapeString(p.Addr), p.Tier, p.Score, p.MissedBlocks))
+				html.EscapeString(problemDisplayName(p)), html.EscapeString(p.Addr), p.Tier, p.Score, p.MissedBlocks))
+		}
+		if d.TruncatedCount > 0 {
+			sb.WriteString(html.EscapeString(truncatedSummaryText(d)) + "\n")
 		}
 	}
 
