@@ -432,9 +432,10 @@ func TestSendDiscordEmbed_PostsEmbedsArray(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Set testHTTPClient to bypass SSRF protection for this test.
-	testHTTPClient = &http.Client{Timeout: 10 * time.Second}
-	defer func() { testHTTPClient = nil }()
+	// Swap alertHTTPClient to bypass SSRF protection for this test.
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
 
 	embed := DiscordEmbed{Title: "t", Description: "d", Color: 0xE74C3C}
 	if err := SendDiscordEmbed(embed, srv.URL); err != nil {

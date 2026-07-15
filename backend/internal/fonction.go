@@ -177,10 +177,6 @@ var alertHTTPClient = &http.Client{
 	},
 }
 
-// testHTTPClient is used in tests to bypass SSRF protection (allows localhost).
-// Set by tests to enable testing with httptest.Server.
-var testHTTPClient *http.Client
-
 // LoadConfig reads config.yaml, validates chains, and initialises EnabledChains.
 func LoadConfig() {
 	data, err := os.ReadFile("config.yaml")
@@ -387,12 +383,7 @@ func SendDiscordEmbed(embed DiscordEmbed, webhookURL string) error {
 		return fmt.Errorf("marshal discord embed: %w", err)
 	}
 
-	client := alertHTTPClient
-	if testHTTPClient != nil {
-		client = testHTTPClient
-	}
-
-	resp, err := client.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	resp, err := alertHTTPClient.Post(webhookURL, "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		return fmt.Errorf("error sending Discord embed: %w", err)
 	}
