@@ -2,10 +2,11 @@ package internal
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"html"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -123,8 +124,69 @@ var Config config
 // EnabledChains holds the IDs of all chains with Enabled: true, sorted alphabetically.
 var EnabledChains []string
 
-// alertHTTPClient is reused across all webhook dispatches to enable TCP connection pooling.
-var alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+// isPublicUnicastIP reports whether ip is safe to connect to for an
+// outbound webhook: not loopback, not link-local (this also blocks the
+// 169.254.169.254 cloud metadata endpoint), not a private (RFC1918/RFC4193)
+// range, not unspecified, and not multicast.
+func isPublicUnicastIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsPrivate() || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	return true
+}
+
+// guardedDialContext resolves the target address and refuses to connect if
+// any resolved IP is not a public unicast address. This closes the
+// DNS-rebinding gap left by registration-time-only URL validation
+// (validateWebhookURL in internal/api/api.go): the allowlisted hostname
+// (discord.com, hooks.slack.com, ...) could in principle later resolve to an
+// internal address, and this check re-validates on every connection attempt,
+// not just once at webhook-registration time.
+func guardedDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no addresses found for %s", host)
+	}
+	for _, ip := range ips {
+		if !isPublicUnicastIP(ip) {
+			return nil, fmt.Errorf("refusing to dial non-public address %s (resolved from %s)", ip, host)
+		}
+	}
+	// Try every validated address in order rather than only ips[0]: a
+	// transient issue reaching the first resolved address (e.g. an IPv6
+	// address during a partial network/IPv6 outage) shouldn't fail the whole
+	// dial when another already-validated address would have worked.
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+// alertHTTPClient is reused across all webhook dispatches to enable TCP
+// connection pooling. Its transport re-validates the resolved IP on every
+// connection (see guardedDialContext) so a webhook host that later resolves
+// to a private/loopback address (DNS rebinding) is refused at send time, not
+// just at registration time.
+var alertHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		DialContext: guardedDialContext,
+	},
+}
 
 // LoadConfig reads config.yaml, validates chains, and initialises EnabledChains.
 func LoadConfig() {
@@ -300,6 +362,77 @@ func (c *config) GetEnabledChainIDs() []string {
 	sort.Strings(ids)
 	return ids
 }
+// DiscordEmbed mirrors the subset of Discord's embed object this project
+// uses. See https://discord.com/developers/docs/resources/channel#embed-object
+// for the full schema.
+type DiscordEmbed struct {
+	Title       string              `json:"title,omitempty"`
+	Description string              `json:"description,omitempty"`
+	Color       int                 `json:"color,omitempty"`
+	Fields      []DiscordEmbedField `json:"fields,omitempty"`
+	Footer      *DiscordEmbedFooter `json:"footer,omitempty"`
+}
+
+type DiscordEmbedField struct {
+	Name   string `json:"name"`
+	Value  string `json:"value"`
+	Inline bool   `json:"inline,omitempty"`
+}
+
+type DiscordEmbedFooter struct {
+	Text string `json:"text"`
+}
+
+// SendDiscordEmbed posts a single rich embed to a Discord webhook, used by
+// the daily report for a channel-appropriate rendering instead of a plain
+// text message (see SendDiscordAlert for the plain-text incident-alert path,
+// unchanged).
+func SendDiscordEmbed(embed DiscordEmbed, webhookURL string) error {
+	payload := map[string]any{"embeds": []DiscordEmbed{embed}}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal discord embed: %w", err)
+	}
+
+	resp, err := alertHTTPClient.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("error sending Discord embed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("discord webhook HTTP status: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// SendDiscordAlertEmbed posts a single rich embed alongside a plain-text
+// content string to a Discord webhook. content carries @mentions, which
+// Discord does not parse when written inside an embed (see
+// RenderAlertDiscordEmbed); an empty content is omitted from the payload
+// entirely rather than sent as "".
+func SendDiscordAlertEmbed(content string, embed DiscordEmbed, webhookURL string) error {
+	payload := map[string]any{"embeds": []DiscordEmbed{embed}}
+	if content != "" {
+		payload["content"] = content
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal discord alert embed: %w", err)
+	}
+
+	resp, err := alertHTTPClient.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("error sending Discord alert embed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("discord webhook HTTP status: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func SendDiscordAlert(msg string, webhookURL string) error {
 	payload := map[string]string{"content": msg}
 	body, _ := json.Marshal(payload)
@@ -332,6 +465,44 @@ func SendSlackAlert(msg string, webhookURL string) error {
 	}
 	return nil
 }
+
+// SlackBlock mirrors the subset of Slack's Block Kit this project uses. See
+// https://api.slack.com/block-kit for the full schema.
+type SlackBlock struct {
+	Type     string      `json:"type"`
+	Text     *SlackText  `json:"text,omitempty"`
+	Elements []SlackText `json:"elements,omitempty"`
+}
+
+type SlackText struct {
+	Type string `json:"type"` // "mrkdwn" or "plain_text"
+	Text string `json:"text"`
+}
+
+// SendSlackBlocks posts a Block Kit message to a Slack incoming webhook,
+// used by the daily report for a channel-appropriate rendering instead of a
+// plain text message (see SendSlackAlert for the plain-text incident-alert
+// path, unchanged). Unlike SendSlackAlert, this returns a non-nil error on a
+// non-2xx response rather than only logging it.
+func SendSlackBlocks(blocks []SlackBlock, webhookURL string) error {
+	payload := map[string]any{"blocks": blocks}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal slack blocks: %w", err)
+	}
+
+	resp, err := alertHTTPClient.Post(webhookURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("error sending Slack blocks: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("slack webhook HTTP status: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moniker string, start_height, end_height int64, db *gorm.DB) error {
 	type Webhook struct {
 		UserID  string
@@ -340,7 +511,6 @@ func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moni
 		ID      int
 		ChainID *string
 	}
-	var fullMsg string
 	var webhooks []Webhook
 	if err := db.Model(&database.WebhookValidator{}).
 		Where("chain_id = ? OR chain_id IS NULL", chainID).
@@ -348,131 +518,66 @@ func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moni
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 
-	chainLabel := fmt.Sprintf("[%s] ", chainID)
+	var alertLevel AlertLevel
+	var emoji string
+	switch level {
+	case "CRITICAL":
+		alertLevel = AlertCritical
+		emoji = "🚨"
+	case "WARNING":
+		alertLevel = AlertWarning
+		emoji = "⚠️"
+	}
+
+	data := AlertData{
+		ChainID: chainID,
+		Level:   alertLevel,
+		Emoji:   emoji,
+		Title:   level,
+		Date:    today,
+		Fields: []AlertField{
+			{Name: "addr", Value: addr},
+			{Name: "moniker", Value: moniker},
+			{Name: "missed blocks", Value: fmt.Sprintf("%d (%d -> %d)", missed, start_height, end_height)},
+		},
+	}
 
 	for _, wh := range webhooks {
+		whData := data
+		if level == "CRITICAL" && (wh.Type == "discord" || wh.Type == "slack") {
+			type tag struct{ MentionTag string }
+			var res []tag
+			if err := db.Model(&database.AlertContact{}).
+				Select("mention_tag").
+				Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
+				Find(&res).Error; err != nil {
+				return fmt.Errorf("failed to fetch mentions: %w", err)
+			}
+			for _, r := range res {
+				whData.Mentions = append(whData.Mentions, r.MentionTag)
+			}
+		}
 
-		// ================== Build msg ===============
-
-		var emoji, prefix string
 		switch wh.Type {
 		case "discord":
-			if level == "CRITICAL" {
-				emoji = "🚨"
-				prefix = "**"
-
-				type tag struct{ MentionTag string }
-				var res []tag
-				err := db.Model(&database.AlertContact{}).
-					Select("mention_tag").
-					Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
-					Find(&res).Error
-
-				fullMsg = fmt.Sprintf(
-					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				)
-				if err != nil {
-					return fmt.Errorf("failed to fetch mentions: %w", err)
-				}
-				for _, r := range res {
-					fullMsg += "\n<@" + r.MentionTag + ">"
-				}
-			}
-			if level == "WARNING" {
-				emoji = "⚠️"
-				prefix = ""
-				fullMsg = fmt.Sprintf(
-					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				)
-
-			}
-			log.Println(fullMsg)
-			sendErr := SendDiscordAlert(fullMsg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			content, embed := RenderAlertDiscordEmbed(whData)
+			if err := SendDiscordAlertEmbed(content, embed, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		case "slack":
-			if level == "CRITICAL" {
-				emoji = "🚨"
-				prefix = "*"
-
-				type tag struct{ MentionTag string }
-				log.Printf("TYPE SLACK")
-				var res []tag
-				err := db.Model(&database.AlertContact{}).
-					Select("mention_tag").
-					Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
-					Find(&res).Error
-				if err != nil {
-					return fmt.Errorf("failed to fetch mentions: %w", err)
-				}
-				fullMsg = fmt.Sprintf(
-					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				)
-				for _, r := range res {
-					fullMsg += "\n <@" + r.MentionTag + ">"
-				}
-			}
-			if level == "WARNING" {
-				emoji = "⚠️"
-				prefix = ""
-				fullMsg = fmt.Sprintf(
-					"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-					chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, start_height, end_height,
-				)
-			}
-			sendErr := SendSlackAlert(fullMsg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			blocks := RenderAlertSlackBlocks(whData)
+			if err := SendSlackBlocks(blocks, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		default:
 			continue
 		}
-
-	}
-	// ======================================== TELEGRAM
-	if level == "CRITICAL" {
-		emoji := "🚨"
-		fullMsg = fmt.Sprintf(
-			"%s%s <b>%s</b> %s\n"+
-				"addr: <code>%s</code>\n"+
-				"moniker: <b>%s</b>\n"+
-				"missed %d blocks (%d → %d)",
-			html.EscapeString(chainLabel),
-			emoji,
-			html.EscapeString(level),
-			html.EscapeString(today),
-			html.EscapeString(addr),
-			html.EscapeString(moniker),
-			missed, start_height, end_height,
-		)
 	}
 
-	if level == "WARNING" {
-		emoji := "⚠️"
-		fullMsg = fmt.Sprintf(
-			"%s%s <b>%s</b> %s\n"+
-				"addr: <code>%s</code>\n"+
-				"moniker: <b>%s</b>\n"+
-				"missed %d blocks (%d → %d)",
-			html.EscapeString(chainLabel),
-			emoji,
-			html.EscapeString(level),
-			html.EscapeString(today),
-			html.EscapeString(addr),
-			html.EscapeString(moniker),
-			missed, start_height, end_height,
-		)
-	}
-
-	if err := telegram.MsgTelegramAlert(fullMsg, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
+	text := RenderAlertTelegramHTML(data)
+	if err := telegram.MsgTelegramAlert(text, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramAlert: %v", err)
 	}
 
@@ -510,7 +615,7 @@ func SendUserReportAlert(userID, chainID, msg string, db *gorm.DB) error {
 
 	return nil
 }
-func SendResolveValidator(chainID, msg string, addr string, db *gorm.DB) error {
+func SendResolveValidator(chainID, addr, moniker string, resumeHeight int64, db *gorm.DB) error {
 	type Webhook struct {
 		UserID  string
 		URL     string
@@ -525,32 +630,43 @@ func SendResolveValidator(chainID, msg string, addr string, db *gorm.DB) error {
 		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
+
+	data := AlertData{
+		ChainID: chainID,
+		Level:   AlertResolved,
+		Emoji:   "✅",
+		Title:   "RESOLVED",
+		Fields: []AlertField{
+			{Name: "validator", Value: fmt.Sprintf("%s (%s)", moniker, addr)},
+			{Name: "resolved at block", Value: fmt.Sprintf("%d", resumeHeight)},
+		},
+	}
+
 	for _, wh := range webhooks {
 		switch wh.Type {
 		case "discord":
-			sendErr := SendDiscordAlert(msg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			content, embed := RenderAlertDiscordEmbed(data)
+			if err := SendDiscordAlertEmbed(content, embed, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		case "slack":
-			sendErr := SendSlackAlert(msg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			blocks := RenderAlertSlackBlocks(data)
+			if err := SendSlackBlocks(blocks, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		}
 	}
-	if err := telegram.MsgTelegramAlert(msg, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
+	text := RenderAlertTelegramHTML(data)
+	if err := telegram.MsgTelegramAlert(text, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramAlert: %v", err)
 	}
 
 	return nil
 }
 
-func SendInfoValidator(chainID, msg string, level string, db *gorm.DB) error {
+func SendInfoValidator(chainID string, data AlertData, db *gorm.DB) error {
 	type Webhook struct {
 		UserID  string
 		URL     string
@@ -568,22 +684,21 @@ func SendInfoValidator(chainID, msg string, level string, db *gorm.DB) error {
 	for _, wh := range webhooks {
 		switch wh.Type {
 		case "discord":
-			sendErr := SendDiscordAlert(msg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			content, embed := RenderAlertDiscordEmbed(data)
+			if err := SendDiscordAlertEmbed(content, embed, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		case "slack":
-			sendErr := SendSlackAlert(msg, wh.URL)
-			if sendErr != nil {
-				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, sendErr)
+			blocks := RenderAlertSlackBlocks(data)
+			if err := SendSlackBlocks(blocks, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
-
 		}
 	}
-	if err := telegram.MsgTelegramChain(msg, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
+	text := RenderAlertTelegramHTML(data)
+	if err := telegram.MsgTelegramChain(text, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
 		log.Printf("❌ MsgTelegramChain: %v", err)
 	}
 	return nil

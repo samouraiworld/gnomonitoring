@@ -231,7 +231,18 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					)
 					log.Println(msg)
 
-					if err := internal.SendInfoValidator(chainID, msg, "CRITICAL", db); err != nil {
+					data := internal.AlertData{
+						ChainID: chainID,
+						Level:   internal.AlertCritical,
+						Emoji:   "🚨",
+						Title:   "Blockchain stuck",
+						Fields: []internal.AlertField{
+							{Name: "height", Value: fmt.Sprintf("%d", latest)},
+							{Name: "since", Value: blockTime.Format(time.RFC822)},
+							{Name: "elapsed", Value: elapsed.String() + " ago"},
+						},
+					}
+					if err := internal.SendInfoValidator(chainID, data, db); err != nil {
 						log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
 					}
 					if err := database.InsertAlertlog(db, chainID, "all", "all", "CRITICAL", latest, latest, false, time.Now(), msg); err != nil {
@@ -253,7 +264,14 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 
 				if IsAlertSent(chainID, "all") && !IsRestoredNotified(chainID, "all") {
 					msg := fmt.Sprintf("[%s] ✅ Activity Restored: Gno.land is back to normal.", chainID)
-					if err := internal.SendInfoValidator(chainID, msg, "INFO", db); err != nil {
+					data := internal.AlertData{
+						ChainID:     chainID,
+						Level:       internal.AlertInfo,
+						Emoji:       "✅",
+						Title:       "Activity Restored",
+						Description: "Gno.land is back to normal.",
+					}
+					if err := internal.SendInfoValidator(chainID, data, db); err != nil {
 						log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
 					}
 					if err := database.InsertAlertlog(db, chainID, "all", "all", "RESOLVED", latest, latest, false, time.Now(), msg); err != nil {
@@ -375,18 +393,50 @@ func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client
 				var departed bool
 				for _, ev := range classifyValsetChanges(oldMap, newMap, prevSigningToOperator, currentValopers) {
 					var msg string
+					var data internal.AlertData
 					switch ev.Kind {
 					case ValidatorJoined:
 						msg = fmt.Sprintf("[%s] ✅ **New Validator detected**: %s (%s)", chainID, ev.Moniker, ev.NewAddr)
+						data = internal.AlertData{
+							ChainID: chainID,
+							Level:   internal.AlertInfo,
+							Emoji:   "✅",
+							Title:   "New Validator detected",
+							Fields: []internal.AlertField{
+								{Name: "moniker", Value: ev.Moniker},
+								{Name: "address", Value: ev.NewAddr},
+							},
+						}
 					case ValidatorLeft:
 						msg = fmt.Sprintf("[%s] ⚠️ **Validator left the valset**: %s (%s)", chainID, ev.Moniker, ev.OldAddr)
 						departed = true
+						data = internal.AlertData{
+							ChainID: chainID,
+							Level:   internal.AlertInfo,
+							Emoji:   "⚠️",
+							Title:   "Validator left the valset",
+							Fields: []internal.AlertField{
+								{Name: "moniker", Value: ev.Moniker},
+								{Name: "address", Value: ev.OldAddr},
+							},
+						}
 					case ValidatorAddressChanged:
 						msg = fmt.Sprintf("[%s] 🔄 **Validator address changed**: %s (%s → %s)", chainID, ev.Moniker, ev.OldAddr, ev.NewAddr)
 						departed = true
+						data = internal.AlertData{
+							ChainID: chainID,
+							Level:   internal.AlertInfo,
+							Emoji:   "🔄",
+							Title:   "Validator address changed",
+							Fields: []internal.AlertField{
+								{Name: "moniker", Value: ev.Moniker},
+								{Name: "old address", Value: ev.OldAddr},
+								{Name: "new address", Value: ev.NewAddr},
+							},
+						}
 					}
 					log.Println(msg)
-					if err := internal.SendInfoValidator(chainID, msg, "info", db); err != nil {
+					if err := internal.SendInfoValidator(chainID, data, db); err != nil {
 						log.Printf("[monitor][%s] SendInfoValidator error: %v", chainID, err)
 					}
 				}
@@ -606,9 +656,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 			continue
 		}
 
-		resolveMsg := fmt.Sprintf("[%s] ✅ RESOLVED: No more missed blocks for %s (%s) at Block %d",
-			chainID, a.Moniker, a.Addr, resumeHeight)
-		if err := internal.SendResolveValidator(chainID, resolveMsg, a.Addr, db); err != nil {
+		if err := internal.SendResolveValidator(chainID, a.Addr, a.Moniker, resumeHeight, db); err != nil {
 			log.Printf("[validator][%s] SendResolveValidator error: %v", chainID, err)
 		}
 		if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {

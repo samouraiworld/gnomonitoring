@@ -1,7 +1,10 @@
-package internal_test
+package internal
 
 import (
-	"fmt"
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -314,60 +317,212 @@ func TestMissingSeriesCTEChainFilter(t *testing.T) {
 }
 
 // TestAlertMessageContainsChainID verifies that the formatted alert message
-// strings produced by SendAllValidatorAlerts include a "[chainID] " prefix so
+// strings produced by the alert renderers include a "[chainID]" indicator so
 // that recipients can identify which chain triggered the alert.
 func TestAlertMessageContainsChainID(t *testing.T) {
 	chainIDs := []string{"betanet", "gnoland1", "staging", "test-chain-99"}
 
 	for _, chainID := range chainIDs {
 		t.Run(chainID, func(t *testing.T) {
-			chainLabel := fmt.Sprintf("[%s] ", chainID)
+			data := AlertData{
+				ChainID: chainID,
+				Level:   AlertWarning,
+				Emoji:   "⚠️",
+				Title:   "WARNING",
+				Date:    "2026-03-19",
+				Fields: []AlertField{
+					{Name: "addr", Value: "g1testaddr"},
+					{Name: "moniker", Value: "TestValidator"},
+					{Name: "missed blocks", Value: "5 (1000 -> 1004)"},
+				},
+			}
 
-			// Reproduce the WARNING message format from SendAllValidatorAlerts
-			// (discord / slack branch).
-			level := "WARNING"
-			emoji := "⚠️"
-			prefix := ""
-			today := "2026-03-19"
-			addr := "g1testaddr"
-			moniker := "TestValidator"
-			missed := 5
-			var startHeight, endHeight int64 = 1000, 1004
+			_, embed := RenderAlertDiscordEmbed(data)
+			assert.Contains(t, embed.Title, "["+chainID+"]",
+				"discord embed title must contain [%s]; got: %q", chainID, embed.Title)
 
-			discordMsg := fmt.Sprintf(
-				"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-				chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, startHeight, endHeight,
-			)
+			blocks := RenderAlertSlackBlocks(data)
+			require.NotEmpty(t, blocks)
+			require.NotNil(t, blocks[0].Text)
+			assert.Contains(t, blocks[0].Text.Text, "["+chainID+"]",
+				"slack header must contain [%s]; got: %q", chainID, blocks[0].Text.Text)
 
-			assert.True(t,
-				strings.HasPrefix(discordMsg, "["+chainID+"]"),
-				"discord WARNING message must start with [%s]; got: %q", chainID, discordMsg,
-			)
-
-			// Reproduce the CRITICAL message format (discord / slack branch).
-			level = "CRITICAL"
-			emoji = "🚨"
-			prefix = "**"
-
-			discordCriticalMsg := fmt.Sprintf(
-				"%s%s %s%s %s %s\naddr: %s\nmoniker: %s\nmissed %d blocks (%d -> %d)",
-				chainLabel, emoji, prefix, level, prefix, today, addr, moniker, missed, startHeight, endHeight,
-			)
-
-			assert.True(t,
-				strings.HasPrefix(discordCriticalMsg, "["+chainID+"]"),
-				"discord CRITICAL message must start with [%s]; got: %q", chainID, discordCriticalMsg,
-			)
-
-			// Reproduce the Telegram HTML message format.
-			telegramMsg := fmt.Sprintf(
-				"[%s] 🚨 <b>%s</b> %s\naddr: <code>%s</code>\nmoniker: <b>%s</b>\nmissed %d blocks (%d → %d)",
-				chainID, level, today, addr, moniker, missed, startHeight, endHeight,
-			)
-
-			assert.Contains(t, telegramMsg, "["+chainID+"]",
-				"telegram message must contain [%s]; got: %q", chainID, telegramMsg,
-			)
+			telegramText := RenderAlertTelegramHTML(data)
+			assert.Contains(t, telegramText, "["+chainID+"]",
+				"telegram message must contain [%s]; got: %q", chainID, telegramText)
 		})
+	}
+}
+
+func TestIsPublicUnicastIP(t *testing.T) {
+	cases := []struct {
+		name string
+		ip   string
+		want bool
+	}{
+		{"public IPv4", "93.184.216.34", true},
+		{"loopback IPv4", "127.0.0.1", false},
+		{"loopback IPv6", "::1", false},
+		{"RFC1918 10.x", "10.0.0.5", false},
+		{"RFC1918 172.16.x", "172.16.0.5", false},
+		{"RFC1918 192.168.x", "192.168.1.5", false},
+		{"link-local", "169.254.169.254", false}, // cloud metadata endpoint
+		{"unspecified", "0.0.0.0", false},
+		{"multicast", "224.0.0.1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ip := net.ParseIP(tc.ip)
+			if ip == nil {
+				t.Fatalf("test fixture invalid IP: %s", tc.ip)
+			}
+			got := isPublicUnicastIP(ip)
+			if got != tc.want {
+				t.Fatalf("isPublicUnicastIP(%s) = %v, want %v", tc.ip, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAlertHTTPClient_RefusesLoopbackTarget(t *testing.T) {
+	// 127.0.0.1 is always loopback regardless of what's listening there —
+	// no need for a real server; the dial guard must reject before connecting.
+	resp, err := alertHTTPClient.Get("http://127.0.0.1:1/should-not-connect")
+	if resp != nil {
+		resp.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("expected error dialing a loopback address, got nil")
+	}
+	if !strings.Contains(err.Error(), "non-public address") {
+		t.Fatalf("error = %v, want it to mention the non-public-address guard", err)
+	}
+}
+
+// Note: No dedicated regression test for empty LookupIP result (nil error, empty slice).
+// This is a documented edge case on some resolver paths, but difficult to trigger
+// deterministically with real DNS lookups without mocking. The length check added
+// in guardedDialContext guards against index panic, and existing tests cover the
+// normal and reject-non-public paths.
+//
+// Note: No dedicated regression test for the multi-address dial fallback
+// either (guardedDialContext tries every resolved, validated IP in order,
+// not just the first). Reliably forcing a hostname to resolve to two+ IPs
+// where the first is unreachable and the second isn't requires a mock
+// resolver; the happy-path single-IP case is already covered by
+// TestSendDiscordEmbed_PostsEmbedsArray/TestSendSlackBlocks_PostsBlocksArray
+// below (both dial an httptest server through a real, if swapped, client).
+
+func TestSendDiscordEmbed_PostsEmbedsArray(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	// Swap alertHTTPClient to bypass SSRF protection for this test.
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
+
+	embed := DiscordEmbed{Title: "t", Description: "d", Color: 0xE74C3C}
+	if err := SendDiscordEmbed(embed, srv.URL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	embeds, ok := captured["embeds"].([]any)
+	if !ok || len(embeds) != 1 {
+		t.Fatalf("expected a single-element embeds array, got: %+v", captured)
+	}
+	got := embeds[0].(map[string]any)
+	if got["title"] != "t" || got["description"] != "d" {
+		t.Fatalf("embed fields not passed through, got: %+v", got)
+	}
+}
+
+func TestSendDiscordAlertEmbed_PostsContentAndEmbeds(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
+
+	embed := DiscordEmbed{Title: "t", Color: 0xE74C3C}
+	if err := SendDiscordAlertEmbed("<@111>", embed, srv.URL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if captured["content"] != "<@111>" {
+		t.Fatalf("content not passed through, got: %+v", captured)
+	}
+	embeds, ok := captured["embeds"].([]any)
+	if !ok || len(embeds) != 1 {
+		t.Fatalf("expected a single-element embeds array, got: %+v", captured)
+	}
+}
+
+func TestSendDiscordAlertEmbed_OmitsContentWhenEmpty(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
+
+	if err := SendDiscordAlertEmbed("", DiscordEmbed{Title: "t"}, srv.URL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, present := captured["content"]; present {
+		t.Fatalf("content key must be absent when empty, got: %+v", captured)
+	}
+}
+
+func TestSendSlackBlocks_PostsBlocksArray(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	// Swap alertHTTPClient to bypass SSRF protection for this test.
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
+
+	blocks := []SlackBlock{
+		{Type: "section", Text: &SlackText{Type: "mrkdwn", Text: "hello"}},
+	}
+	if err := SendSlackBlocks(blocks, srv.URL); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, ok := captured["blocks"].([]any)
+	if !ok || len(got) != 1 {
+		t.Fatalf("expected a single-element blocks array, got: %+v", captured)
+	}
+}
+
+func TestSendSlackBlocks_NonOKStatusIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	// Swap alertHTTPClient to bypass SSRF protection for this test.
+	orig := alertHTTPClient
+	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
+	defer func() { alertHTTPClient = orig }()
+
+	err := SendSlackBlocks([]SlackBlock{{Type: "section"}}, srv.URL)
+	if err == nil {
+		t.Fatal("expected an error for a non-200 response, got nil")
 	}
 }

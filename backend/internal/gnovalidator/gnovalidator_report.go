@@ -15,14 +15,35 @@ import (
 // to break the import cycle between gnovalidator and telegram.
 var SendTelegramMessage func(token string, chatID int64, text string) error
 
+// SendTelegramMessageWithButton is a function variable set by the telegram
+// package at startup, mirroring SendTelegramMessage's import-cycle-avoidance
+// pattern. buttonURL == "" means "send text only, no button".
+var SendTelegramMessageWithButton func(token string, chatID int64, text, buttonText, buttonURL string) error
+
+// sendDiscordEmbed and sendSlackBlocks are function variables (not direct
+// internal.SendDiscordEmbed/SendSlackBlocks calls) so tests in this package
+// can substitute a fake sender instead of needing real HTTP through the
+// SSRF-guarded alertHTTPClient in package internal.
+var sendDiscordEmbed = internal.SendDiscordEmbed
+var sendSlackBlocks = internal.SendSlackBlocks
+
 type ValidatorRate struct {
 	Rate    float64
 	Moniker string
 }
 
-// reportLinkLine returns the daily-report link line for a chain when the
-// per-chain report toggle is on and a base URL is configured, else "".
-func reportLinkLine(db *gorm.DB, chainID string) string {
+// ReportYesterdayUTC returns the UTC calendar day preceding now, formatted as
+// the daily report's date key ("2006-01-02"). Always computed from UTC, never
+// from a recipient's configured timezone — daily_participations/agregas are
+// UTC-bucketed (see db_init.go's session-timezone pin), so using any other
+// timezone here desyncs the report from the data it's summarizing.
+func ReportYesterdayUTC(now time.Time) string {
+	return now.UTC().AddDate(0, 0, -1).Format("2006-01-02")
+}
+
+// reportLinkURL returns the daily-report URL for a chain when the per-chain
+// report toggle is on and a base URL is configured, else "".
+func reportLinkURL(db *gorm.DB, chainID string) string {
 	enabled, err := database.GetAdminConfig(db, "validator_report_enabled."+chainID)
 	if err != nil || strings.ToLower(strings.TrimSpace(enabled)) != "true" {
 		return ""
@@ -35,7 +56,18 @@ func reportLinkLine(db *gorm.DB, chainID string) string {
 	if base == "" {
 		return ""
 	}
-	return fmt.Sprintf("\n📊 Validator report: %s/reports/%s", base, chainID)
+	return fmt.Sprintf("%s/reports/%s", base, chainID)
+}
+
+// reportLinkLine returns the daily-report link line (as a standalone
+// "\n📊 ..." suffix) for plain-text report bodies. Kept for the
+// stuck/disabled report variants, which are not channel-rendered.
+func reportLinkLine(db *gorm.DB, chainID string) string {
+	url := reportLinkURL(db, chainID)
+	if url == "" {
+		return ""
+	}
+	return fmt.Sprintf("\n📊 Validator report: %s", url)
 }
 
 func SheduleUserReport(userID string, hour, minute int, timezone string, db *gorm.DB, reload <-chan struct{}) {
@@ -67,7 +99,7 @@ func SheduleUserReport(userID string, hour, minute int, timezone string, db *gor
 				chains = []string{internal.Config.DefaultChain}
 			}
 			for _, chainID := range chains {
-				SendDailyStatsForUser(db, chainID, &userID, nil, loc)
+				SendDailyStatsForUser(db, chainID, &userID, nil)
 			}
 		case <-reload:
 			timer.Stop()
@@ -97,7 +129,7 @@ func SheduleTelegramReport(chatID int64, chainID string, hour, minute int, timez
 		select {
 		case <-timer.C:
 			log.Printf("[report][%s] sending for chat %d", chainID, chatID)
-			SendDailyStatsForUser(db, chainID, nil, &chatID, loc)
+			SendDailyStatsForUser(db, chainID, nil, &chatID)
 		case <-reload:
 			timer.Stop()
 			log.Printf("[report][%s] reloading schedule for chat %d", chainID, chatID)
@@ -106,27 +138,42 @@ func SheduleTelegramReport(chatID int64, chainID string, hour, minute int, timez
 	}
 }
 
-func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *int64, loc *time.Location) {
-	snap := FetchChainHealthSnapshot(db, chainID)
-
-	var msg string
-	switch {
-	case snap.IsDisabled:
-		msg = FormatDisabledReport(chainID, snap)
-	case snap.IsStuck:
-		msg = FormatStuckReport(chainID, snap)
-	default:
-		yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
-		rates, minBlock, maxBlock := CalculateRate(db, chainID, yesterday)
-		if len(rates) == 0 {
-			log.Printf("[report][%s] no participation data for %s, skipping", chainID, yesterday)
-			return
-		}
-		msg = FormatHealthyReport(chainID, yesterday, snap, rates, minBlock, maxBlock)
+// dispatchDailyReportToWebhooks sends DailyReportData to every Discord/Slack
+// webhook the user has configured for chainID (or unscoped to all chains),
+// rendering a channel-appropriate payload for each (Discord embed, Slack
+// Block Kit). Unlike the disabled/stuck report path (dispatchPlainTextReport),
+// this never falls back to a single shared plain-text string.
+func dispatchDailyReportToWebhooks(db *gorm.DB, userID, chainID string, data DailyReportData) error {
+	var webhooks []database.WebhookValidator
+	if err := db.Where("user_id = ? AND (chain_id = ? OR chain_id IS NULL)", userID, chainID).
+		Find(&webhooks).Error; err != nil {
+		return fmt.Errorf("failed to fetch webhooks for user %s: %w", userID, err)
 	}
 
-	msg += reportLinkLine(db, chainID)
+	for _, wh := range webhooks {
+		switch wh.Type {
+		case "discord":
+			embed := RenderDailyReportDiscordEmbed(data)
+			if err := sendDiscordEmbed(embed, wh.URL); err != nil {
+				log.Printf("❌ Failed to send daily report embed to %s: %v", wh.URL, err)
+			}
+		case "slack":
+			blocks := RenderDailyReportSlackBlocks(data)
+			if err := sendSlackBlocks(blocks, wh.URL); err != nil {
+				log.Printf("❌ Failed to send daily report blocks to %s: %v", wh.URL, err)
+			}
+		default:
+			log.Printf("⚠️ Unknown webhook type for user %s: %s", userID, wh.Type)
+		}
+	}
+	return nil
+}
 
+// dispatchPlainTextReport sends a plain-text report body (used for the
+// disabled/stuck report variants, which are not channel-rendered) to either
+// a web user's webhooks (chunked) or a Telegram chat, exactly as
+// SendDailyStatsForUser did before the healthy-branch rendering split.
+func dispatchPlainTextReport(db *gorm.DB, chainID, msg string, userID *string, chatID *int64) {
 	switch {
 	case userID != nil:
 		SendUserReportInChunks(*userID, chainID, msg, db, 1500)
@@ -137,6 +184,53 @@ func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *
 			}
 		} else {
 			log.Printf("❌ Telegram send skipped (chat %d): SendTelegramMessage not initialized", *chatID)
+		}
+	default:
+		log.Println("⚠️ Neither userID nor chatID provided — no target to send report.")
+	}
+}
+
+func SendDailyStatsForUser(db *gorm.DB, chainID string, userID *string, chatID *int64) {
+	snap := FetchChainHealthSnapshot(db, chainID)
+
+	if snap.IsDisabled {
+		msg := FormatDisabledReport(chainID, snap) + reportLinkLine(db, chainID)
+		dispatchPlainTextReport(db, chainID, msg, userID, chatID)
+		return
+	}
+	if snap.IsStuck {
+		msg := FormatStuckReport(chainID, snap) + reportLinkLine(db, chainID)
+		dispatchPlainTextReport(db, chainID, msg, userID, chatID)
+		return
+	}
+
+	yesterday := ReportYesterdayUTC(time.Now())
+	rates, minBlock, maxBlock := CalculateRate(db, chainID, yesterday)
+	if len(rates) == 0 {
+		log.Printf("[report][%s] no participation data for %s, skipping", chainID, yesterday)
+		return
+	}
+
+	data, err := BuildDailyReportData(db, chainID, yesterday, snap, minBlock, maxBlock)
+	if err != nil {
+		log.Printf("[report][%s] BuildDailyReportData error: %v", chainID, err)
+		return
+	}
+	log.Print(RenderDailyReportPlainText(data)) // human-readable trace in server logs
+
+	switch {
+	case userID != nil:
+		if err := dispatchDailyReportToWebhooks(db, *userID, chainID, data); err != nil {
+			log.Printf("[report][%s] dispatch error for user %s: %v", chainID, *userID, err)
+		}
+	case chatID != nil:
+		text, buttonText, buttonURL := RenderDailyReportTelegramHTML(data)
+		if SendTelegramMessageWithButton != nil {
+			if err := SendTelegramMessageWithButton(internal.Config.TokenTelegramValidator, *chatID, text, buttonText, buttonURL); err != nil {
+				log.Printf("❌ Telegram send failed (chat %d): %v", *chatID, err)
+			}
+		} else {
+			log.Printf("❌ Telegram send skipped (chat %d): SendTelegramMessageWithButton not initialized", *chatID)
 		}
 	default:
 		log.Println("⚠️ Neither userID nor chatID provided — no target to send report.")

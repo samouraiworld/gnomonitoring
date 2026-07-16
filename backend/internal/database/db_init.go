@@ -81,7 +81,7 @@ type WebhookGovDAO struct {
 	URL           string    `gorm:"column:url;not null" `
 	Type          string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
 	LastCheckedID int       `gorm:"column:last_checked_id;not null;default:-1" `
-	ChainID       *string   `gorm:"column:chain_id;default:null"`
+	ChainID       *string   `gorm:"column:chain_id;default:null" json:"chain_id"`
 }
 type WebhookValidator struct {
 	ID          int       `gorm:"primaryKey;autoIncrement;column:id"`
@@ -90,7 +90,7 @@ type WebhookValidator struct {
 	UserID      string    `gorm:"column:user_id;not null;index:idx_webhooks_validator_user" `
 	URL         string    `gorm:"column:url;not null" `
 	Type        string    `gorm:"column:type;not null;check:type IN ('discord','slack')" `
-	ChainID     *string   `gorm:"column:chain_id;default:null"`
+	ChainID     *string   `gorm:"column:chain_id;default:null" json:"chain_id"`
 }
 type DailyParticipation struct {
 	ID             uint64    `gorm:"column:id;primaryKey;autoIncrement"`

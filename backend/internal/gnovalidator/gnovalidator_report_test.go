@@ -175,3 +175,21 @@ func TestSendDailyStatsForUser_IncludesChainLabel(t *testing.T) {
 		"header must start with the summary prefix followed by the chain label",
 	)
 }
+
+// TestReportYesterdayUTC_IgnoresLocalTimezone pins the fix for the "always
+// one day late" bug: the report's "yesterday" must be computed from UTC,
+// never from a recipient-configured timezone, since daily_participations/
+// agregas are UTC-bucketed. Before the fix, gnovalidator_report.go:119 used
+// now.In(loc).AddDate(0,0,-1) — for a timezone behind UTC (e.g.
+// America/Los_Angeles) scheduled late in the local day, that computed a UTC
+// day two days in the past instead of one.
+func TestReportYesterdayUTC_IgnoresLocalTimezone(t *testing.T) {
+	// 2025-11-03 03:00 UTC == 2025-11-02 20:00 America/Los_Angeles (UTC-7, DST).
+	// The old now.In(loc).AddDate(0,0,-1) logic would have produced "2025-11-01"
+	// here (one day further back than correct) since the original, buggy call
+	// site read time.Now().In(loc) before subtracting a day. The fixed helper
+	// takes no location at all — it can only ever compute the UTC day.
+	fixedNow := time.Date(2025, 11, 3, 3, 0, 0, 0, time.UTC)
+	got := gnovalidator.ReportYesterdayUTC(fixedNow)
+	assert.Equal(t, "2025-11-02", got, "must be the UTC calendar day before fixedNow, regardless of any local timezone")
+}

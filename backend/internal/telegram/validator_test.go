@@ -8,11 +8,13 @@ package telegram
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 )
 
@@ -322,4 +324,279 @@ func TestHydrationFromDB(t *testing.T) {
 	// Verify that chatChainState now reflects the persisted preferences.
 	assert.Equal(t, "chainB", getActiveChain(chatID1, defaultChain), "chatID1 should be hydrated to chainB")
 	assert.Equal(t, "chainC", getActiveChain(chatID2, defaultChain), "chatID2 should be hydrated to chainC")
+}
+
+// -------------------------------------------------------------------------
+// formatChainHealthHeader and formatChainHealthFooter
+// -------------------------------------------------------------------------
+
+func TestFormatChainHealthHeader_RPCReachable(t *testing.T) {
+	snap := ChainHealthSnapshot{
+		RPCReachable:      true,
+		LatestBlockHeight: 12345,
+		LatestBlockTime:   time.Now().Add(-30 * time.Second),
+		ConsensusRound:    1,
+		PeerCount:         5,
+		MempoolTxCount:    2,
+	}
+	got := formatChainHealthHeader("test12", snap)
+	assert.Contains(t, got, "[test12] Chain status")
+	assert.Contains(t, got, "#12345")
+	assert.Contains(t, got, "Consensus: round 1")
+	assert.Contains(t, got, "Network: 5 peers | Mempool: 2 pending txs")
+}
+
+func TestFormatChainHealthHeader_RPCUnreachable(t *testing.T) {
+	snap := ChainHealthSnapshot{RPCReachable: false}
+	got := formatChainHealthHeader("test12", snap)
+	assert.Contains(t, got, "RPC unreachable")
+	assert.NotContains(t, got, "Consensus:")
+}
+
+func TestFormatChainHealthFooter_ValsetChangesFilteredByMinBlock(t *testing.T) {
+	snap := ChainHealthSnapshot{
+		MinBlock: 100,
+		ValsetChanges: []ValsetChange{
+			{BlockNum: 50, Address: "g1old", NewPower: 0},
+			{BlockNum: 150, Address: "g1new", NewPower: 10},
+		},
+	}
+	got := formatChainHealthFooter(snap)
+	assert.NotContains(t, got, "g1old")
+	assert.Contains(t, got, "g1new")
+	assert.Contains(t, got, "added (power: 10)")
+}
+
+func TestFormatChainHealthFooter_NoChangesNoSection(t *testing.T) {
+	snap := ChainHealthSnapshot{MinBlock: 100}
+	got := formatChainHealthFooter(snap)
+	assert.NotContains(t, got, "Valset changes")
+}
+
+// withChainHealthFetcher swaps the package-level ChainHealthFetcher for the
+// duration of one test, restoring the original afterward.
+func withChainHealthFetcher(t *testing.T, fn func(chainID string) ChainHealthSnapshot) {
+	t.Helper()
+	orig := ChainHealthFetcher
+	ChainHealthFetcher = fn
+	t.Cleanup(func() { ChainHealthFetcher = orig })
+}
+
+func TestFormatChainHealthPage_AllHealthy(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: true,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon", VotingPower: 5})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, pageOut, totalPages, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.Equal(t, 1, pageOut)
+	assert.Equal(t, 1, totalPages)
+	assert.Contains(t, msg, "All 1 validators healthy (last 24h)")
+}
+
+func TestFormatChainHealthPage_ProblemsSortedAndPaginated(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	// One participated=false row each -> TotalBlocks=1/SignedBlocks=0 ->
+	// Score 0/Critical (same score as the old "0 rows" fixture) AND
+	// MissedBlocks=1>0, so each still passes the new missed>0 filter.
+	for _, addr := range []string{"g1a", "g1b", "g1c"} {
+		db.Create(&database.DailyParticipation{
+			ChainID: "test12", Addr: addr, Moniker: addr + "-mon",
+			BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+		})
+		db.Create(&database.AddrMoniker{ChainID: "test12", Addr: addr, Moniker: addr + "-mon", VotingPower: 1})
+	}
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg1, pageOut1, totalPages1, err := formatChainHealthPage(db, "test12", 1, 2, "")
+	require.NoError(t, err)
+	assert.Equal(t, 1, pageOut1)
+	assert.Equal(t, 2, totalPages1)
+	assert.Contains(t, msg1, "g1a-mon")
+	assert.Contains(t, msg1, "g1b-mon")
+	assert.NotContains(t, msg1, "g1c-mon")
+
+	msg2, pageOut2, totalPages2, err := formatChainHealthPage(db, "test12", 2, 2, "")
+	require.NoError(t, err)
+	assert.Equal(t, 2, pageOut2)
+	assert.Equal(t, 2, totalPages2)
+	assert.Contains(t, msg2, "g1c-mon")
+	assert.NotContains(t, msg2, "g1a-mon")
+}
+
+func TestFormatChainHealthPage_VotingPowerPercentShownWhenPresent(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1vp", Moniker: "vp-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1vp", Moniker: "vp-mon", VotingPower: 10})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.Contains(t, msg, "VP:")
+}
+
+func TestFormatChainHealthPage_EmptyMonikerFallsBackToUnknown(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1nomoniker", Moniker: "",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1nomoniker", Moniker: "", VotingPower: 1})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.Contains(t, msg, "unknown")
+}
+
+func TestFormatChainHealthPage_LeaveIntentAnnotated(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1leaving", Moniker: "leaving-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1leaving", Moniker: "leaving-mon", VotingPower: 1})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot {
+		return ChainHealthSnapshot{
+			ValidatorSet: []ValidatorInfo{{Address: "g1leaving", VotingPower: 1, KeepRunning: false}},
+		}
+	})
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.Contains(t, msg, "intends to leave")
+}
+
+func TestFormatChainHealthPage_FetcherNil(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	withChainHealthFetcher(t, nil)
+
+	msg, pageOut, totalPages, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.Equal(t, 1, pageOut)
+	assert.Equal(t, 1, totalPages)
+	assert.Contains(t, msg, "not available yet")
+}
+
+func TestFormatChainHealthPage_DisabledChainShortCircuits(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot {
+		return ChainHealthSnapshot{IsDisabled: true}
+	})
+
+	msg, pageOut, totalPages, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.Equal(t, 1, pageOut)
+	assert.Equal(t, 1, totalPages)
+	assert.Contains(t, msg, "MONITORING OFF")
+}
+
+func TestFormatChainHealthPage_FilterMatchingNoProblemsDoesNotClaimHealthy(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1critical", Moniker: "critical-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1critical", Moniker: "critical-mon", VotingPower: 1})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "nomatch-filter-xyz")
+	require.NoError(t, err)
+	assert.NotContains(t, msg, "All 1 validators healthy")
+	assert.Contains(t, msg, "No matching validators")
+}
+
+func TestFormatChainHealthPage_NoFilterStillReportsHealthyWhenTrulyHealthy(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: true,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon", VotingPower: 5})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "irrelevant-filter")
+	require.NoError(t, err)
+	assert.Contains(t, msg, "All 1 validators healthy")
+}
+
+func TestHealthLimitDefault_IsFiveForStatusPagination(t *testing.T) {
+	assert.Equal(t, 5, healthLimitDefault, "healthLimitDefault must stay smaller than limitDefault so /status surfaces a Next page sooner")
+}
+
+func TestFormatChainHealthPage_HealthLimitDefaultPaginatesSixProblems(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	// One participated=false row each -> Score 0/Critical AND MissedBlocks=1>0
+	// (see TestFormatChainHealthPage_ProblemsSortedAndPaginated for why), so
+	// all 6 addresses still land in the paginated list under the new filter.
+	for _, addr := range []string{"g1a", "g1b", "g1c", "g1d", "g1e", "g1f"} {
+		db.Create(&database.DailyParticipation{
+			ChainID: "test12", Addr: addr, Moniker: addr + "-mon",
+			BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+		})
+		db.Create(&database.AddrMoniker{ChainID: "test12", Addr: addr, Moniker: addr + "-mon", VotingPower: 1})
+	}
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, pageOut, totalPages, err := formatChainHealthPage(db, "test12", 1, healthLimitDefault, "")
+	require.NoError(t, err)
+	assert.Equal(t, 1, pageOut)
+	assert.Equal(t, 2, totalPages, "6 problem validators at healthLimitDefault=5 per page must produce 2 pages")
+	assert.Contains(t, msg, "Page 1/2")
+	assert.NotContains(t, msg, "g1f-mon")
+}
+
+func TestFormatChainHealthPage_ZeroParticipationRowsExcludedFromList(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	// No DailyParticipation rows at all -> TotalBlocks=0/SignedBlocks=0 ->
+	// Score 0/Critical, but MissedBlocks=0-0=0. User-confirmed design
+	// decision: this validator is excluded from the list even though its
+	// score is 0 (see plan Global Constraints). Not a bug.
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1nodata", Moniker: "nodata-mon", VotingPower: 1})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.NotContains(t, msg, "nodata-mon")
+	assert.Contains(t, msg, "All 1 validators healthy (last 24h)")
+}
+
+func TestFormatChainHealthPage_GoodTierValidatorWithMissedBlocksIsListed(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	// 19 participated=true + 1 participated=false -> sign_rate=95%,
+	// proposer_reliability=0 (proposed=false throughout) -> presence ~76/Good,
+	// but MissedBlocks=1>0, so it must still appear (the core behavior change
+	// of this plan: not just Watch/Critical).
+	for i := 0; i < 19; i++ {
+		db.Create(&database.DailyParticipation{
+			ChainID: "test12", Addr: "g1almostperfect", Moniker: "almostperfect-mon",
+			BlockHeight: int64(i + 1), Date: time.Now().UTC(), Participated: true,
+		})
+	}
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1almostperfect", Moniker: "almostperfect-mon",
+		BlockHeight: 20, Date: time.Now().UTC(), Participated: false,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1almostperfect", Moniker: "almostperfect-mon", VotingPower: 1})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.Contains(t, msg, "almostperfect-mon")
+	assert.Contains(t, msg, "Missed: 1")
+	assert.Contains(t, msg, "🟡")
+}
+
+func TestTierEmoji_AllFourTiers(t *testing.T) {
+	assert.Equal(t, "🔴", tierEmoji(score.TierCritical))
+	assert.Equal(t, "🟠", tierEmoji(score.TierWatch))
+	assert.Equal(t, "🟡", tierEmoji(score.TierGood))
+	assert.Equal(t, "🟢", tierEmoji(score.TierExcellent))
 }

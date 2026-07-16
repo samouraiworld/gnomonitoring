@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
 	"gorm.io/gorm"
 )
 
@@ -31,9 +32,15 @@ var enabledChainsSnapshot []string
 const (
 	periodDefault = "current_month"
 	limitDefault  = 10
-	limitMax      = 50
-	sortDefault   = "desc"
-	searchTTL     = 2 * time.Minute
+	// healthLimitDefault is the default page size for the /status command
+	// (cmdKey "health"), kept smaller than limitDefault so a chain with more
+	// than a handful of validators with missed blocks shows a "Next" page
+	// instead of dumping everything into one message. Explicit ?limit=
+	// overrides (up to limitMax) still work as before.
+	healthLimitDefault = 5
+	limitMax           = 50
+	sortDefault        = "desc"
+	searchTTL          = 2 * time.Minute
 )
 
 const cacheTTL = 45 * time.Second
@@ -94,10 +101,6 @@ var ChainHealthFetcher func(chainID string) ChainHealthSnapshot
 // by the gnovalidator package. They are set alongside ChainHealthFetcher.
 var ChainDisabledFormatter func(chainID string, snap ChainHealthSnapshot) string
 var ChainStuckFormatter func(chainID string, snap ChainHealthSnapshot) string
-
-// MissedBlocksFormatter formats the missed-blocks-last-24h section. Set from main.go to
-// gnovalidator.FormatMissedBlocksLast24hHTML to avoid a circular import.
-var MissedBlocksFormatter func(missed []database.MissedBlockCount) string
 
 // SetChainHealthFetcher registers the live-health fetch function and its
 // format helpers. Called once from main.go.
@@ -218,15 +221,12 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 
 		"/status": func(chatID int64, args string) {
 			chainID := getActiveChain(chatID, defaultChainID)
-			if ChainHealthFetcher == nil {
-				_ = SendMessageTelegram(token, chatID, "⚠️ Chain health data is not available yet.")
-				return
-			}
-			snap := ChainHealthFetcher(chainID)
-			msg := formatChainHealthMessage(chainID, snap)
-			if err := SendMessageTelegramChunked(token, chatID, msg); err != nil {
-				log.Printf("[telegram] send /status failed: %v", err)
-			}
+			params := parseParams(args)
+			limit := parseIntWithDefault(params["limit"], defaultLimitFor("health"), "limit")
+			page := parseIntWithDefault(params["page"], 1, "page")
+			filter := params["filter"]
+
+			sendPaginatedMessage(token, chatID, db, chainID, "health", "", filter, page, limit, sortDefault)
 		},
 
 		"/rate": func(chatID int64, args string) {
@@ -891,7 +891,7 @@ func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, chainID, cmdK
 }
 
 func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string, page, limit int, sortOrder string) (string, *InlineKeyboardMarkup, error) {
-	limit = clampLimit(limit)
+	limit = clampLimit(limit, cmdKey)
 	sortOrder = normalizeSort(sortOrder)
 	switch cmdKey {
 	case "status":
@@ -948,6 +948,13 @@ func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string,
 		}
 		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
 
+	case "health":
+		msg, pageOut, totalPages, err := formatChainHealthPage(db, chainID, page, limit, filter)
+		if err != nil {
+			return "", nil, err
+		}
+		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, "", filter, sortOrder), nil
+
 	default:
 		return "", nil, fmt.Errorf("unknown command key: %s", cmdKey)
 	}
@@ -993,7 +1000,7 @@ func parseCallbackData(data string) (cmdKey string, page, limit int, period, fil
 		return "", 1, limitDefault, "", "", sortDefault, "", false
 	}
 	page = parseIntWithDefault(params["p"], 1, "page")
-	limit = parseIntWithDefault(params["l"], limitDefault, "limit")
+	limit = parseIntWithDefault(params["l"], defaultLimitFor(cmdKey), "limit")
 	period = decodePeriod(params["r"])
 	filter = params["f"]
 	sortOrder = decodeSort(params["s"])
@@ -1080,7 +1087,7 @@ func supportsPercentSort(cmdKey string) bool {
 
 func supportsSearch(cmdKey string) bool {
 	switch cmdKey {
-	case "status", "rate", "uptime", "operation_time", "tx_contrib", "missing":
+	case "status", "rate", "uptime", "operation_time", "tx_contrib", "missing", "health":
 		return true
 	default:
 		return false
@@ -1101,6 +1108,8 @@ func cmdToCode(cmdKey string) string {
 		return "tx"
 	case "missing":
 		return "ms"
+	case "health":
+		return "hl"
 	case "menu":
 		return "mn"
 	case "confirm":
@@ -1136,6 +1145,8 @@ func codeToCmd(code string) string {
 		return "tx_contrib"
 	case "ms", "missing":
 		return "missing"
+	case "hl", "health":
+		return "health"
 	case "mn", "menu":
 		return "menu"
 	case "cf", "confirm":
@@ -1334,9 +1345,19 @@ func parseIntWithDefault(v string, def int, name string) int {
 	return n
 }
 
-func clampLimit(limit int) int {
+// defaultLimitFor returns the default page size for cmdKey — the single
+// place that knows the health command's default differs from every other
+// command's, so callers can't drift by reaching for the wrong constant.
+func defaultLimitFor(cmdKey string) int {
+	if cmdKey == "health" {
+		return healthLimitDefault
+	}
+	return limitDefault
+}
+
+func clampLimit(limit int, cmdKey string) int {
 	if limit <= 0 {
-		return limitDefault
+		return defaultLimitFor(cmdKey)
 	}
 	if limit > limitMax {
 		return limitMax
@@ -1410,7 +1431,11 @@ func compareFloat(a, b float64, sortOrder string) bool {
 }
 
 func paginate(total, page, limit int) (pageOut, start, end, totalPages int) {
-	limit = clampLimit(limit)
+	// limit is always already clamped by buildPaginatedResponse before any
+	// format* function (the only callers of paginate) is invoked; this is
+	// just a division-by-zero guard, so the cmdKey-specific default doesn't
+	// matter here.
+	limit = clampLimit(limit, "")
 	if page <= 0 {
 		page = 1
 	}
@@ -1907,12 +1932,13 @@ func handleCmdMenuCallback(
 		case "status":
 			// status is read-only and instant — execute directly, no confirm step needed.
 			deleteCmdState(chatID)
-			if ChainHealthFetcher == nil {
-				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ Chain health data is not available yet.", nil)
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, defaultLimitFor("health"), sortDefault)
+			if err != nil {
+				log.Printf("[cmd] status chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "❌ An error occurred. Please try again.", nil)
 				return
 			}
-			snap := ChainHealthFetcher(state.ChainID)
-			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, formatChainHealthMessage(state.ChainID, snap), nil)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, msg, markup)
 		case "uptime", "rate", "missing", "operation_time", "tx_contrib":
 			// Period-aware commands: show period picker before confirm.
 			state.Action = action
@@ -2132,11 +2158,12 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 		}
 		switch state.Action {
 		case "status":
-			if ChainHealthFetcher == nil {
-				return "⚠️ Chain health data is not available yet.", nil
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, defaultLimitFor("health"), sortDefault)
+			if err != nil {
+				log.Printf("[cmd] status chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				return "❌ An error occurred. Please try again.", nil
 			}
-			snap := ChainHealthFetcher(state.ChainID)
-			return formatChainHealthMessage(state.ChainID, snap), nil
+			return msg, markup
 		case "uptime":
 			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "uptime", "", "", 1, limitDefault, sortDefault)
 			if err != nil {
@@ -2263,23 +2290,11 @@ func formatHelp() string {
 	return b.String()
 }
 
-// formatChainHealthMessage formats a ChainHealthSnapshot as an HTML Telegram message.
-func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
-	if snap.IsDisabled {
-		if ChainDisabledFormatter != nil {
-			return ChainDisabledFormatter(chainID, snap)
-		}
-		return fmt.Sprintf("⚫ <b>[%s] Chain status — MONITORING OFF</b>", html.EscapeString(chainID))
-	}
-	if snap.IsStuck {
-		if ChainStuckFormatter != nil {
-			return ChainStuckFormatter(chainID, snap)
-		}
-	}
-
+// formatChainHealthHeader renders the block/consensus/network summary lines
+// shared by every page of the /status output.
+func formatChainHealthHeader(chainID string, snap ChainHealthSnapshot) string {
 	var b strings.Builder
 
-	// Determine chain health indicator based on consensus round.
 	roundLabel := consensusRoundLabel(snap.ConsensusRound)
 	headerEmoji := chainHealthEmoji(snap.ConsensusRound, snap.RPCReachable)
 
@@ -2293,129 +2308,18 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 		b.WriteString(fmt.Sprintf("Consensus: round %d — %s\n", snap.ConsensusRound, roundLabel))
 	}
 
-	// Network line.
 	if snap.PeerCount > 0 || snap.MempoolTxCount > 0 {
 		b.WriteString(fmt.Sprintf("Network: %d peers | Mempool: %d pending txs\n", snap.PeerCount, snap.MempoolTxCount))
 	}
 
-	// Validator set section — participation rates from snap.ValidatorRates (recent 100-block data).
-	if len(snap.ValidatorRates) > 0 {
-		// Build power lookup from ValidatorSet.
-		type valMeta struct {
-			VotingPower int64
-			KeepRunning bool
-			hasMeta     bool
-		}
-		valMetaMap := make(map[string]valMeta, len(snap.ValidatorSet))
-		var totalPower int64
-		for _, vi := range snap.ValidatorSet {
-			valMetaMap[vi.Address] = valMeta{
-				VotingPower: vi.VotingPower,
-				KeepRunning: vi.KeepRunning,
-				hasMeta:     true,
-			}
-			totalPower += vi.VotingPower
-		}
+	return b.String()
+}
 
-		type rateEntry struct {
-			addr    string
-			rate    float64
-			moniker string
-			meta    valMeta
-		}
-		entries := make([]rateEntry, 0, len(snap.ValidatorRates))
-		for addr, vr := range snap.ValidatorRates {
-			moniker := vr.Moniker
-			if moniker == "" {
-				moniker = addr
-				if len(moniker) > 10 {
-					moniker = moniker[:10] + "..."
-				}
-			}
-			entries = append(entries, rateEntry{
-				addr:    addr,
-				rate:    vr.Rate,
-				moniker: moniker,
-				meta:    valMetaMap[addr],
-			})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].rate != entries[j].rate {
-				return entries[i].rate < entries[j].rate
-			}
-			return entries[i].addr < entries[j].addr
-		})
+// formatChainHealthFooter renders the valset-changes section shared by
+// every page of the /status output.
+func formatChainHealthFooter(snap ChainHealthSnapshot) string {
+	var b strings.Builder
 
-		headerPower := ""
-		if totalPower > 0 {
-			headerPower = fmt.Sprintf(" — total power: %d", totalPower)
-		}
-		b.WriteString(fmt.Sprintf("Validator set (%d active%s):\n", len(entries), headerPower))
-
-		allPerfect := true
-		for _, e := range entries {
-			if e.rate < 100.0 {
-				allPerfect = false
-				break
-			}
-		}
-		if allPerfect {
-			b.WriteString(fmt.Sprintf("  All %d validators at 100%% uptime\n", len(entries)))
-		} else {
-			top := entries
-			var rest []rateEntry
-			if len(entries) > 5 {
-				top = entries[:5]
-				rest = entries[5:]
-			}
-			b.WriteString("  Top 5 worst performers (last 24h):\n")
-			for _, e := range top {
-				uptimeEmoji := telegramUptimeEmoji(e.rate)
-				addrShort := e.addr
-				if len(addrShort) > 10 {
-					addrShort = addrShort[:10] + "..."
-				}
-				var line string
-				if totalPower > 0 && e.meta.hasMeta {
-					powerPct := float64(e.meta.VotingPower) / float64(totalPower) * 100
-					line = fmt.Sprintf("  %s <b>%s</b> (<code>%s</code>) %.1f%% uptime | %.1f%% power",
-						uptimeEmoji,
-						html.EscapeString(e.moniker),
-						html.EscapeString(addrShort),
-						e.rate, powerPct)
-				} else {
-					line = fmt.Sprintf("  %s <b>%s</b> (<code>%s</code>) %.1f%% uptime",
-						uptimeEmoji,
-						html.EscapeString(e.moniker),
-						html.EscapeString(addrShort),
-						e.rate)
-				}
-				if e.meta.hasMeta && !e.meta.KeepRunning {
-					line += " ⚠️ intends to leave"
-				}
-				b.WriteString(line + "\n")
-			}
-			if len(rest) > 0 {
-				allRestPerfect := true
-				bestRest := 0.0
-				for _, e := range rest {
-					if e.rate < 100.0 {
-						allRestPerfect = false
-					}
-					if e.rate > bestRest {
-						bestRest = e.rate
-					}
-				}
-				if allRestPerfect {
-					b.WriteString(fmt.Sprintf("  (%d others at 100%%)\n", len(rest)))
-				} else {
-					b.WriteString(fmt.Sprintf("  (%d others, best: %.1f%%)\n", len(rest), bestRest))
-				}
-			}
-		}
-	}
-
-	// Valset changes section — only show changes within the last 24h window.
 	var recentChanges []ValsetChange
 	for _, vc := range snap.ValsetChanges {
 		if vc.BlockNum >= snap.MinBlock {
@@ -2434,23 +2338,137 @@ func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 		}
 	}
 
-	if MissedBlocksFormatter != nil {
-		b.WriteString(MissedBlocksFormatter(snap.MissedLast24h))
-	}
-
 	return b.String()
 }
 
-// telegramUptimeEmoji returns the uptime status emoji for Telegram HTML messages.
-func telegramUptimeEmoji(rate float64) string {
-	switch {
-	case rate >= 95.0:
-		return "🟢"
-	case rate >= 80.0:
+// filterProblems keeps only entries whose moniker or address matches
+// filter (case-insensitive substring), mirroring filterMissing's convention.
+func filterProblems(in []database.ValidatorReportEntry, filter string) []database.ValidatorReportEntry {
+	if filter == "" {
+		return in
+	}
+	out := make([]database.ValidatorReportEntry, 0, len(in))
+	for _, e := range in {
+		if matchesFilter(filter, e.Moniker, e.Addr) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// tierEmoji returns the severity indicator for a validator's tier. All four
+// tiers are covered because /status now lists every validator that missed a
+// block, not just Tier Watch/Critical.
+func tierEmoji(tier score.Tier) string {
+	switch tier {
+	case score.TierCritical:
+		return "🔴"
+	case score.TierWatch:
+		return "🟠"
+	case score.TierGood:
 		return "🟡"
 	default:
-		return "🔴"
+		return "🟢"
 	}
+}
+
+// formatChainHealthPage renders one page of the /status output: chain
+// summary + valset changes (identical on every page, via
+// formatChainHealthHeader/Footer) plus either an "all healthy" line or a
+// paginated slice of every valset validator that missed at least one block
+// in the last_24h period, sorted by score ascending. This intentionally
+// diverges from the daily report's Tier Watch/Critical criterion (see
+// gnovalidator.BuildDailyReportData) — a validator can miss a block and
+// still be Tier Good/Excellent overall, and this view is meant to surface
+// exactly that. A validator with zero participation rows at all (no data,
+// not even a miss recorded) scores 0/Critical but has MissedBlocks=0 and is
+// therefore excluded — a deliberate edge case, not a bug.
+func formatChainHealthPage(db *gorm.DB, chainID string, page, limit int, filter string) (string, int, int, error) {
+	if ChainHealthFetcher == nil {
+		return "⚠️ Chain health data is not available yet.", 1, 1, nil
+	}
+	snap := ChainHealthFetcher(chainID)
+
+	if snap.IsDisabled {
+		if ChainDisabledFormatter != nil {
+			return ChainDisabledFormatter(chainID, snap), 1, 1, nil
+		}
+		return fmt.Sprintf("⚫ <b>[%s] Chain status — MONITORING OFF</b>", html.EscapeString(chainID)), 1, 1, nil
+	}
+	if snap.IsStuck && ChainStuckFormatter != nil {
+		return ChainStuckFormatter(chainID, snap), 1, 1, nil
+	}
+
+	var b strings.Builder
+	b.WriteString(formatChainHealthHeader(chainID, snap))
+
+	pageOut, totalPages := 1, 1
+
+	ctx, ctxErr := database.LoadValidatorReportContext(db, chainID)
+	var entries []database.ValidatorReportEntry
+	var reportErr error
+	if ctxErr != nil {
+		reportErr = ctxErr
+	} else {
+		entries, reportErr = database.BuildChainValidatorReport(db, ctx, chainID, "last_24h", "")
+	}
+
+	if reportErr != nil {
+		log.Printf("[telegram] formatChainHealthPage: build validator report chain=%s: %v", chainID, reportErr)
+		b.WriteString("⚠️ Unable to fetch validator health data\n")
+	} else {
+		var problems []database.ValidatorReportEntry
+		for _, e := range entries {
+			if e.MissedBlocks > 0 {
+				problems = append(problems, e)
+			}
+		}
+		sort.Slice(problems, func(i, j int) bool {
+			if problems[i].Score != problems[j].Score {
+				return problems[i].Score < problems[j].Score
+			}
+			return problems[i].Addr < problems[j].Addr
+		})
+		hadProblems := len(problems) > 0
+		problems = filterProblems(problems, filter)
+
+		if len(problems) == 0 {
+			if hadProblems {
+				b.WriteString(filterInfoLine(filter))
+				b.WriteString("No matching validators with missed blocks.\n")
+			} else {
+				b.WriteString(fmt.Sprintf("✅ All %d validators healthy (last 24h)\n", len(entries)))
+			}
+		} else {
+			var pgStart, pgEnd int
+			pageOut, pgStart, pgEnd, totalPages = paginate(len(problems), page, limit)
+			b.WriteString(pageInfoLine(pageOut, totalPages))
+			b.WriteString(filterInfoLine(filter))
+
+			leaving := make(map[string]bool, len(snap.ValidatorSet))
+			for _, vi := range snap.ValidatorSet {
+				if !vi.KeepRunning {
+					leaving[vi.Address] = true
+				}
+			}
+
+			for i, p := range problems[pgStart:pgEnd] {
+				line := fmt.Sprintf("%d. %s <b>%s</b> (<code>%s</code>)\nTier: %s | Score: %d | Missed: %d",
+					pgStart+i+1, tierEmoji(p.Tier), html.EscapeString(p.DisplayName()), html.EscapeString(p.Addr),
+					p.Tier, p.Score, p.MissedBlocks)
+				if pct, ok := p.VotingPowerPercent(); ok {
+					line += fmt.Sprintf(" | VP: %.1f%%", pct)
+				}
+				if leaving[p.Addr] {
+					line += " ⚠️ intends to leave"
+				}
+				b.WriteString(line + "\n\n")
+			}
+		}
+	}
+
+	b.WriteString(formatChainHealthFooter(snap))
+	return b.String(), pageOut, totalPages, nil
 }
 
 // consensusRoundLabel returns a human-readable label for a consensus round number.

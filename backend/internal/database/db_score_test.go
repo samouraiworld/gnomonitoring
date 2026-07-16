@@ -358,12 +358,15 @@ func TestGetValidatorVP(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	perAddr, sum, max, err := database.GetValidatorVP(db, chain)
+	perAddr, monikerByAddr, sum, max, err := database.GetValidatorVP(db, chain)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if perAddr["b"] != 300 || sum != 400 || max != 300 {
 		t.Fatalf("perAddr=%v sum=%d max=%d, want b=300 sum=400 max=300", perAddr, sum, max)
+	}
+	if monikerByAddr["b"] != "b" {
+		t.Fatalf("monikerByAddr[b]=%q, want %q", monikerByAddr["b"], "b")
 	}
 }
 

@@ -64,6 +64,7 @@ func main() {
 
 	// Wire Telegram send function to break gnovalidator → telegram import cycle.
 	gnovalidator.SendTelegramMessage = telegram.SendMessageTelegram
+	gnovalidator.SendTelegramMessageWithButton = telegram.SendMessageTelegramWithLinkButton
 
 	// Wire chain-health fetch and format functions to break the gnovalidator →
 	// internal → telegram circular import. The two convert* helpers copy the
@@ -143,7 +144,6 @@ func main() {
 			return gnovalidator.FormatStuckReport(chainID, gnSnap)
 		},
 	)
-	telegram.MissedBlocksFormatter = gnovalidator.FormatMissedBlocksLast24hHTML
 
 	// ==================== Load admin thresholds from DB ============ //
 	gnovalidator.LoadThresholds(db)
