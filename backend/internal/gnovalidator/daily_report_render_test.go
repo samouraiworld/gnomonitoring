@@ -163,7 +163,7 @@ func TestRenderDailyReportPlainText_AllHealthy(t *testing.T) {
 	got := RenderDailyReportPlainText(d)
 	want := "📊 [test12] Daily Summary — 2025-11-02\n" +
 		"🟢 Block #100 (5s ago) — Consensus: round 0 — Normal\n" +
-		"✅ All 3 validators healthy\n"
+		"✅ All 3 validators healthy (last 24h)\n"
 	if got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -194,8 +194,8 @@ func TestRenderDailyReportDiscordEmbed_ColorReflectsWorstTier(t *testing.T) {
 	if embed.Color != 0xE74C3C {
 		t.Fatalf("Color = %#x, want %#x (critical red)", embed.Color, 0xE74C3C)
 	}
-	if len(embed.Fields) != 1 || embed.Fields[0].Name != "m1" {
-		t.Fatalf("expected one field for the problem validator, got: %+v", embed.Fields)
+	if len(embed.Fields) != 2 || embed.Fields[0].Name != "Status" || embed.Fields[1].Name != "m1" {
+		t.Fatalf("expected a Status field followed by one field for the problem validator, got: %+v", embed.Fields)
 	}
 }
 
@@ -302,14 +302,14 @@ func TestRenderDailyReportDiscordEmbed_EmptyMonikerFallsBackToUnknown(t *testing
 		Problems: []database.ValidatorReportEntry{p},
 	}
 	embed := RenderDailyReportDiscordEmbed(d)
-	if len(embed.Fields) != 1 {
-		t.Fatalf("expected one field for the problem validator, got: %+v", embed.Fields)
+	if len(embed.Fields) != 2 {
+		t.Fatalf("expected a Status field plus one field for the problem validator, got: %+v", embed.Fields)
 	}
-	if embed.Fields[0].Name == "" {
-		t.Fatalf("Discord embed field Name must never be empty (Discord rejects the whole request), got: %+v", embed.Fields[0])
+	if embed.Fields[1].Name == "" {
+		t.Fatalf("Discord embed field Name must never be empty (Discord rejects the whole request), got: %+v", embed.Fields[1])
 	}
-	if embed.Fields[0].Name != "unknown" {
-		t.Fatalf("Fields[0].Name = %q, want fallback to \"unknown\"", embed.Fields[0].Name)
+	if embed.Fields[1].Name != "unknown" {
+		t.Fatalf("Fields[1].Name = %q, want fallback to \"unknown\"", embed.Fields[1].Name)
 	}
 }
 
@@ -438,8 +438,8 @@ func TestRenderDailyReportDiscordEmbed_TruncatedCountAddsField(t *testing.T) {
 	withTruncation := base
 	withTruncation.Problems = manyProblems(maxProblemsDiscord + 7)
 	embed := RenderDailyReportDiscordEmbed(withTruncation)
-	if len(embed.Fields) != maxProblemsDiscord+1 {
-		t.Fatalf("expected %d problem fields plus one truncation-summary field, got: %d fields", maxProblemsDiscord+1, len(embed.Fields))
+	if len(embed.Fields) != maxProblemsDiscord+2 {
+		t.Fatalf("expected a Status field, %d problem fields, plus one truncation-summary field, got: %d fields", maxProblemsDiscord, len(embed.Fields))
 	}
 	if !strings.Contains(embed.Fields[len(embed.Fields)-1].Value, "7 more") {
 		t.Fatalf("expected the last field to mention the truncated count, got: %+v", embed.Fields[len(embed.Fields)-1])
@@ -450,7 +450,7 @@ func TestRenderDailyReportDiscordEmbed_TruncatedCountAddsField(t *testing.T) {
 		{Addr: "g1", Moniker: "m1", Score: 10, Tier: score.TierCritical, MissedBlocks: 5},
 	}
 	embed = RenderDailyReportDiscordEmbed(noTruncation)
-	if len(embed.Fields) != 1 {
+	if len(embed.Fields) != 2 {
 		t.Fatalf("did not expect an extra field when Problems is within the limit, got: %+v", embed.Fields)
 	}
 }
