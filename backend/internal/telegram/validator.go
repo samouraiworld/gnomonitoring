@@ -102,10 +102,6 @@ var ChainHealthFetcher func(chainID string) ChainHealthSnapshot
 var ChainDisabledFormatter func(chainID string, snap ChainHealthSnapshot) string
 var ChainStuckFormatter func(chainID string, snap ChainHealthSnapshot) string
 
-// MissedBlocksFormatter formats the missed-blocks-last-24h section. Set from main.go to
-// gnovalidator.FormatMissedBlocksLast24hHTML to avoid a circular import.
-var MissedBlocksFormatter func(missed []database.MissedBlockCount, scoreByAddr map[string]int) string
-
 // SetChainHealthFetcher registers the live-health fetch function and its
 // format helpers. Called once from main.go.
 func SetChainHealthFetcher(
@@ -2305,12 +2301,9 @@ func formatChainHealthHeader(chainID string, snap ChainHealthSnapshot) string {
 	return b.String()
 }
 
-// formatChainHealthFooter renders the valset-changes and missed-blocks
-// sections shared by every page of the /status output. scoreByAddr is the
-// last_24h Score v2 score per validator address, threaded through to
-// MissedBlocksFormatter so the missed-blocks section can show each
-// validator's score alongside its missed-block count.
-func formatChainHealthFooter(snap ChainHealthSnapshot, scoreByAddr map[string]int) string {
+// formatChainHealthFooter renders the valset-changes section shared by
+// every page of the /status output.
+func formatChainHealthFooter(snap ChainHealthSnapshot) string {
 	var b strings.Builder
 
 	var recentChanges []ValsetChange
@@ -2329,10 +2322,6 @@ func formatChainHealthFooter(snap ChainHealthSnapshot, scoreByAddr map[string]in
 				b.WriteString(fmt.Sprintf("  Block #%d — <code>%s</code> added (power: %d)\n", vc.BlockNum, addrEsc, vc.NewPower))
 			}
 		}
-	}
-
-	if MissedBlocksFormatter != nil {
-		b.WriteString(MissedBlocksFormatter(snap.MissedLast24h, scoreByAddr))
 	}
 
 	return b.String()
@@ -2455,11 +2444,7 @@ func formatChainHealthPage(db *gorm.DB, chainID string, page, limit int, filter 
 		}
 	}
 
-	scoreByAddr := make(map[string]int, len(entries))
-	for _, e := range entries {
-		scoreByAddr[e.Addr] = e.Score
-	}
-	b.WriteString(formatChainHealthFooter(snap, scoreByAddr))
+	b.WriteString(formatChainHealthFooter(snap))
 	return b.String(), pageOut, totalPages, nil
 }
 

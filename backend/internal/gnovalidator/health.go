@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"html"
 	"log"
 	"sort"
 	"strconv"
@@ -675,37 +674,6 @@ func FormatMissedBlocksLast24h(rows []database.MissedBlockCount) string {
 		}
 		sb.WriteString(fmt.Sprintf("  %s %-14s (%s) %d missed\n",
 			missedEmoji(r.Missed), moniker, addrShort, r.Missed))
-	}
-	return sb.String()
-}
-
-// FormatMissedBlocksLast24hHTML is the HTML-safe variant for Telegram (parse_mode: HTML).
-// scoreByAddr is the last_24h Score v2 score per validator address, as
-// already computed by the caller (formatChainHealthPage's validator report);
-// an address with no entry (e.g. the report failed to build that cycle)
-// just omits the score suffix.
-func FormatMissedBlocksLast24hHTML(rows []database.MissedBlockCount, scoreByAddr map[string]int) string {
-	if len(rows) == 0 {
-		return ""
-	}
-	var sb strings.Builder
-
-	sb.WriteString("Missed blocks last 24h:\n")
-	for _, r := range rows {
-		moniker := r.Moniker
-		if moniker == "" {
-			moniker = "unknown"
-		}
-		addrShort := r.Addr
-		if len(addrShort) > 10 {
-			addrShort = addrShort[:10] + "..."
-		}
-		line := fmt.Sprintf("  %s <b>%-14s</b> (<code>%s</code>) %d missed",
-			missedEmoji(r.Missed), html.EscapeString(moniker), html.EscapeString(addrShort), r.Missed)
-		if sc, ok := scoreByAddr[r.Addr]; ok {
-			line += fmt.Sprintf(" | Score: %d", sc)
-		}
-		sb.WriteString(line + "\n")
 	}
 	return sb.String()
 }

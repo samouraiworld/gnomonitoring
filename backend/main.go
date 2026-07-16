@@ -144,7 +144,6 @@ func main() {
 			return gnovalidator.FormatStuckReport(chainID, gnSnap)
 		},
 	)
-	telegram.MissedBlocksFormatter = gnovalidator.FormatMissedBlocksLast24hHTML
 
 	// ==================== Load admin thresholds from DB ============ //
 	gnovalidator.LoadThresholds(db)
