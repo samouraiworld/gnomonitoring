@@ -2263,6 +2263,61 @@ func formatHelp() string {
 	return b.String()
 }
 
+// formatChainHealthHeader renders the block/consensus/network summary lines
+// shared by every page of the /status output.
+func formatChainHealthHeader(chainID string, snap ChainHealthSnapshot) string {
+	var b strings.Builder
+
+	roundLabel := consensusRoundLabel(snap.ConsensusRound)
+	headerEmoji := chainHealthEmoji(snap.ConsensusRound, snap.RPCReachable)
+
+	b.WriteString(fmt.Sprintf("%s <b>[%s] Chain status</b>", headerEmoji, html.EscapeString(chainID)))
+
+	if !snap.RPCReachable {
+		b.WriteString("\n⚠️ RPC unreachable — showing last known DB data only\n")
+	} else {
+		age := formatDuration(time.Since(snap.LatestBlockTime))
+		b.WriteString(fmt.Sprintf(" — block <code>#%d</code> (%s ago)\n", snap.LatestBlockHeight, age))
+		b.WriteString(fmt.Sprintf("Consensus: round %d — %s\n", snap.ConsensusRound, roundLabel))
+	}
+
+	if snap.PeerCount > 0 || snap.MempoolTxCount > 0 {
+		b.WriteString(fmt.Sprintf("Network: %d peers | Mempool: %d pending txs\n", snap.PeerCount, snap.MempoolTxCount))
+	}
+
+	return b.String()
+}
+
+// formatChainHealthFooter renders the valset-changes and missed-blocks
+// sections shared by every page of the /status output.
+func formatChainHealthFooter(snap ChainHealthSnapshot) string {
+	var b strings.Builder
+
+	var recentChanges []ValsetChange
+	for _, vc := range snap.ValsetChanges {
+		if vc.BlockNum >= snap.MinBlock {
+			recentChanges = append(recentChanges, vc)
+		}
+	}
+	if len(recentChanges) > 0 {
+		b.WriteString(fmt.Sprintf("Valset changes (last 24h, %d):\n", len(recentChanges)))
+		for _, vc := range recentChanges {
+			addrEsc := html.EscapeString(vc.Address)
+			if vc.NewPower == 0 {
+				b.WriteString(fmt.Sprintf("  Block #%d — <code>%s</code> removed\n", vc.BlockNum, addrEsc))
+			} else {
+				b.WriteString(fmt.Sprintf("  Block #%d — <code>%s</code> added (power: %d)\n", vc.BlockNum, addrEsc, vc.NewPower))
+			}
+		}
+	}
+
+	if MissedBlocksFormatter != nil {
+		b.WriteString(MissedBlocksFormatter(snap.MissedLast24h))
+	}
+
+	return b.String()
+}
+
 // formatChainHealthMessage formats a ChainHealthSnapshot as an HTML Telegram message.
 func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
 	if snap.IsDisabled {

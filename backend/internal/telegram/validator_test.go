@@ -8,6 +8,7 @@ package telegram
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -322,4 +323,51 @@ func TestHydrationFromDB(t *testing.T) {
 	// Verify that chatChainState now reflects the persisted preferences.
 	assert.Equal(t, "chainB", getActiveChain(chatID1, defaultChain), "chatID1 should be hydrated to chainB")
 	assert.Equal(t, "chainC", getActiveChain(chatID2, defaultChain), "chatID2 should be hydrated to chainC")
+}
+
+// -------------------------------------------------------------------------
+// formatChainHealthHeader and formatChainHealthFooter
+// -------------------------------------------------------------------------
+
+func TestFormatChainHealthHeader_RPCReachable(t *testing.T) {
+	snap := ChainHealthSnapshot{
+		RPCReachable:      true,
+		LatestBlockHeight: 12345,
+		LatestBlockTime:   time.Now().Add(-30 * time.Second),
+		ConsensusRound:    1,
+		PeerCount:         5,
+		MempoolTxCount:    2,
+	}
+	got := formatChainHealthHeader("test12", snap)
+	assert.Contains(t, got, "[test12] Chain status")
+	assert.Contains(t, got, "#12345")
+	assert.Contains(t, got, "Consensus: round 1")
+	assert.Contains(t, got, "Network: 5 peers | Mempool: 2 pending txs")
+}
+
+func TestFormatChainHealthHeader_RPCUnreachable(t *testing.T) {
+	snap := ChainHealthSnapshot{RPCReachable: false}
+	got := formatChainHealthHeader("test12", snap)
+	assert.Contains(t, got, "RPC unreachable")
+	assert.NotContains(t, got, "Consensus:")
+}
+
+func TestFormatChainHealthFooter_ValsetChangesFilteredByMinBlock(t *testing.T) {
+	snap := ChainHealthSnapshot{
+		MinBlock: 100,
+		ValsetChanges: []ValsetChange{
+			{BlockNum: 50, Address: "g1old", NewPower: 0},
+			{BlockNum: 150, Address: "g1new", NewPower: 10},
+		},
+	}
+	got := formatChainHealthFooter(snap)
+	assert.NotContains(t, got, "g1old")
+	assert.Contains(t, got, "g1new")
+	assert.Contains(t, got, "added (power: 10)")
+}
+
+func TestFormatChainHealthFooter_NoChangesNoSection(t *testing.T) {
+	snap := ChainHealthSnapshot{MinBlock: 100}
+	got := formatChainHealthFooter(snap)
+	assert.NotContains(t, got, "Valset changes")
 }
