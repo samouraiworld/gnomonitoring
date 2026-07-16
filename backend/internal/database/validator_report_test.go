@@ -70,6 +70,7 @@ func TestBuildChainValidatorReport_RosterMemberWithNoDataScoresZeroCritical(t *t
 
 	require.Len(t, entries, 1)
 	assert.Equal(t, "g1new", entries[0].Addr)
+	assert.Equal(t, "new-mon", entries[0].Moniker)
 	assert.Equal(t, 0, entries[0].Score)
 	assert.Equal(t, score.TierCritical, entries[0].Tier)
 	// g1new's real voting power (3, from its addr_monikers row) must still be

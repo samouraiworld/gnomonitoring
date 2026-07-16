@@ -353,30 +353,34 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 }
 
 // GetValidatorVP returns the current voting power per validator plus the sum
-// and max across the chain, used for score severity and proposer-share. Scoped
-// to chain_id.
-func GetValidatorVP(db *gorm.DB, chainID string) (map[string]int64, int64, int64, error) {
+// and max across the chain, used for score severity and proposer-share, and a
+// moniker map for the same addresses (sourced from the same addr_monikers
+// rows) so callers can resolve a moniker for a validator that has a VP
+// snapshot but no participation history yet. Scoped to chain_id.
+func GetValidatorVP(db *gorm.DB, chainID string) (perAddr map[string]int64, monikerByAddr map[string]string, sum, max int64, err error) {
 	type row struct {
 		Addr        string
+		Moniker     string
 		VotingPower int64
 	}
 	var rows []row
 	if err := db.Raw(`
-		SELECT addr, voting_power FROM addr_monikers
+		SELECT addr, moniker, voting_power FROM addr_monikers
 		WHERE chain_id = ? AND voting_power > 0
 	`, chainID).Scan(&rows).Error; err != nil {
-		return nil, 0, 0, fmt.Errorf("GetValidatorVP(%s): %w", chainID, err)
+		return nil, nil, 0, 0, fmt.Errorf("GetValidatorVP(%s): %w", chainID, err)
 	}
-	perAddr := make(map[string]int64, len(rows))
-	var sum, max int64
+	perAddr = make(map[string]int64, len(rows))
+	monikerByAddr = make(map[string]string, len(rows))
 	for _, r := range rows {
 		perAddr[r.Addr] = r.VotingPower
+		monikerByAddr[r.Addr] = r.Moniker
 		sum += r.VotingPower
 		if r.VotingPower > max {
 			max = r.VotingPower
 		}
 	}
-	return perAddr, sum, max, nil
+	return perAddr, monikerByAddr, sum, max, nil
 }
 
 // GetLastAlertTimes returns, per validator, the timestamp of its most recent

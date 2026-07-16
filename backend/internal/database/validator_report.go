@@ -49,6 +49,7 @@ type mergedValidatorInputs struct {
 type ValidatorReportContext struct {
 	Weights            score.Weights
 	VPByAddr           map[string]int64
+	VPMonikerByAddr    map[string]string
 	VPSum              int64
 	VPMax              int64
 	ValsetFilterActive bool
@@ -68,7 +69,7 @@ func LoadValidatorReportContext(db *gorm.DB, chainID string) (*ValidatorReportCo
 		cfg[c.Key] = c.Value
 	}
 
-	vpByAddr, vpSum, vpMax, err := GetValidatorVP(db, chainID)
+	vpByAddr, vpMonikerByAddr, vpSum, vpMax, err := GetValidatorVP(db, chainID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +82,7 @@ func LoadValidatorReportContext(db *gorm.DB, chainID string) (*ValidatorReportCo
 	return &ValidatorReportContext{
 		Weights:            score.WeightsFromConfig(cfg),
 		VPByAddr:           vpByAddr,
+		VPMonikerByAddr:    vpMonikerByAddr,
 		VPSum:              vpSum,
 		VPMax:              vpMax,
 		ValsetFilterActive: len(vpByAddr) > 0,
@@ -109,6 +111,7 @@ func LoadValidatorReportContext(db *gorm.DB, chainID string) (*ValidatorReportCo
 func BuildChainValidatorReport(db *gorm.DB, ctx *ValidatorReportContext, chainID, period, addrFilter string) ([]ValidatorReportEntry, error) {
 	weights := ctx.Weights
 	vpByAddr := ctx.VPByAddr
+	vpMonikerByAddr := ctx.VPMonikerByAddr
 	vpSum := ctx.VPSum
 	vpMax := ctx.VPMax
 	valsetFilterActive := ctx.ValsetFilterActive
@@ -146,7 +149,7 @@ func BuildChainValidatorReport(db *gorm.DB, ctx *ValidatorReportContext, chainID
 			if addrFilter != "" && addr != addrFilter {
 				continue
 			}
-			seed(addr, "")
+			seed(addr, vpMonikerByAddr[addr])
 		}
 	}
 
