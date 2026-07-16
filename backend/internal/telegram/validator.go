@@ -34,7 +34,7 @@ const (
 	limitDefault  = 10
 	// healthLimitDefault is the default page size for the /status command
 	// (cmdKey "health"), kept smaller than limitDefault so a chain with more
-	// than a handful of Watch/Critical validators shows a "Next" page
+	// than a handful of validators with missed blocks shows a "Next" page
 	// instead of dumping everything into one message. Explicit ?limit=
 	// overrides (up to limitMax) still work as before.
 	healthLimitDefault = 5
