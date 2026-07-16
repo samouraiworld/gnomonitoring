@@ -949,6 +949,13 @@ func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string,
 		}
 		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
 
+	case "health":
+		msg, pageOut, totalPages, err := formatChainHealthPage(db, chainID, page, limit, filter)
+		if err != nil {
+			return "", nil, err
+		}
+		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, "", filter, sortOrder), nil
+
 	default:
 		return "", nil, fmt.Errorf("unknown command key: %s", cmdKey)
 	}
@@ -1081,7 +1088,7 @@ func supportsPercentSort(cmdKey string) bool {
 
 func supportsSearch(cmdKey string) bool {
 	switch cmdKey {
-	case "status", "rate", "uptime", "operation_time", "tx_contrib", "missing":
+	case "status", "rate", "uptime", "operation_time", "tx_contrib", "missing", "health":
 		return true
 	default:
 		return false
@@ -1102,6 +1109,8 @@ func cmdToCode(cmdKey string) string {
 		return "tx"
 	case "missing":
 		return "ms"
+	case "health":
+		return "hl"
 	case "menu":
 		return "mn"
 	case "confirm":
@@ -1137,6 +1146,8 @@ func codeToCmd(code string) string {
 		return "tx_contrib"
 	case "ms", "missing":
 		return "missing"
+	case "hl", "health":
+		return "health"
 	case "mn", "menu":
 		return "menu"
 	case "cf", "confirm":
