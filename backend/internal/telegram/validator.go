@@ -32,9 +32,15 @@ var enabledChainsSnapshot []string
 const (
 	periodDefault = "current_month"
 	limitDefault  = 10
-	limitMax      = 50
-	sortDefault   = "desc"
-	searchTTL     = 2 * time.Minute
+	// healthLimitDefault is the default page size for the /status command
+	// (cmdKey "health"), kept smaller than limitDefault so a chain with more
+	// than a handful of Watch/Critical validators shows a "Next" page
+	// instead of dumping everything into one message. Explicit ?limit=
+	// overrides (up to limitMax) still work as before.
+	healthLimitDefault = 5
+	limitMax           = 50
+	sortDefault        = "desc"
+	searchTTL          = 2 * time.Minute
 )
 
 const cacheTTL = 45 * time.Second
@@ -220,7 +226,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 		"/status": func(chatID int64, args string) {
 			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
-			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
+			limit := parseIntWithDefault(params["limit"], healthLimitDefault, "limit")
 			page := parseIntWithDefault(params["page"], 1, "page")
 			filter := params["filter"]
 
@@ -1916,7 +1922,7 @@ func handleCmdMenuCallback(
 		case "status":
 			// status is read-only and instant — execute directly, no confirm step needed.
 			deleteCmdState(chatID)
-			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, limitDefault, sortDefault)
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, healthLimitDefault, sortDefault)
 			if err != nil {
 				log.Printf("[cmd] status chat=%d chain=%s: %v", chatID, state.ChainID, err)
 				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "❌ An error occurred. Please try again.", nil)
@@ -2142,7 +2148,7 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 		}
 		switch state.Action {
 		case "status":
-			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, limitDefault, sortDefault)
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, healthLimitDefault, sortDefault)
 			if err != nil {
 				log.Printf("[cmd] status chat=%d chain=%s: %v", chatID, state.ChainID, err)
 				return "❌ An error occurred. Please try again.", nil

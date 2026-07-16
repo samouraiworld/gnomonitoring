@@ -541,3 +541,25 @@ func TestFormatChainHealthPage_NoFilterStillReportsHealthyWhenTrulyHealthy(t *te
 	require.NoError(t, err)
 	assert.Contains(t, msg, "All 1 validators healthy")
 }
+
+func TestHealthLimitDefault_IsFiveForStatusPagination(t *testing.T) {
+	assert.Equal(t, 5, healthLimitDefault, "healthLimitDefault must stay smaller than limitDefault so /status surfaces a Next page sooner")
+}
+
+func TestFormatChainHealthPage_HealthLimitDefaultPaginatesSixProblems(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	// No DailyParticipation rows -> Score 0/Critical for each (documented
+	// behavior, see CLAUDE.md "no participation rows -> 0/Critical"), so all
+	// 6 addresses land in the paginated "problems" list.
+	for _, addr := range []string{"g1a", "g1b", "g1c", "g1d", "g1e", "g1f"} {
+		db.Create(&database.AddrMoniker{ChainID: "test12", Addr: addr, Moniker: addr + "-mon", VotingPower: 1})
+	}
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, pageOut, totalPages, err := formatChainHealthPage(db, "test12", 1, healthLimitDefault, "")
+	require.NoError(t, err)
+	assert.Equal(t, 1, pageOut)
+	assert.Equal(t, 2, totalPages, "6 problem validators at healthLimitDefault=5 per page must produce 2 pages")
+	assert.Contains(t, msg, "Page 1/2")
+	assert.NotContains(t, msg, "g1f-mon")
+}
