@@ -222,7 +222,7 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 		"/status": func(chatID int64, args string) {
 			chainID := getActiveChain(chatID, defaultChainID)
 			params := parseParams(args)
-			limit := parseIntWithDefault(params["limit"], healthLimitDefault, "limit")
+			limit := parseIntWithDefault(params["limit"], defaultLimitFor("health"), "limit")
 			page := parseIntWithDefault(params["page"], 1, "page")
 			filter := params["filter"]
 
@@ -891,7 +891,7 @@ func sendPaginatedMessage(token string, chatID int64, db *gorm.DB, chainID, cmdK
 }
 
 func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string, page, limit int, sortOrder string) (string, *InlineKeyboardMarkup, error) {
-	limit = clampLimit(limit)
+	limit = clampLimit(limit, cmdKey)
 	sortOrder = normalizeSort(sortOrder)
 	switch cmdKey {
 	case "status":
@@ -1000,7 +1000,7 @@ func parseCallbackData(data string) (cmdKey string, page, limit int, period, fil
 		return "", 1, limitDefault, "", "", sortDefault, "", false
 	}
 	page = parseIntWithDefault(params["p"], 1, "page")
-	limit = parseIntWithDefault(params["l"], limitDefault, "limit")
+	limit = parseIntWithDefault(params["l"], defaultLimitFor(cmdKey), "limit")
 	period = decodePeriod(params["r"])
 	filter = params["f"]
 	sortOrder = decodeSort(params["s"])
@@ -1345,9 +1345,19 @@ func parseIntWithDefault(v string, def int, name string) int {
 	return n
 }
 
-func clampLimit(limit int) int {
+// defaultLimitFor returns the default page size for cmdKey — the single
+// place that knows the health command's default differs from every other
+// command's, so callers can't drift by reaching for the wrong constant.
+func defaultLimitFor(cmdKey string) int {
+	if cmdKey == "health" {
+		return healthLimitDefault
+	}
+	return limitDefault
+}
+
+func clampLimit(limit int, cmdKey string) int {
 	if limit <= 0 {
-		return limitDefault
+		return defaultLimitFor(cmdKey)
 	}
 	if limit > limitMax {
 		return limitMax
@@ -1421,7 +1431,11 @@ func compareFloat(a, b float64, sortOrder string) bool {
 }
 
 func paginate(total, page, limit int) (pageOut, start, end, totalPages int) {
-	limit = clampLimit(limit)
+	// limit is always already clamped by buildPaginatedResponse before any
+	// format* function (the only callers of paginate) is invoked; this is
+	// just a division-by-zero guard, so the cmdKey-specific default doesn't
+	// matter here.
+	limit = clampLimit(limit, "")
 	if page <= 0 {
 		page = 1
 	}
@@ -1918,7 +1932,7 @@ func handleCmdMenuCallback(
 		case "status":
 			// status is read-only and instant — execute directly, no confirm step needed.
 			deleteCmdState(chatID)
-			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, healthLimitDefault, sortDefault)
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, defaultLimitFor("health"), sortDefault)
 			if err != nil {
 				log.Printf("[cmd] status chat=%d chain=%s: %v", chatID, state.ChainID, err)
 				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "❌ An error occurred. Please try again.", nil)
@@ -2144,7 +2158,7 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 		}
 		switch state.Action {
 		case "status":
-			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, healthLimitDefault, sortDefault)
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, defaultLimitFor("health"), sortDefault)
 			if err != nil {
 				log.Printf("[cmd] status chat=%d chain=%s: %v", chatID, state.ChainID, err)
 				return "❌ An error occurred. Please try again.", nil
@@ -2439,15 +2453,11 @@ func formatChainHealthPage(db *gorm.DB, chainID string, page, limit int, filter 
 			}
 
 			for i, p := range problems[pgStart:pgEnd] {
-				moniker := p.Moniker
-				if moniker == "" {
-					moniker = "unknown"
-				}
 				line := fmt.Sprintf("%d. %s <b>%s</b> (<code>%s</code>)\nTier: %s | Score: %d | Missed: %d",
-					pgStart+i+1, tierEmoji(p.Tier), html.EscapeString(moniker), html.EscapeString(p.Addr),
+					pgStart+i+1, tierEmoji(p.Tier), html.EscapeString(p.DisplayName()), html.EscapeString(p.Addr),
 					p.Tier, p.Score, p.MissedBlocks)
-				if p.SumVotingPower > 0 {
-					line += fmt.Sprintf(" | VP: %.1f%%", float64(p.VotingPower)/float64(p.SumVotingPower)*100)
+				if pct, ok := p.VotingPowerPercent(); ok {
+					line += fmt.Sprintf(" | VP: %.1f%%", pct)
 				}
 				if leaving[p.Addr] {
 					line += " ⚠️ intends to leave"

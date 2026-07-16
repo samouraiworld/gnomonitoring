@@ -221,12 +221,18 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 	snap.MinBlock = minBlock
 	snap.MaxBlock = maxBlock
 
-	missed, err := database.GetMissedBlocksLast24h(db, chainID)
-	if err != nil {
-		log.Printf("[health][%s] GetMissedBlocksLast24h error: %v", chainID, err)
-		// non-fatal: leave MissedLast24h nil
-	} else {
-		snap.MissedLast24h = missed
+	// FormatStuckReport is the only remaining reader of MissedLast24h (the
+	// Telegram /status and daily-report healthy paths build their own
+	// missed-blocks view from BuildChainValidatorReport instead), so skip the
+	// query entirely outside the stuck case.
+	if snap.IsStuck {
+		missed, err := database.GetMissedBlocksLast24h(db, chainID)
+		if err != nil {
+			log.Printf("[health][%s] GetMissedBlocksLast24h error: %v", chainID, err)
+			// non-fatal: leave MissedLast24h nil
+		} else {
+			snap.MissedLast24h = missed
+		}
 	}
 
 	return snap

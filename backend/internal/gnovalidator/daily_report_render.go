@@ -66,23 +66,6 @@ func truncateProblems(all []database.ValidatorReportEntry, limit int) (shown []d
 	return all[:limit], len(all) - limit
 }
 
-// problemDisplayName returns the validator's moniker, falling back to the
-// "unknown" sentinel when no moniker is known (e.g. a newly-joined valset
-// member with no participation history yet to source a moniker from) — the
-// same convention used elsewhere in this package (see isResolvedMoniker in
-// valoper.go and FormatMissedBlocksLast24h in health.go): "unknown" is a
-// precise, recognized signal that a moniker still needs to be resolved, not
-// just a placeholder, so renderers must not substitute the raw address here
-// instead. An empty display name would also break Discord's
-// embed-field-name requirement and reads as a blank line everywhere else, so
-// every renderer uses this instead of p.Moniker directly.
-func problemDisplayName(p database.ValidatorReportEntry) string {
-	if p.Moniker != "" {
-		return p.Moniker
-	}
-	return "unknown"
-}
-
 // reportWindowText returns the plain (unescaped) "Report window: blocks
 // X–Y" line describing the block-height range this report's Score/Missed
 // figures are computed over, or "" when the range is unset (e.g. a
@@ -190,7 +173,7 @@ func RenderDailyReportPlainText(d DailyReportData) string {
 		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention:\n", len(d.Problems), d.TotalCount))
 		for _, p := range shown {
 			sb.WriteString(fmt.Sprintf("  %s (%s) — Tier: %s | Score: %d | Missed: %d\n",
-				problemDisplayName(p), p.Addr, p.Tier, p.Score, p.MissedBlocks))
+				p.DisplayName(), p.Addr, p.Tier, p.Score, p.MissedBlocks))
 		}
 		if truncatedCount > 0 {
 			sb.WriteString("  " + truncatedSummaryText(truncatedCount) + "\n")
@@ -247,11 +230,11 @@ func RenderDailyReportDiscordEmbed(d DailyReportData) internal.DiscordEmbed {
 		shown, truncatedCount := truncateProblems(d.Problems, maxProblemsDiscord)
 		for _, p := range shown {
 			vpPct := ""
-			if p.SumVotingPower > 0 {
-				vpPct = fmt.Sprintf(" | VP: %.1f%%", float64(p.VotingPower)/float64(p.SumVotingPower)*100)
+			if pct, ok := p.VotingPowerPercent(); ok {
+				vpPct = fmt.Sprintf(" | VP: %.1f%%", pct)
 			}
 			fields = append(fields, internal.DiscordEmbedField{
-				Name:  problemDisplayName(p),
+				Name:  p.DisplayName(),
 				Value: fmt.Sprintf("Tier: %s | Score: %d | Missed: %d%s", p.Tier, p.Score, p.MissedBlocks, vpPct),
 			})
 		}
@@ -319,7 +302,7 @@ func RenderDailyReportSlackBlocks(d DailyReportData) []internal.SlackBlock {
 				Type: "section",
 				Text: &internal.SlackText{
 					Type: "mrkdwn",
-					Text: fmt.Sprintf("*%s* (`%s`)\nTier: %s | Score: %d | Missed: %d", problemDisplayName(p), p.Addr, p.Tier, p.Score, p.MissedBlocks),
+					Text: fmt.Sprintf("*%s* (`%s`)\nTier: %s | Score: %d | Missed: %d", p.DisplayName(), p.Addr, p.Tier, p.Score, p.MissedBlocks),
 				},
 			})
 		}
@@ -359,7 +342,7 @@ func RenderDailyReportTelegramHTML(d DailyReportData) (text, buttonText, buttonU
 		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention:\n", len(d.Problems), d.TotalCount))
 		for _, p := range shown {
 			sb.WriteString(fmt.Sprintf("  <b>%s</b> (<code>%s</code>) — Tier: %s | Score: %d | Missed: %d\n",
-				html.EscapeString(problemDisplayName(p)), html.EscapeString(p.Addr), p.Tier, p.Score, p.MissedBlocks))
+				html.EscapeString(p.DisplayName()), html.EscapeString(p.Addr), p.Tier, p.Score, p.MissedBlocks))
 		}
 		if truncatedCount > 0 {
 			sb.WriteString(html.EscapeString(truncatedSummaryText(truncatedCount)) + "\n")

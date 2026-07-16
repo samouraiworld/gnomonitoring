@@ -30,6 +30,28 @@ type ValidatorReportEntry struct {
 	MissedBlocks        int64
 }
 
+// DisplayName returns e's moniker, falling back to the "unknown" sentinel
+// when no moniker is known (e.g. a newly-joined valset member with no
+// participation history yet to source a moniker from). Every renderer
+// (Discord/Slack/Telegram daily report, Telegram /status) uses this instead
+// of e.Moniker directly so a missing moniker never renders as a blank name.
+func (e ValidatorReportEntry) DisplayName() string {
+	if e.Moniker != "" {
+		return e.Moniker
+	}
+	return "unknown"
+}
+
+// VotingPowerPercent returns e's share of SumVotingPower as a percentage.
+// ok is false when SumVotingPower is 0 (no VP snapshot yet), so callers can
+// omit the VP suffix entirely instead of dividing by zero.
+func (e ValidatorReportEntry) VotingPowerPercent() (pct float64, ok bool) {
+	if e.SumVotingPower <= 0 {
+		return 0, false
+	}
+	return float64(e.VotingPower) / float64(e.SumVotingPower) * 100, true
+}
+
 // mergedValidatorInputs joins one validator's participation and alert rows
 // for a single period, keyed by address.
 type mergedValidatorInputs struct {
