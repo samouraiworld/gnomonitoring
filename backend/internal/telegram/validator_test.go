@@ -570,9 +570,10 @@ func TestFormatChainHealthPage_ZeroParticipationRowsExcludedFromList(t *testing.
 
 func TestFormatChainHealthPage_GoodTierValidatorWithMissedBlocksIsListed(t *testing.T) {
 	db := testoutils.NewTestDB(t)
-	// 19 participated=true + 1 participated=false -> sign_rate=95% ->
-	// Score ~95/Excellent, but MissedBlocks=1>0, so it must still appear
-	// (the core behavior change of this plan: not just Watch/Critical).
+	// 19 participated=true + 1 participated=false -> sign_rate=95%,
+	// proposer_reliability=0 (proposed=false throughout) -> presence ~76/Good,
+	// but MissedBlocks=1>0, so it must still appear (the core behavior change
+	// of this plan: not just Watch/Critical).
 	for i := 0; i < 19; i++ {
 		db.Create(&database.DailyParticipation{
 			ChainID: "test12", Addr: "g1almostperfect", Moniker: "almostperfect-mon",
