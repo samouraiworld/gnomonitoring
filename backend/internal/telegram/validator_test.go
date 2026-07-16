@@ -360,7 +360,7 @@ func TestFormatChainHealthFooter_ValsetChangesFilteredByMinBlock(t *testing.T) {
 			{BlockNum: 150, Address: "g1new", NewPower: 10},
 		},
 	}
-	got := formatChainHealthFooter(snap)
+	got := formatChainHealthFooter(snap, nil)
 	assert.NotContains(t, got, "g1old")
 	assert.Contains(t, got, "g1new")
 	assert.Contains(t, got, "added (power: 10)")
@@ -368,7 +368,7 @@ func TestFormatChainHealthFooter_ValsetChangesFilteredByMinBlock(t *testing.T) {
 
 func TestFormatChainHealthFooter_NoChangesNoSection(t *testing.T) {
 	snap := ChainHealthSnapshot{MinBlock: 100}
-	got := formatChainHealthFooter(snap)
+	got := formatChainHealthFooter(snap, nil)
 	assert.NotContains(t, got, "Valset changes")
 }
 
@@ -379,6 +379,43 @@ func withChainHealthFetcher(t *testing.T, fn func(chainID string) ChainHealthSna
 	orig := ChainHealthFetcher
 	ChainHealthFetcher = fn
 	t.Cleanup(func() { ChainHealthFetcher = orig })
+}
+
+// withMissedBlocksFormatter swaps the package-level MissedBlocksFormatter for
+// the duration of one test, restoring the original afterward.
+func withMissedBlocksFormatter(t *testing.T, fn func(missed []database.MissedBlockCount, scoreByAddr map[string]int) string) {
+	t.Helper()
+	orig := MissedBlocksFormatter
+	MissedBlocksFormatter = fn
+	t.Cleanup(func() { MissedBlocksFormatter = orig })
+}
+
+func TestFormatChainHealthPage_ThreadsScoresToMissedBlocksFormatter(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: true,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon", VotingPower: 5})
+
+	var gotScores map[string]int
+	withMissedBlocksFormatter(t, func(missed []database.MissedBlockCount, scoreByAddr map[string]int) string {
+		gotScores = scoreByAddr
+		return "MISSED-SECTION\n"
+	})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot {
+		return ChainHealthSnapshot{
+			MissedLast24h: []database.MissedBlockCount{{Addr: "g1healthy", Moniker: "healthy-mon", Missed: 3}},
+		}
+	})
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.Contains(t, msg, "MISSED-SECTION")
+	require.Contains(t, gotScores, "g1healthy")
+	// Single participated=true row, no alerts -> Score v2 base = 100*1/1 = 100,
+	// no penalties -> presence = base = 100 (proposer dropped, expected too low).
+	assert.Equal(t, 100, gotScores["g1healthy"])
 }
 
 func TestFormatChainHealthPage_AllHealthy(t *testing.T) {
