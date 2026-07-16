@@ -2404,10 +2404,16 @@ func formatChainHealthPage(db *gorm.DB, chainID string, page, limit int, filter 
 			}
 			return problems[i].Addr < problems[j].Addr
 		})
+		hadProblems := len(problems) > 0
 		problems = filterProblems(problems, filter)
 
 		if len(problems) == 0 {
-			b.WriteString(fmt.Sprintf("✅ All %d validators healthy (last 24h)\n", len(entries)))
+			if hadProblems {
+				b.WriteString(filterInfoLine(filter))
+				b.WriteString("No matching validators in Watch/Critical.\n")
+			} else {
+				b.WriteString(fmt.Sprintf("✅ All %d validators healthy (last 24h)\n", len(entries)))
+			}
 		} else {
 			var pgStart, pgEnd int
 			pageOut, pgStart, pgEnd, totalPages = paginate(len(problems), page, limit)

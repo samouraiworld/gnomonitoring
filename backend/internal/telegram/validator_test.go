@@ -479,3 +479,28 @@ func TestFormatChainHealthPage_DisabledChainShortCircuits(t *testing.T) {
 	assert.Equal(t, 1, totalPages)
 	assert.Contains(t, msg, "MONITORING OFF")
 }
+
+func TestFormatChainHealthPage_FilterMatchingNoProblemsDoesNotClaimHealthy(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1critical", Moniker: "critical-mon", VotingPower: 1})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "nomatch-filter-xyz")
+	require.NoError(t, err)
+	assert.NotContains(t, msg, "All 1 validators healthy")
+	assert.Contains(t, msg, "No matching validators")
+}
+
+func TestFormatChainHealthPage_NoFilterStillReportsHealthyWhenTrulyHealthy(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: true,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1healthy", Moniker: "healthy-mon", VotingPower: 5})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "irrelevant-filter")
+	require.NoError(t, err)
+	assert.Contains(t, msg, "All 1 validators healthy")
+}
