@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
 	"gorm.io/gorm"
 )
 
@@ -2316,6 +2317,121 @@ func formatChainHealthFooter(snap ChainHealthSnapshot) string {
 	}
 
 	return b.String()
+}
+
+// filterProblems keeps only entries whose moniker or address matches
+// filter (case-insensitive substring), mirroring filterMissing's convention.
+func filterProblems(in []database.ValidatorReportEntry, filter string) []database.ValidatorReportEntry {
+	if filter == "" {
+		return in
+	}
+	out := make([]database.ValidatorReportEntry, 0, len(in))
+	for _, e := range in {
+		if matchesFilter(filter, e.Moniker, e.Addr) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// tierEmoji returns the severity indicator for a Watch/Critical tier entry.
+func tierEmoji(tier score.Tier) string {
+	if tier == score.TierCritical {
+		return "🔴"
+	}
+	return "🟠"
+}
+
+// formatChainHealthPage renders one page of the /status output: chain
+// summary + valset changes + missed blocks (identical on every page, via
+// formatChainHealthHeader/Footer) plus either an "all healthy" line or a
+// paginated slice of validators in Tier Watch/Critical for the last_24h
+// period, sorted by score ascending — the same criterion and sort the
+// daily report uses (see gnovalidator.BuildDailyReportData).
+func formatChainHealthPage(db *gorm.DB, chainID string, page, limit int, filter string) (string, int, int, error) {
+	if ChainHealthFetcher == nil {
+		return "⚠️ Chain health data is not available yet.", 1, 1, nil
+	}
+	snap := ChainHealthFetcher(chainID)
+
+	if snap.IsDisabled {
+		if ChainDisabledFormatter != nil {
+			return ChainDisabledFormatter(chainID, snap), 1, 1, nil
+		}
+		return fmt.Sprintf("⚫ <b>[%s] Chain status — MONITORING OFF</b>", html.EscapeString(chainID)), 1, 1, nil
+	}
+	if snap.IsStuck && ChainStuckFormatter != nil {
+		return ChainStuckFormatter(chainID, snap), 1, 1, nil
+	}
+
+	var b strings.Builder
+	b.WriteString(formatChainHealthHeader(chainID, snap))
+
+	pageOut, totalPages := 1, 1
+
+	ctx, ctxErr := database.LoadValidatorReportContext(db, chainID)
+	var entries []database.ValidatorReportEntry
+	var reportErr error
+	if ctxErr != nil {
+		reportErr = ctxErr
+	} else {
+		entries, reportErr = database.BuildChainValidatorReport(db, ctx, chainID, "last_24h", "")
+	}
+
+	if reportErr != nil {
+		log.Printf("[telegram] formatChainHealthPage: build validator report chain=%s: %v", chainID, reportErr)
+		b.WriteString("⚠️ Unable to fetch validator health data\n")
+	} else {
+		var problems []database.ValidatorReportEntry
+		for _, e := range entries {
+			if e.Tier == score.TierWatch || e.Tier == score.TierCritical {
+				problems = append(problems, e)
+			}
+		}
+		sort.Slice(problems, func(i, j int) bool {
+			if problems[i].Score != problems[j].Score {
+				return problems[i].Score < problems[j].Score
+			}
+			return problems[i].Addr < problems[j].Addr
+		})
+		problems = filterProblems(problems, filter)
+
+		if len(problems) == 0 {
+			b.WriteString(fmt.Sprintf("✅ All %d validators healthy (last 24h)\n", len(entries)))
+		} else {
+			var pgStart, pgEnd int
+			pageOut, pgStart, pgEnd, totalPages = paginate(len(problems), page, limit)
+			b.WriteString(pageInfoLine(pageOut, totalPages))
+			b.WriteString(filterInfoLine(filter))
+
+			leaving := make(map[string]bool, len(snap.ValidatorSet))
+			for _, vi := range snap.ValidatorSet {
+				if !vi.KeepRunning {
+					leaving[vi.Address] = true
+				}
+			}
+
+			for i, p := range problems[pgStart:pgEnd] {
+				moniker := p.Moniker
+				if moniker == "" {
+					moniker = "unknown"
+				}
+				line := fmt.Sprintf("%d. %s <b>%s</b> (<code>%s</code>)\nTier: %s | Score: %d | Missed: %d",
+					pgStart+i+1, tierEmoji(p.Tier), html.EscapeString(moniker), html.EscapeString(p.Addr),
+					p.Tier, p.Score, p.MissedBlocks)
+				if p.SumVotingPower > 0 {
+					line += fmt.Sprintf(" | VP: %.1f%%", float64(p.VotingPower)/float64(p.SumVotingPower)*100)
+				}
+				if leaving[p.Addr] {
+					line += " ⚠️ intends to leave"
+				}
+				b.WriteString(line + "\n\n")
+			}
+		}
+	}
+
+	b.WriteString(formatChainHealthFooter(snap))
+	return b.String(), pageOut, totalPages, nil
 }
 
 // formatChainHealthMessage formats a ChainHealthSnapshot as an HTML Telegram message.
