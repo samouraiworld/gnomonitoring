@@ -387,7 +387,10 @@ func TestIsPublicUnicastIP(t *testing.T) {
 func TestAlertHTTPClient_RefusesLoopbackTarget(t *testing.T) {
 	// 127.0.0.1 is always loopback regardless of what's listening there —
 	// no need for a real server; the dial guard must reject before connecting.
-	_, err := alertHTTPClient.Get("http://127.0.0.1:1/should-not-connect")
+	resp, err := alertHTTPClient.Get("http://127.0.0.1:1/should-not-connect")
+	if resp != nil {
+		resp.Body.Close()
+	}
 	if err == nil {
 		t.Fatal("expected error dialing a loopback address, got nil")
 	}
