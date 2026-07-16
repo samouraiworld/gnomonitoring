@@ -2342,20 +2342,33 @@ func filterProblems(in []database.ValidatorReportEntry, filter string) []databas
 	return out
 }
 
-// tierEmoji returns the severity indicator for a Watch/Critical tier entry.
+// tierEmoji returns the severity indicator for a validator's tier. All four
+// tiers are covered because /status now lists every validator that missed a
+// block, not just Tier Watch/Critical.
 func tierEmoji(tier score.Tier) string {
-	if tier == score.TierCritical {
+	switch tier {
+	case score.TierCritical:
 		return "🔴"
+	case score.TierWatch:
+		return "🟠"
+	case score.TierGood:
+		return "🟡"
+	default:
+		return "🟢"
 	}
-	return "🟠"
 }
 
 // formatChainHealthPage renders one page of the /status output: chain
-// summary + valset changes + missed blocks (identical on every page, via
+// summary + valset changes (identical on every page, via
 // formatChainHealthHeader/Footer) plus either an "all healthy" line or a
-// paginated slice of validators in Tier Watch/Critical for the last_24h
-// period, sorted by score ascending — the same criterion and sort the
-// daily report uses (see gnovalidator.BuildDailyReportData).
+// paginated slice of every valset validator that missed at least one block
+// in the last_24h period, sorted by score ascending. This intentionally
+// diverges from the daily report's Tier Watch/Critical criterion (see
+// gnovalidator.BuildDailyReportData) — a validator can miss a block and
+// still be Tier Good/Excellent overall, and this view is meant to surface
+// exactly that. A validator with zero participation rows at all (no data,
+// not even a miss recorded) scores 0/Critical but has MissedBlocks=0 and is
+// therefore excluded — a deliberate edge case, not a bug.
 func formatChainHealthPage(db *gorm.DB, chainID string, page, limit int, filter string) (string, int, int, error) {
 	if ChainHealthFetcher == nil {
 		return "⚠️ Chain health data is not available yet.", 1, 1, nil
@@ -2392,7 +2405,7 @@ func formatChainHealthPage(db *gorm.DB, chainID string, page, limit int, filter 
 	} else {
 		var problems []database.ValidatorReportEntry
 		for _, e := range entries {
-			if e.Tier == score.TierWatch || e.Tier == score.TierCritical {
+			if e.MissedBlocks > 0 {
 				problems = append(problems, e)
 			}
 		}
@@ -2408,7 +2421,7 @@ func formatChainHealthPage(db *gorm.DB, chainID string, page, limit int, filter 
 		if len(problems) == 0 {
 			if hadProblems {
 				b.WriteString(filterInfoLine(filter))
-				b.WriteString("No matching validators in Watch/Critical.\n")
+				b.WriteString("No matching validators with missed blocks.\n")
 			} else {
 				b.WriteString(fmt.Sprintf("✅ All %d validators healthy (last 24h)\n", len(entries)))
 			}

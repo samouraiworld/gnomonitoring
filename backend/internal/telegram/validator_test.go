@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/score"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 )
 
@@ -399,9 +400,14 @@ func TestFormatChainHealthPage_AllHealthy(t *testing.T) {
 
 func TestFormatChainHealthPage_ProblemsSortedAndPaginated(t *testing.T) {
 	db := testoutils.NewTestDB(t)
-	// No DailyParticipation rows -> Score 0/Critical for each (documented
-	// behavior, see CLAUDE.md "no participation rows -> 0/Critical").
+	// One participated=false row each -> TotalBlocks=1/SignedBlocks=0 ->
+	// Score 0/Critical (same score as the old "0 rows" fixture) AND
+	// MissedBlocks=1>0, so each still passes the new missed>0 filter.
 	for _, addr := range []string{"g1a", "g1b", "g1c"} {
+		db.Create(&database.DailyParticipation{
+			ChainID: "test12", Addr: addr, Moniker: addr + "-mon",
+			BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+		})
 		db.Create(&database.AddrMoniker{ChainID: "test12", Addr: addr, Moniker: addr + "-mon", VotingPower: 1})
 	}
 	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
@@ -424,6 +430,10 @@ func TestFormatChainHealthPage_ProblemsSortedAndPaginated(t *testing.T) {
 
 func TestFormatChainHealthPage_VotingPowerPercentShownWhenPresent(t *testing.T) {
 	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1vp", Moniker: "vp-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+	})
 	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1vp", Moniker: "vp-mon", VotingPower: 10})
 	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
 
@@ -434,6 +444,10 @@ func TestFormatChainHealthPage_VotingPowerPercentShownWhenPresent(t *testing.T) 
 
 func TestFormatChainHealthPage_EmptyMonikerFallsBackToUnknown(t *testing.T) {
 	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1nomoniker", Moniker: "",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+	})
 	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1nomoniker", Moniker: "", VotingPower: 1})
 	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
 
@@ -444,6 +458,10 @@ func TestFormatChainHealthPage_EmptyMonikerFallsBackToUnknown(t *testing.T) {
 
 func TestFormatChainHealthPage_LeaveIntentAnnotated(t *testing.T) {
 	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1leaving", Moniker: "leaving-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+	})
 	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1leaving", Moniker: "leaving-mon", VotingPower: 1})
 	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot {
 		return ChainHealthSnapshot{
@@ -482,6 +500,10 @@ func TestFormatChainHealthPage_DisabledChainShortCircuits(t *testing.T) {
 
 func TestFormatChainHealthPage_FilterMatchingNoProblemsDoesNotClaimHealthy(t *testing.T) {
 	db := testoutils.NewTestDB(t)
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1critical", Moniker: "critical-mon",
+		BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+	})
 	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1critical", Moniker: "critical-mon", VotingPower: 1})
 	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
 
@@ -511,10 +533,14 @@ func TestHealthLimitDefault_IsFiveForStatusPagination(t *testing.T) {
 
 func TestFormatChainHealthPage_HealthLimitDefaultPaginatesSixProblems(t *testing.T) {
 	db := testoutils.NewTestDB(t)
-	// No DailyParticipation rows -> Score 0/Critical for each (documented
-	// behavior, see CLAUDE.md "no participation rows -> 0/Critical"), so all
-	// 6 addresses land in the paginated "problems" list.
+	// One participated=false row each -> Score 0/Critical AND MissedBlocks=1>0
+	// (see TestFormatChainHealthPage_ProblemsSortedAndPaginated for why), so
+	// all 6 addresses still land in the paginated list under the new filter.
 	for _, addr := range []string{"g1a", "g1b", "g1c", "g1d", "g1e", "g1f"} {
+		db.Create(&database.DailyParticipation{
+			ChainID: "test12", Addr: addr, Moniker: addr + "-mon",
+			BlockHeight: 1, Date: time.Now().UTC(), Participated: false,
+		})
 		db.Create(&database.AddrMoniker{ChainID: "test12", Addr: addr, Moniker: addr + "-mon", VotingPower: 1})
 	}
 	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
@@ -525,4 +551,51 @@ func TestFormatChainHealthPage_HealthLimitDefaultPaginatesSixProblems(t *testing
 	assert.Equal(t, 2, totalPages, "6 problem validators at healthLimitDefault=5 per page must produce 2 pages")
 	assert.Contains(t, msg, "Page 1/2")
 	assert.NotContains(t, msg, "g1f-mon")
+}
+
+func TestFormatChainHealthPage_ZeroParticipationRowsExcludedFromList(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	// No DailyParticipation rows at all -> TotalBlocks=0/SignedBlocks=0 ->
+	// Score 0/Critical, but MissedBlocks=0-0=0. User-confirmed design
+	// decision: this validator is excluded from the list even though its
+	// score is 0 (see plan Global Constraints). Not a bug.
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1nodata", Moniker: "nodata-mon", VotingPower: 1})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.NotContains(t, msg, "nodata-mon")
+	assert.Contains(t, msg, "All 1 validators healthy (last 24h)")
+}
+
+func TestFormatChainHealthPage_GoodTierValidatorWithMissedBlocksIsListed(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	// 19 participated=true + 1 participated=false -> sign_rate=95% ->
+	// Score ~95/Excellent, but MissedBlocks=1>0, so it must still appear
+	// (the core behavior change of this plan: not just Watch/Critical).
+	for i := 0; i < 19; i++ {
+		db.Create(&database.DailyParticipation{
+			ChainID: "test12", Addr: "g1almostperfect", Moniker: "almostperfect-mon",
+			BlockHeight: int64(i + 1), Date: time.Now().UTC(), Participated: true,
+		})
+	}
+	db.Create(&database.DailyParticipation{
+		ChainID: "test12", Addr: "g1almostperfect", Moniker: "almostperfect-mon",
+		BlockHeight: 20, Date: time.Now().UTC(), Participated: false,
+	})
+	db.Create(&database.AddrMoniker{ChainID: "test12", Addr: "g1almostperfect", Moniker: "almostperfect-mon", VotingPower: 1})
+	withChainHealthFetcher(t, func(chainID string) ChainHealthSnapshot { return ChainHealthSnapshot{} })
+
+	msg, _, _, err := formatChainHealthPage(db, "test12", 1, 10, "")
+	require.NoError(t, err)
+	assert.Contains(t, msg, "almostperfect-mon")
+	assert.Contains(t, msg, "Missed: 1")
+	assert.Contains(t, msg, "🟡")
+}
+
+func TestTierEmoji_AllFourTiers(t *testing.T) {
+	assert.Equal(t, "🔴", tierEmoji(score.TierCritical))
+	assert.Equal(t, "🟠", tierEmoji(score.TierWatch))
+	assert.Equal(t, "🟡", tierEmoji(score.TierGood))
+	assert.Equal(t, "🟢", tierEmoji(score.TierExcellent))
 }
