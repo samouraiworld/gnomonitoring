@@ -40,10 +40,14 @@ type DailyReportData struct {
 	Date          string
 	ChainSummary  string
 	// BlockRangeStart/BlockRangeEnd are the first/last block heights covered
-	// by this report's participation data (yesterday's UTC calendar day, per
-	// CalculateRate) — the window the Score/Missed figures below are computed
-	// over. Distinct from ChainSummary's "Block #N" line, which reports the
-	// chain's live tip at snapshot-fetch time, not the reported period.
+	// by yesterday's UTC calendar day, per CalculateRate — used only to bound
+	// ValsetChanges and as a "Report window" display line. This is NOT the
+	// window Problems' Score/Missed/VP figures are computed over: those come
+	// from BuildChainValidatorReport's "last_24h" (a rolling window from
+	// report-build time), independent of this calendar-day range — hence the
+	// explicit "(last 24h)" qualifier every renderer attaches to the
+	// Problems/AllHealthy line below. Distinct from ChainSummary's "Block #N"
+	// line too, which reports the chain's live tip at snapshot-fetch time.
 	BlockRangeStart int64
 	BlockRangeEnd   int64
 	ValsetChanges   []ValsetChange
@@ -167,10 +171,10 @@ func RenderDailyReportPlainText(d DailyReportData) string {
 		sb.WriteString(w + "\n")
 	}
 	if d.AllHealthy {
-		sb.WriteString(fmt.Sprintf("✅ All %d validators healthy\n", d.TotalCount))
+		sb.WriteString(fmt.Sprintf("✅ All %d validators healthy (last 24h)\n", d.TotalCount))
 	} else {
 		shown, truncatedCount := truncateProblems(d.Problems, maxProblemsPlainText)
-		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention:\n", len(d.Problems), d.TotalCount))
+		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention (last 24h):\n", len(d.Problems), d.TotalCount))
 		for _, p := range shown {
 			sb.WriteString(fmt.Sprintf("  %s (%s) — Tier: %s | Score: %d | Missed: %d\n",
 				p.DisplayName(), p.Addr, p.Tier, p.Score, p.MissedBlocks))
@@ -224,10 +228,14 @@ func RenderDailyReportDiscordEmbed(d DailyReportData) internal.DiscordEmbed {
 	if d.AllHealthy {
 		fields = append(fields, internal.DiscordEmbedField{
 			Name:  "Status",
-			Value: fmt.Sprintf("✅ All %d validators healthy", d.TotalCount),
+			Value: fmt.Sprintf("✅ All %d validators healthy (last 24h)", d.TotalCount),
 		})
 	} else {
 		shown, truncatedCount := truncateProblems(d.Problems, maxProblemsDiscord)
+		fields = append(fields, internal.DiscordEmbedField{
+			Name:  "Status",
+			Value: fmt.Sprintf("⚠️ %d/%d validators need attention (last 24h)", len(d.Problems), d.TotalCount),
+		})
 		for _, p := range shown {
 			vpPct := ""
 			if pct, ok := p.VotingPowerPercent(); ok {
@@ -293,10 +301,14 @@ func RenderDailyReportSlackBlocks(d DailyReportData) []internal.SlackBlock {
 	if d.AllHealthy {
 		blocks = append(blocks, internal.SlackBlock{
 			Type: "section",
-			Text: &internal.SlackText{Type: "mrkdwn", Text: fmt.Sprintf("✅ All %d validators healthy", d.TotalCount)},
+			Text: &internal.SlackText{Type: "mrkdwn", Text: fmt.Sprintf("✅ All %d validators healthy (last 24h)", d.TotalCount)},
 		})
 	} else {
 		shown, truncatedCount := truncateProblems(d.Problems, maxProblemsSlack)
+		blocks = append(blocks, internal.SlackBlock{
+			Type: "section",
+			Text: &internal.SlackText{Type: "mrkdwn", Text: fmt.Sprintf("⚠️ %d/%d validators need attention (last 24h)", len(d.Problems), d.TotalCount)},
+		})
 		for _, p := range shown {
 			blocks = append(blocks, internal.SlackBlock{
 				Type: "section",
@@ -336,10 +348,10 @@ func RenderDailyReportTelegramHTML(d DailyReportData) (text, buttonText, buttonU
 		sb.WriteString(html.EscapeString(w) + "\n")
 	}
 	if d.AllHealthy {
-		sb.WriteString(fmt.Sprintf("✅ All %d validators healthy\n", d.TotalCount))
+		sb.WriteString(fmt.Sprintf("✅ All %d validators healthy (last 24h)\n", d.TotalCount))
 	} else {
 		shown, truncatedCount := truncateProblems(d.Problems, maxProblemsTelegram)
-		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention:\n", len(d.Problems), d.TotalCount))
+		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention (last 24h):\n", len(d.Problems), d.TotalCount))
 		for _, p := range shown {
 			sb.WriteString(fmt.Sprintf("  <b>%s</b> (<code>%s</code>) — Tier: %s | Score: %d | Missed: %d\n",
 				html.EscapeString(p.DisplayName()), html.EscapeString(p.Addr), p.Tier, p.Score, p.MissedBlocks))
