@@ -219,15 +219,12 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 
 		"/status": func(chatID int64, args string) {
 			chainID := getActiveChain(chatID, defaultChainID)
-			if ChainHealthFetcher == nil {
-				_ = SendMessageTelegram(token, chatID, "⚠️ Chain health data is not available yet.")
-				return
-			}
-			snap := ChainHealthFetcher(chainID)
-			msg := formatChainHealthMessage(chainID, snap)
-			if err := SendMessageTelegramChunked(token, chatID, msg); err != nil {
-				log.Printf("[telegram] send /status failed: %v", err)
-			}
+			params := parseParams(args)
+			limit := parseIntWithDefault(params["limit"], limitDefault, "limit")
+			page := parseIntWithDefault(params["page"], 1, "page")
+			filter := params["filter"]
+
+			sendPaginatedMessage(token, chatID, db, chainID, "health", "", filter, page, limit, sortDefault)
 		},
 
 		"/rate": func(chatID int64, args string) {
@@ -1919,12 +1916,13 @@ func handleCmdMenuCallback(
 		case "status":
 			// status is read-only and instant — execute directly, no confirm step needed.
 			deleteCmdState(chatID)
-			if ChainHealthFetcher == nil {
-				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "⚠️ Chain health data is not available yet.", nil)
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, limitDefault, sortDefault)
+			if err != nil {
+				log.Printf("[cmd] status chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				_ = EditMessageTelegramWithMarkup(token, chatID, messageID, "❌ An error occurred. Please try again.", nil)
 				return
 			}
-			snap := ChainHealthFetcher(state.ChainID)
-			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, formatChainHealthMessage(state.ChainID, snap), nil)
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, msg, markup)
 		case "uptime", "rate", "missing", "operation_time", "tx_contrib":
 			// Period-aware commands: show period picker before confirm.
 			state.Action = action
@@ -2144,11 +2142,12 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 		}
 		switch state.Action {
 		case "status":
-			if ChainHealthFetcher == nil {
-				return "⚠️ Chain health data is not available yet.", nil
+			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "health", "", "", 1, limitDefault, sortDefault)
+			if err != nil {
+				log.Printf("[cmd] status chat=%d chain=%s: %v", chatID, state.ChainID, err)
+				return "❌ An error occurred. Please try again.", nil
 			}
-			snap := ChainHealthFetcher(state.ChainID)
-			return formatChainHealthMessage(state.ChainID, snap), nil
+			return msg, markup
 		case "uptime":
 			msg, markup, err := buildPaginatedResponse(db, state.ChainID, "uptime", "", "", 1, limitDefault, sortDefault)
 			if err != nil {
@@ -2443,196 +2442,6 @@ func formatChainHealthPage(db *gorm.DB, chainID string, page, limit int, filter 
 
 	b.WriteString(formatChainHealthFooter(snap))
 	return b.String(), pageOut, totalPages, nil
-}
-
-// formatChainHealthMessage formats a ChainHealthSnapshot as an HTML Telegram message.
-func formatChainHealthMessage(chainID string, snap ChainHealthSnapshot) string {
-	if snap.IsDisabled {
-		if ChainDisabledFormatter != nil {
-			return ChainDisabledFormatter(chainID, snap)
-		}
-		return fmt.Sprintf("⚫ <b>[%s] Chain status — MONITORING OFF</b>", html.EscapeString(chainID))
-	}
-	if snap.IsStuck {
-		if ChainStuckFormatter != nil {
-			return ChainStuckFormatter(chainID, snap)
-		}
-	}
-
-	var b strings.Builder
-
-	// Determine chain health indicator based on consensus round.
-	roundLabel := consensusRoundLabel(snap.ConsensusRound)
-	headerEmoji := chainHealthEmoji(snap.ConsensusRound, snap.RPCReachable)
-
-	b.WriteString(fmt.Sprintf("%s <b>[%s] Chain status</b>", headerEmoji, html.EscapeString(chainID)))
-
-	if !snap.RPCReachable {
-		b.WriteString("\n⚠️ RPC unreachable — showing last known DB data only\n")
-	} else {
-		age := formatDuration(time.Since(snap.LatestBlockTime))
-		b.WriteString(fmt.Sprintf(" — block <code>#%d</code> (%s ago)\n", snap.LatestBlockHeight, age))
-		b.WriteString(fmt.Sprintf("Consensus: round %d — %s\n", snap.ConsensusRound, roundLabel))
-	}
-
-	// Network line.
-	if snap.PeerCount > 0 || snap.MempoolTxCount > 0 {
-		b.WriteString(fmt.Sprintf("Network: %d peers | Mempool: %d pending txs\n", snap.PeerCount, snap.MempoolTxCount))
-	}
-
-	// Validator set section — participation rates from snap.ValidatorRates (recent 100-block data).
-	if len(snap.ValidatorRates) > 0 {
-		// Build power lookup from ValidatorSet.
-		type valMeta struct {
-			VotingPower int64
-			KeepRunning bool
-			hasMeta     bool
-		}
-		valMetaMap := make(map[string]valMeta, len(snap.ValidatorSet))
-		var totalPower int64
-		for _, vi := range snap.ValidatorSet {
-			valMetaMap[vi.Address] = valMeta{
-				VotingPower: vi.VotingPower,
-				KeepRunning: vi.KeepRunning,
-				hasMeta:     true,
-			}
-			totalPower += vi.VotingPower
-		}
-
-		type rateEntry struct {
-			addr    string
-			rate    float64
-			moniker string
-			meta    valMeta
-		}
-		entries := make([]rateEntry, 0, len(snap.ValidatorRates))
-		for addr, vr := range snap.ValidatorRates {
-			moniker := vr.Moniker
-			if moniker == "" {
-				moniker = addr
-				if len(moniker) > 10 {
-					moniker = moniker[:10] + "..."
-				}
-			}
-			entries = append(entries, rateEntry{
-				addr:    addr,
-				rate:    vr.Rate,
-				moniker: moniker,
-				meta:    valMetaMap[addr],
-			})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].rate != entries[j].rate {
-				return entries[i].rate < entries[j].rate
-			}
-			return entries[i].addr < entries[j].addr
-		})
-
-		headerPower := ""
-		if totalPower > 0 {
-			headerPower = fmt.Sprintf(" — total power: %d", totalPower)
-		}
-		b.WriteString(fmt.Sprintf("Validator set (%d active%s):\n", len(entries), headerPower))
-
-		allPerfect := true
-		for _, e := range entries {
-			if e.rate < 100.0 {
-				allPerfect = false
-				break
-			}
-		}
-		if allPerfect {
-			b.WriteString(fmt.Sprintf("  All %d validators at 100%% uptime\n", len(entries)))
-		} else {
-			top := entries
-			var rest []rateEntry
-			if len(entries) > 5 {
-				top = entries[:5]
-				rest = entries[5:]
-			}
-			b.WriteString("  Top 5 worst performers (last 24h):\n")
-			for _, e := range top {
-				uptimeEmoji := telegramUptimeEmoji(e.rate)
-				addrShort := e.addr
-				if len(addrShort) > 10 {
-					addrShort = addrShort[:10] + "..."
-				}
-				var line string
-				if totalPower > 0 && e.meta.hasMeta {
-					powerPct := float64(e.meta.VotingPower) / float64(totalPower) * 100
-					line = fmt.Sprintf("  %s <b>%s</b> (<code>%s</code>) %.1f%% uptime | %.1f%% power",
-						uptimeEmoji,
-						html.EscapeString(e.moniker),
-						html.EscapeString(addrShort),
-						e.rate, powerPct)
-				} else {
-					line = fmt.Sprintf("  %s <b>%s</b> (<code>%s</code>) %.1f%% uptime",
-						uptimeEmoji,
-						html.EscapeString(e.moniker),
-						html.EscapeString(addrShort),
-						e.rate)
-				}
-				if e.meta.hasMeta && !e.meta.KeepRunning {
-					line += " ⚠️ intends to leave"
-				}
-				b.WriteString(line + "\n")
-			}
-			if len(rest) > 0 {
-				allRestPerfect := true
-				bestRest := 0.0
-				for _, e := range rest {
-					if e.rate < 100.0 {
-						allRestPerfect = false
-					}
-					if e.rate > bestRest {
-						bestRest = e.rate
-					}
-				}
-				if allRestPerfect {
-					b.WriteString(fmt.Sprintf("  (%d others at 100%%)\n", len(rest)))
-				} else {
-					b.WriteString(fmt.Sprintf("  (%d others, best: %.1f%%)\n", len(rest), bestRest))
-				}
-			}
-		}
-	}
-
-	// Valset changes section — only show changes within the last 24h window.
-	var recentChanges []ValsetChange
-	for _, vc := range snap.ValsetChanges {
-		if vc.BlockNum >= snap.MinBlock {
-			recentChanges = append(recentChanges, vc)
-		}
-	}
-	if len(recentChanges) > 0 {
-		b.WriteString(fmt.Sprintf("Valset changes (last 24h, %d):\n", len(recentChanges)))
-		for _, vc := range recentChanges {
-			addrEsc := html.EscapeString(vc.Address)
-			if vc.NewPower == 0 {
-				b.WriteString(fmt.Sprintf("  Block #%d — <code>%s</code> removed\n", vc.BlockNum, addrEsc))
-			} else {
-				b.WriteString(fmt.Sprintf("  Block #%d — <code>%s</code> added (power: %d)\n", vc.BlockNum, addrEsc, vc.NewPower))
-			}
-		}
-	}
-
-	if MissedBlocksFormatter != nil {
-		b.WriteString(MissedBlocksFormatter(snap.MissedLast24h))
-	}
-
-	return b.String()
-}
-
-// telegramUptimeEmoji returns the uptime status emoji for Telegram HTML messages.
-func telegramUptimeEmoji(rate float64) string {
-	switch {
-	case rate >= 95.0:
-		return "🟢"
-	case rate >= 80.0:
-		return "🟡"
-	default:
-		return "🔴"
-	}
 }
 
 // consensusRoundLabel returns a human-readable label for a consensus round number.
