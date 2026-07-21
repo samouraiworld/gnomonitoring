@@ -46,22 +46,22 @@ if [[ -n "${PGPASSWORD:-}" ]]; then
 fi
 DOCKER_EXEC+=("$PGCONTAINER")
 
-# Tables scoped by chain_id (see CLAUDE.md "Multi-chain Patterns"). The two
-# webhooks_* tables also have a *nullable* chain_id (NULL = "all chains");
-# NULL rows are intentionally excluded here since they aren't specific to
-# CHAIN_ID and are unaffected by its shutdown.
-TABLES=(
-    daily_participations
-    daily_participation_agregas
-    alert_logs
-    addr_monikers
-    govdaos
-    telegrams
-    telegram_hour_reports
-    telegram_validator_subs
-    webhooks_validators
-    webhooks_gov_d_a_os
-)
+# Tables scoped by chain_id are discovered dynamically instead of hardcoded:
+# GORM's default naming with acronyms (GovDAO) is inconsistent across this
+# codebase (e.g. db_init.go alters "govdao" while migrate-sqlite-to-postgres
+# copies "webhook_validators" - the actual names only information_schema
+# knows for sure). Webhook tables also have a *nullable* chain_id (NULL =
+# "all chains"); NULL rows are intentionally excluded since they aren't
+# specific to CHAIN_ID and are unaffected by its shutdown.
+echo "==> Discovering chain-scoped tables"
+mapfile -t TABLES < <("${DOCKER_EXEC[@]}" psql -U "$PGUSER" -d "$PGDATABASE" -tAc \
+    "SELECT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'chain_id' ORDER BY table_name")
+
+if [[ ${#TABLES[@]} -eq 0 ]]; then
+    echo "No table with a chain_id column found - aborting" >&2
+    exit 1
+fi
+echo "  found: ${TABLES[*]}"
 
 TS="$(date +'%Y%m%d-%H%M%S')"
 OUT_DIR="$BACKUP_DIR/${CHAIN_ID}_${TS}"
