@@ -590,10 +590,24 @@ func PopulateFirstActiveBlocks(db *gorm.DB) error {
 			-- and, once scanned back into Go's int64 first_active_block field,
 			-- reads as 0 — which RecordActivationOrSkip treats as "always
 			-- active", the opposite of -1's "unknown, skip" meaning.
-			(SELECT MIN(block_height)
-			 FROM daily_participations
-			 WHERE addr = addr_monikers.addr
-			   AND chain_id = addr_monikers.chain_id),
+			--
+			-- daily_participation_agregas.first_block_height is set for every
+			-- aggregated day regardless of participated_count (see
+			-- aggregateDayQuery), so it still has evidence for a validator
+			-- whose entire raw daily_participations history has already aged
+			-- past RawRetentionDays and been pruned — the agregas row survives
+			-- that prune. MIN() across both tables (not just daily_participations
+			-- alone) is needed to cover a validator with some days already
+			-- aggregated/pruned and some still raw.
+			(SELECT MIN(h) FROM (
+				SELECT MIN(first_block_height) AS h
+				FROM daily_participation_agregas
+				WHERE addr = addr_monikers.addr AND chain_id = addr_monikers.chain_id
+				UNION ALL
+				SELECT MIN(block_height) AS h
+				FROM daily_participations
+				WHERE addr = addr_monikers.addr AND chain_id = addr_monikers.chain_id
+			) any_observed),
 			-1
 		)
 		WHERE first_active_block = -1 OR first_active_block IS NULL

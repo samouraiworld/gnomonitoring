@@ -110,6 +110,68 @@ func TestUpsertAddrMonikerVPBatch_SetsFirstActiveBlockOnlyOnFirstInsert(t *testi
 	}
 }
 
+func TestUpsertAddrMonikerVPBatch_HealsPreExistingStuckRow(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	// "a" already has a row from before join-height tracking existed (or from
+	// any other insert path), stuck at -1 with zero participation history —
+	// PopulateFirstActiveBlocks alone can never recover this since there is
+	// no daily_participations/agregas evidence to fall back to either.
+	if err := database.UpsertAddrMoniker(db, "test13", "a", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
+		{Addr: "a", VotingPower: 100},
+	}, 7000); err != nil {
+		t.Fatal(err)
+	}
+	var fab int64
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != 7000 {
+		t.Fatalf("first_active_block = %d, want 7000 (a stuck -1 row must be healed by the ON CONFLICT branch too)", fab)
+	}
+
+	// A later poll must NOT move it again now that it holds a real value.
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
+		{Addr: "a", VotingPower: 100},
+	}, 9000); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != 7000 {
+		t.Fatalf("first_active_block changed to %d after healing, want it to stay 7000", fab)
+	}
+}
+
+func TestUpsertAddrMonikerVPBatch_HealsPreExistingNullRow(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	if err := db.Exec(`INSERT INTO addr_monikers (chain_id, addr, moniker, first_active_block) VALUES (?, ?, '', NULL)`,
+		"test13", "a").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
+		{Addr: "a", VotingPower: 100},
+	}, 8000); err != nil {
+		t.Fatal(err)
+	}
+	var fab int64
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != 8000 {
+		t.Fatalf("first_active_block = %d, want 8000 (a stuck NULL row must be healed too)", fab)
+	}
+}
+
 func TestUpsertAddrMonikerVPBatch_UnknownJoinHeightFallsBackToSentinel(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{

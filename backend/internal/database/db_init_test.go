@@ -122,6 +122,29 @@ func TestPopulateFirstActiveBlocks_NeverSignedFallsBackToEarliestObservedHeight(
 	require.Equal(t, int64(100), fab.Int64, "must fall back to the earliest height on record, not NULL")
 }
 
+func TestPopulateFirstActiveBlocks_NeverSignedFallsBackToAgregaWhenRawRowsPruned(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test-populate-fab-pruned"
+
+	// g1prunedhistory never truly signed, and its raw daily_participations
+	// rows have already been pruned by PruneRawData after RawRetentionDays —
+	// only the daily_participation_agregas summary survives, with
+	// participated_count=0 (so the participated_count > 0 branch above finds
+	// nothing) but first_block_height still set (aggregateDayQuery sets it
+	// unconditionally, from MIN(block_height) regardless of participation).
+	seedAgrega(t, db, chain, "g1prunedhistory", "2026-01-01", 0, 300, 400)
+	require.NoError(t, db.Exec(`INSERT INTO addr_monikers (chain_id, addr, moniker, first_active_block) VALUES (?, ?, '', -1)`,
+		chain, "g1prunedhistory").Error)
+
+	require.NoError(t, database.PopulateFirstActiveBlocks(db))
+
+	var fab sql.NullInt64
+	require.NoError(t, db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		chain, "g1prunedhistory").Scan(&fab).Error)
+	require.True(t, fab.Valid, "first_active_block must never be left NULL")
+	require.Equal(t, int64(300), fab.Int64, "must recover the join height from agregas.first_block_height once raw rows are pruned")
+}
+
 func TestPopulateFirstActiveBlocks_NoRecordAtAllFallsBackToSentinel(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	chain := "test-populate-fab-no-record"

@@ -402,17 +402,27 @@ type AddrVP struct {
 // per-row semantics as UpsertAddrMonikerVP. Scoped to chain_id.
 //
 // joinHeight is the block height of the /validators snapshot rows came from.
-// It is written to first_active_block only on a fresh INSERT (the ON
-// CONFLICT branch never touches it), so it records "the block at which we
-// first observed this address in the valset" exactly once, the first time
-// we ever see it — for an address that later turns out to never sign a
-// single block, this is what lets RecordActivationOrSkip count its missed
-// blocks from the real join point instead of skipping them forever as
-// "activation still unknown". A validator that does go on to sign keeps
-// this as an upper bound: UpsertFirstActiveBlock still lowers it if a true
-// participation is found at an earlier height (e.g. the join snapshot
-// slightly lagged the validator's actual first signature). Pass -1 if the
-// snapshot height is unknown, to fall back to the addr_monikers default.
+// It is written to first_active_block on a fresh INSERT, recording "the
+// block at which we first observed this address in the valset" — for an
+// address that later turns out to never sign a single block, this is what
+// lets RecordActivationOrSkip count its missed blocks from the real join
+// point instead of skipping them forever as "activation still unknown". A
+// validator that does go on to sign keeps this as an upper bound:
+// UpsertFirstActiveBlock still lowers it if a true participation is found
+// at an earlier height (e.g. the join snapshot slightly lagged the
+// validator's actual first signature). Pass -1 if the snapshot height is
+// unknown, to fall back to the addr_monikers default.
+//
+// The ON CONFLICT branch also heals a row still stuck at -1/NULL — e.g. one
+// created before this join-height tracking existed, by any other insert
+// path, or one this same guard left unset because the snapshot's own
+// joinHeight was unknown — by applying the current joinHeight to it too. A
+// row that already has a real value never gets overwritten. Without this,
+// an address whose row already existed pre-fix, and that has never once
+// signed (so RecordActivationOrSkip has never written a participation row
+// for it either, leaving PopulateFirstActiveBlocks nothing to recover from),
+// would stay stuck at -1 forever — never healed by a fresh INSERT because
+// there is none.
 func UpsertAddrMonikerVPBatch(db *gorm.DB, chainID string, rows []AddrVP, joinHeight int64) error {
 	if len(rows) == 0 {
 		return nil
@@ -435,7 +445,13 @@ func UpsertAddrMonikerVPBatch(db *gorm.DB, chainID string, rows []AddrVP, joinHe
 			q += "(?, ?, '', ?, ?)"
 			args = append(args, chainID, r.Addr, r.VotingPower, joinHeight)
 		}
-		q += ` ON CONFLICT(chain_id, addr) DO UPDATE SET voting_power = excluded.voting_power`
+		q += ` ON CONFLICT(chain_id, addr) DO UPDATE SET
+			voting_power = excluded.voting_power,
+			first_active_block = CASE
+				WHEN addr_monikers.first_active_block = -1 OR addr_monikers.first_active_block IS NULL
+				THEN excluded.first_active_block
+				ELSE addr_monikers.first_active_block
+			END`
 		if err := db.Exec(q, args...).Error; err != nil {
 			return fmt.Errorf("UpsertAddrMonikerVPBatch(%s): %w", chainID, err)
 		}
