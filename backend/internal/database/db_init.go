@@ -548,13 +548,16 @@ func SeedAdminConfig(db *gorm.DB) error {
 	return nil
 }
 
-// PopulateFirstActiveBlocks sets first_active_block for validators where it is still -1.
+// PopulateFirstActiveBlocks sets first_active_block for validators where it is still
+// -1 or NULL (NULL is a legacy artifact of a past version of this function's COALESCE
+// falling through with no fallback; kept in the WHERE clause so any pre-existing NULL
+// rows self-heal on the next startup instead of staying stuck forever).
 // Queries daily_participation_agregas first (historical data), then daily_participations
 // as a fallback for recent validators within the 7-day retention window.
-// Idempotent: only updates rows where first_active_block = -1.
+// Idempotent: only updates rows where first_active_block is -1 or NULL.
 func PopulateFirstActiveBlocks(db *gorm.DB) error {
 	var pending int64
-	if err := db.Model(&AddrMoniker{}).Where("first_active_block = -1").Count(&pending).Error; err != nil {
+	if err := db.Model(&AddrMoniker{}).Where("first_active_block = -1 OR first_active_block IS NULL").Count(&pending).Error; err != nil {
 		return fmt.Errorf("PopulateFirstActiveBlocks: count: %w", err)
 	}
 	if pending == 0 {
@@ -576,9 +579,24 @@ func PopulateFirstActiveBlocks(db *gorm.DB) error {
 			 FROM daily_participations
 			 WHERE addr = addr_monikers.addr
 			   AND chain_id = addr_monikers.chain_id
-			   AND participated = true)
+			   AND participated = true),
+			-- Neither table has a true-participation row for this validator
+			-- (it may never have signed a single block). Fall back to the
+			-- earliest height we have ANY record of it at, as the best proxy
+			-- for "block it joined the valset". Without this fallback the
+			-- COALESCE chain evaluates to NULL, which silently defeats every
+			-- other query keyed on the -1/>0 sentinel (CleanupSpuriousParticipations,
+			-- UpsertFirstActiveBlock, this WHERE clause itself on the next run)
+			-- and, once scanned back into Go's int64 first_active_block field,
+			-- reads as 0 — which RecordActivationOrSkip treats as "always
+			-- active", the opposite of -1's "unknown, skip" meaning.
+			(SELECT MIN(block_height)
+			 FROM daily_participations
+			 WHERE addr = addr_monikers.addr
+			   AND chain_id = addr_monikers.chain_id),
+			-1
 		)
-		WHERE first_active_block = -1
+		WHERE first_active_block = -1 OR first_active_block IS NULL
 	`)
 	if result.Error != nil {
 		return result.Error

@@ -10,6 +10,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestHasPriorAlert(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test-has-prior-alert"
+
+	has, err := database.HasPriorAlert(db, chain, "g1neveralerted")
+	require.NoError(t, err)
+	require.False(t, has, "an address with no alert_logs rows at all must report false")
+
+	require.NoError(t, database.InsertAlertlog(db, chain, "g1resolvedonly", "mon", "RESOLVED", 1, 10, false, time.Now(), ""))
+	has, err = database.HasPriorAlert(db, chain, "g1resolvedonly")
+	require.NoError(t, err)
+	require.False(t, has, "a RESOLVED-only history is not a prior WARNING/CRITICAL incident")
+
+	require.NoError(t, database.InsertAlertlog(db, chain, "g1critical", "mon", "CRITICAL", 1, 40, true, time.Now(), ""))
+	has, err = database.HasPriorAlert(db, chain, "g1critical")
+	require.NoError(t, err)
+	require.True(t, has, "a dispatched CRITICAL must count as a prior alert")
+
+	// Chain-scoped: the same addr on a different chain must not leak.
+	has, err = database.HasPriorAlert(db, "other-chain", "g1critical")
+	require.NoError(t, err)
+	require.False(t, has, "HasPriorAlert must be scoped to chain_id")
+}
+
 // TestGetAlertLog_CrossChainIsolation verifies that alert logs are properly isolated by chain_id
 func TestGetAlertLog_CrossChainIsolation(t *testing.T) {
 	db := testoutils.NewTestDB(t)

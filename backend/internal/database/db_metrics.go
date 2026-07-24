@@ -26,6 +26,21 @@ func InsertAlertlog(db *gorm.DB, chainID, addr, moniker, level string, startheig
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&alert).Error
 }
 
+// HasPriorAlert reports whether a WARNING or CRITICAL alert has ever been
+// dispatched for (chainID, addr). Used to distinguish a validator's very
+// first incident, which must always be reported, from a repeat incident,
+// which is subject to the dead-validator silence window (see
+// WatchValidatorAlerts) — otherwise a validator that never once signs since
+// joining the valset would never generate a single alert.
+func HasPriorAlert(db *gorm.DB, chainID, addr string) (bool, error) {
+	var count int64
+	err := db.Raw(`
+		SELECT COUNT(*) FROM alert_logs
+		WHERE chain_id = ? AND addr = ? AND level IN ('WARNING', 'CRITICAL')
+	`, chainID, addr).Scan(&count).Error
+	return count > 0, err
+}
+
 func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 	var alerts []AlertSummary
 

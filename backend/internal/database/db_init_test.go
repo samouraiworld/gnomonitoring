@@ -101,6 +101,65 @@ func seedAgrega(t *testing.T, db *gorm.DB, chain, addr, blockDate string, partic
 	require.NoError(t, db.Create(&row).Error)
 }
 
+func TestPopulateFirstActiveBlocks_NeverSignedFallsBackToEarliestObservedHeight(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test-populate-fab-never-signed"
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// g1neversigned is a real valset member (has daily_participations rows,
+	// tracked since height 100) but has never once truly participated.
+	seedDP(t, db, chain, "g1neversigned", 100, false, day)
+	seedDP(t, db, chain, "g1neversigned", 101, false, day)
+	require.NoError(t, db.Exec(`INSERT INTO addr_monikers (chain_id, addr, moniker, first_active_block) VALUES (?, ?, '', -1)`,
+		chain, "g1neversigned").Error)
+
+	require.NoError(t, database.PopulateFirstActiveBlocks(db))
+
+	var fab sql.NullInt64
+	require.NoError(t, db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		chain, "g1neversigned").Scan(&fab).Error)
+	require.True(t, fab.Valid, "first_active_block must never be left NULL")
+	require.Equal(t, int64(100), fab.Int64, "must fall back to the earliest height on record, not NULL")
+}
+
+func TestPopulateFirstActiveBlocks_NoRecordAtAllFallsBackToSentinel(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test-populate-fab-no-record"
+
+	// g1unknown has an addr_monikers row but zero daily_participations rows
+	// anywhere (e.g. a moniker persisted before any block was ever processed).
+	require.NoError(t, db.Exec(`INSERT INTO addr_monikers (chain_id, addr, moniker, first_active_block) VALUES (?, ?, '', -1)`,
+		chain, "g1unknown").Error)
+
+	require.NoError(t, database.PopulateFirstActiveBlocks(db))
+
+	var fab sql.NullInt64
+	require.NoError(t, db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		chain, "g1unknown").Scan(&fab).Error)
+	require.True(t, fab.Valid, "first_active_block must never be left NULL")
+	require.Equal(t, int64(-1), fab.Int64, "must fall back to -1 when there is no record at all")
+}
+
+func TestPopulateFirstActiveBlocks_SelfHealsExistingNullRows(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	chain := "test-populate-fab-self-heal"
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Simulate the stuck state a past version of this function's COALESCE
+	// could leave behind: first_active_block already NULL, not -1.
+	seedDP(t, db, chain, "g1healme", 200, true, day)
+	require.NoError(t, db.Exec(`INSERT INTO addr_monikers (chain_id, addr, moniker, first_active_block) VALUES (?, ?, '', NULL)`,
+		chain, "g1healme").Error)
+
+	require.NoError(t, database.PopulateFirstActiveBlocks(db))
+
+	var fab sql.NullInt64
+	require.NoError(t, db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		chain, "g1healme").Scan(&fab).Error)
+	require.True(t, fab.Valid)
+	require.Equal(t, int64(200), fab.Int64, "a pre-existing NULL row must be picked up and repaired, not skipped")
+}
+
 func TestCleanupTrailingGhostParticipations(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	chain := "test-trailing-ghost"
