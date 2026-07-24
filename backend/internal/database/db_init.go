@@ -524,18 +524,20 @@ func InitDB(dsn string) (*gorm.DB, error) {
 // Idempotent: uses FirstOrCreate so existing values are never overwritten.
 func SeedAdminConfig(db *gorm.DB) error {
 	defaults := map[string]string{
-		"warning_threshold":                "5",
-		"critical_threshold":               "30",
-		"alert_critical_resend_hours":      "24",
-		"alert_warning_resend_hours":       "6",
-		"dead_validator_silence_days":      "7",
-		"stagnation_first_alert_seconds":   "20",
-		"stagnation_repeat_minutes":        "30",
-		"rpc_error_cooldown_minutes":       "10",
-		"new_validator_scan_minutes":       "5",
-		"alert_check_interval_seconds":     "30",
-		"raw_retention_days":               "7",
-		"aggregator_period_minutes":        "60",
+		"warning_threshold":                   "5",
+		"critical_threshold":                  "30",
+		"alert_critical_resend_hours":         "24",
+		"alert_warning_resend_hours":          "6",
+		"dead_validator_silence_days":         "7",
+		"stagnation_first_alert_seconds":      "20",
+		"stagnation_repeat_minutes":           "30",
+		"rpc_error_cooldown_minutes":          "10",
+		"new_validator_scan_minutes":          "5",
+		"alert_check_interval_seconds":        "30",
+		"raw_retention_days":                  "7",
+		"aggregator_period_minutes":           "60",
+		"gap_reconciliation_interval_seconds": "3600",
+		"gap_reconciliation_lookback_days":    "7",
 	}
 	for key, value := range defaults {
 		row := AdminConfig{Key: key, Value: value}
