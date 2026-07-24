@@ -320,33 +320,15 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 			// log.Println("last block ", latest)
 
 			for h := currentHeight; h <= latest; h++ {
-				block, err := client.Block(h)
-				if err != nil || block == nil || block.Block == nil || block.Block.LastCommit == nil {
-					log.Printf("[monitor][%s] error fetching block %d: %v", chainID, h, err)
+				precommitAddrs, proposerAddr, hasTx, timeStp, ok := fetchBlockParticipation(client, h)
+				if !ok {
+					log.Printf("[monitor][%s] giving up on block %d after retries", chainID, h)
 					continue
 				}
 
-				// ================================ Get Participation and date ==================== //
-
-				// Actual block proposer, resolved once. A block always has a
-				// proposer; hasTx gates whether TxContribution is meaningful.
-				proposerAddr := block.Block.Header.ProposerAddress.String()
-				hasTx := len(block.Block.Data.Txs) > 0
-
-				// === Get Timestamp ==
-
-				timeStp := block.Block.Header.Time
-
-				precommitAddrs := make([]string, 0, len(block.Block.LastCommit.Precommits))
-				for _, precommit := range block.Block.LastCommit.Precommits {
-					if precommit != nil {
-						precommitAddrs = append(precommitAddrs, precommit.ValidatorAddress.String())
-					}
-				}
 				participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, timeStp)
 
-				err = SaveParticipation(db, chainID, h, participating, GetMonikerMap(chainID), timeStp)
-				if err != nil {
+				if err := SaveParticipation(db, chainID, h, participating, GetMonikerMap(chainID), timeStp); err != nil {
 					log.Printf("[monitor][%s] failed to save participation at height %d: %v", chainID, h, err)
 				}
 			}
@@ -453,6 +435,50 @@ func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client
 						log.Printf("[monitor][%s] CleanupTrailingGhostParticipations error: %v", chainID, err)
 					}
 				}
+			}
+		}
+	}()
+}
+
+// ReconcileGaps periodically scans for block heights within the last
+// lookbackDays that have no daily_participations row at all — the silent
+// hole left behind when fetchBlockParticipation exhausts its retries — and
+// backfills exactly those heights. It runs once immediately (so a freshly
+// restarted service self-heals recent gaps right away) and then on every
+// tick, for as long as ctx stays alive.
+func ReconcileGaps(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client, interval time.Duration, lookbackDays int) {
+	reconcileOnce := func() {
+		since := time.Now().UTC().AddDate(0, 0, -lookbackDays)
+		missing, err := database.FindMissingHeights(db, chainID, since)
+		if err != nil {
+			log.Printf("[monitor][%s] reconcile: FindMissingHeights error: %v", chainID, err)
+			return
+		}
+		if len(missing) == 0 {
+			return
+		}
+		log.Printf("[monitor][%s] reconcile: found %d missing heights, backfilling", chainID, len(missing))
+		if err := BackfillHeights(db, client, chainID, missing, GetMonikerMap(chainID)); err != nil {
+			log.Printf("[monitor][%s] reconcile: backfill error: %v", chainID, err)
+		}
+	}
+
+	go func() {
+		if ctx.Err() != nil {
+			return
+		}
+		reconcileOnce()
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("[monitor][%s] ReconcileGaps stopped", chainID)
+				return
+			case <-ticker.C:
+				reconcileOnce()
 			}
 		}
 	}()
@@ -734,6 +760,7 @@ func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, 
 	WatchNewValidators(ctx, db, chainID, client, chainCfg, t.NewValidatorScan())
 	CollectParticipation(ctx, db, chainID, client)
 	WatchValidatorAlerts(ctx, db, chainID, t.AlertCheckInterval())
+	ReconcileGaps(ctx, db, chainID, client, t.GapReconciliationInterval(), t.GapReconciliationLookbackDays)
 }
 
 // Moniker helpers

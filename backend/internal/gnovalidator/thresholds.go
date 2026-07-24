@@ -13,36 +13,40 @@ import (
 // Values are loaded from the admin_config DB table and cached in memory.
 // Use GetThresholds() for thread-safe reads; call RefreshThresholds(db) after a write.
 type Thresholds struct {
-	WarningThreshold            int
-	CriticalThreshold           int
-	AlertCriticalResendHours    int
-	AlertWarningResendHours     int
-	DeadValidatorSilenceDays    int
-	StagnationFirstAlertSeconds int
-	StagnationRepeatMinutes     int
-	RPCErrorCooldownMinutes     int
-	NewValidatorScanMinutes     int
-	AlertCheckIntervalSeconds   int
-	RawRetentionDays            int
-	AggregatorPeriodMinutes     int
-	RecentBlocksWindow          int
+	WarningThreshold                 int
+	CriticalThreshold                int
+	AlertCriticalResendHours         int
+	AlertWarningResendHours          int
+	DeadValidatorSilenceDays         int
+	StagnationFirstAlertSeconds      int
+	StagnationRepeatMinutes          int
+	RPCErrorCooldownMinutes          int
+	NewValidatorScanMinutes          int
+	AlertCheckIntervalSeconds        int
+	RawRetentionDays                 int
+	AggregatorPeriodMinutes          int
+	RecentBlocksWindow               int
+	GapReconciliationIntervalSeconds int
+	GapReconciliationLookbackDays    int
 }
 
 var (
 	activeThresholds = Thresholds{
-		WarningThreshold:            5,
-		CriticalThreshold:           30,
-		AlertCriticalResendHours:    24,
-		AlertWarningResendHours:     6,
-		DeadValidatorSilenceDays:    7,
-		StagnationFirstAlertSeconds: 20,
-		StagnationRepeatMinutes:     30,
-		RPCErrorCooldownMinutes:     10,
-		NewValidatorScanMinutes:     5,
-		AlertCheckIntervalSeconds:   20,
-		RawRetentionDays:            7,
-		AggregatorPeriodMinutes:     60,
-		RecentBlocksWindow:          50,
+		WarningThreshold:                 5,
+		CriticalThreshold:                30,
+		AlertCriticalResendHours:         24,
+		AlertWarningResendHours:          6,
+		DeadValidatorSilenceDays:         7,
+		StagnationFirstAlertSeconds:      20,
+		StagnationRepeatMinutes:          30,
+		RPCErrorCooldownMinutes:          10,
+		NewValidatorScanMinutes:          5,
+		AlertCheckIntervalSeconds:        20,
+		RawRetentionDays:                 7,
+		AggregatorPeriodMinutes:          60,
+		RecentBlocksWindow:               50,
+		GapReconciliationIntervalSeconds: 3600,
+		GapReconciliationLookbackDays:    7,
 	}
 	thresholdsMu sync.RWMutex
 )
@@ -53,19 +57,21 @@ func LoadThresholds(db *gorm.DB) {
 	thresholdsMu.Lock()
 	defer thresholdsMu.Unlock()
 	activeThresholds = Thresholds{
-		WarningThreshold:            database.GetAdminConfigInt(db, "warning_threshold", 5),
-		CriticalThreshold:           database.GetAdminConfigInt(db, "critical_threshold", 30),
-		AlertCriticalResendHours:    database.GetAdminConfigInt(db, "alert_critical_resend_hours", 24),
-		AlertWarningResendHours:     database.GetAdminConfigInt(db, "alert_warning_resend_hours", 6),
-		DeadValidatorSilenceDays:    database.GetAdminConfigInt(db, "dead_validator_silence_days", 7),
-		StagnationFirstAlertSeconds: database.GetAdminConfigInt(db, "stagnation_first_alert_seconds", 20),
-		StagnationRepeatMinutes:     database.GetAdminConfigInt(db, "stagnation_repeat_minutes", 30),
-		RPCErrorCooldownMinutes:     database.GetAdminConfigInt(db, "rpc_error_cooldown_minutes", 10),
-		NewValidatorScanMinutes:     database.GetAdminConfigInt(db, "new_validator_scan_minutes", 5),
-		AlertCheckIntervalSeconds:   database.GetAdminConfigInt(db, "alert_check_interval_seconds", 20),
-		RawRetentionDays:            database.GetAdminConfigInt(db, "raw_retention_days", 7),
-		AggregatorPeriodMinutes:     database.GetAdminConfigInt(db, "aggregator_period_minutes", 60),
-		RecentBlocksWindow:          database.GetAdminConfigInt(db, "recent_blocks_window", 50),
+		WarningThreshold:                 database.GetAdminConfigInt(db, "warning_threshold", 5),
+		CriticalThreshold:                database.GetAdminConfigInt(db, "critical_threshold", 30),
+		AlertCriticalResendHours:         database.GetAdminConfigInt(db, "alert_critical_resend_hours", 24),
+		AlertWarningResendHours:          database.GetAdminConfigInt(db, "alert_warning_resend_hours", 6),
+		DeadValidatorSilenceDays:         database.GetAdminConfigInt(db, "dead_validator_silence_days", 7),
+		StagnationFirstAlertSeconds:      database.GetAdminConfigInt(db, "stagnation_first_alert_seconds", 20),
+		StagnationRepeatMinutes:          database.GetAdminConfigInt(db, "stagnation_repeat_minutes", 30),
+		RPCErrorCooldownMinutes:          database.GetAdminConfigInt(db, "rpc_error_cooldown_minutes", 10),
+		NewValidatorScanMinutes:          database.GetAdminConfigInt(db, "new_validator_scan_minutes", 5),
+		AlertCheckIntervalSeconds:        database.GetAdminConfigInt(db, "alert_check_interval_seconds", 20),
+		RawRetentionDays:                 database.GetAdminConfigInt(db, "raw_retention_days", 7),
+		AggregatorPeriodMinutes:          database.GetAdminConfigInt(db, "aggregator_period_minutes", 60),
+		RecentBlocksWindow:               database.GetAdminConfigInt(db, "recent_blocks_window", 50),
+		GapReconciliationIntervalSeconds: database.GetAdminConfigInt(db, "gap_reconciliation_interval_seconds", 3600),
+		GapReconciliationLookbackDays:    database.GetAdminConfigInt(db, "gap_reconciliation_lookback_days", 7),
 	}
 	log.Printf("[thresholds] loaded: warning=%d critical=%d resend_critical=%dh resend_warning=%dh stagnation_first=%ds stagnation_repeat=%dmin",
 		activeThresholds.WarningThreshold,
@@ -113,6 +119,10 @@ func (t Thresholds) NewValidatorScan() time.Duration {
 
 func (t Thresholds) AggregatorPeriod() time.Duration {
 	return time.Duration(t.AggregatorPeriodMinutes) * time.Minute
+}
+
+func (t Thresholds) GapReconciliationInterval() time.Duration {
+	return time.Duration(t.GapReconciliationIntervalSeconds) * time.Second
 }
 
 // ResendHoursForLevel returns the minimum hours between two alerts of the same level

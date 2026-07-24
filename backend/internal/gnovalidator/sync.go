@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -9,6 +10,12 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
+
+// errBlockFetchFailed marks a backfill job whose block could not be fetched
+// even after fetchBlockParticipation's internal retries; it only ever
+// reaches the out channel's Err field, which the writer checks for nil, so
+// the specific error value carries no information beyond "skip this job".
+var errBlockFetchFailed = errors.New("block fetch failed after retries")
 
 type dpRow struct {
 	ChainID        string
@@ -140,21 +147,10 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 
 		// Sequential download
 		for h := start; h <= end; h++ {
-			block, err := client.Block(h)
-			if err != nil || block == nil || block.Block == nil || block.Block.LastCommit == nil {
+			precommitAddrs, proposerAddr, hasTx, timeStp, ok := fetchBlockParticipation(client, h)
+			if !ok {
+				log.Printf("[monitor][%s] backfill: giving up on block %d after retries", chainID, h)
 				continue
-			}
-
-			// Actual block proposer, resolved once.
-			proposerAddr := block.Block.Header.ProposerAddress.String()
-			hasTx := len(block.Block.Data.Txs) > 0
-			timeStp := block.Block.Header.Time
-
-			precommitAddrs := make([]string, 0, len(block.Block.LastCommit.Precommits))
-			for _, precommit := range block.Block.LastCommit.Precommits {
-				if precommit != nil {
-					precommitAddrs = append(precommitAddrs, precommit.ValidatorAddress.String())
-				}
 			}
 			participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, timeStp)
 			for valAddr, moniker := range monikerMap {
@@ -208,6 +204,35 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 // - 5 approx hours with 6 workers for one month
 // - 2 approx  hours with 20 workers for one month
 func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from, to int64, monikerMap map[string]string) error {
+	produce := func(jobs chan<- job) {
+		for h := from; h <= to; h++ {
+			jobs <- job{H: h}
+		}
+	}
+	return runBackfillWorkers(db, client, chainID, monikerMap, "backfill", produce)
+}
+
+// BackfillHeights re-fetches and writes participation for an explicit,
+// possibly non-contiguous, list of block heights. Unlike BackfillParallel
+// (which walks a contiguous from..to range), this is used to repair specific
+// heights a gap-reconciliation scan found missing — real gaps left behind by
+// silently-dropped RPC fetch failures are rarely contiguous.
+func BackfillHeights(db *gorm.DB, client gnoclient.Client, chainID string, heights []int64, monikerMap map[string]string) error {
+	produce := func(jobs chan<- job) {
+		for _, h := range heights {
+			jobs <- job{H: h}
+		}
+	}
+	return runBackfillWorkers(db, client, chainID, monikerMap, "reconcile", produce)
+}
+
+// runBackfillWorkers is the shared worker-pool core behind BackfillParallel
+// and BackfillHeights: 20 workers fetch-and-parse blocks fed by produce,
+// a single writer batches rows into daily_participations, and the touched
+// date range is re-aggregated afterward. logPrefix distinguishes the two
+// callers in logs ("backfill" for a contiguous catch-up, "reconcile" for a
+// targeted gap repair).
+func runBackfillWorkers(db *gorm.DB, client gnoclient.Client, chainID string, monikerMap map[string]string, logPrefix string, produce func(jobs chan<- job)) error {
 	const workers = 20
 	const flushThreshold = 2000
 
@@ -221,20 +246,11 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				b, err := client.Block(j.H)
-				if err != nil || b == nil || b.Block == nil || b.Block.LastCommit == nil {
-					outs <- out{Err: err}
+				precommitAddrs, proposerAddr, hasTx, tStr, ok := fetchBlockParticipation(client, j.H)
+				if !ok {
+					log.Printf("[monitor][%s] %s: giving up on block %d after retries", chainID, logPrefix, j.H)
+					outs <- out{Err: errBlockFetchFailed}
 					continue
-				}
-				proposerAddr := b.Block.Header.ProposerAddress.String()
-				hasTx := len(b.Block.Data.Txs) > 0
-				tStr := b.Block.Header.Time
-
-				precommitAddrs := make([]string, 0, len(b.Block.LastCommit.Precommits))
-				for _, pc := range b.Block.LastCommit.Precommits {
-					if pc != nil {
-						precommitAddrs = append(precommitAddrs, pc.ValidatorAddress.String())
-					}
 				}
 				participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, tStr)
 
@@ -265,9 +281,7 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 
 	// producer
 	go func() {
-		for h := from; h <= to; h++ {
-			jobs <- job{H: h}
-		}
+		produce(jobs)
 		close(jobs)
 	}()
 
@@ -306,8 +320,8 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 	// this backfill touched.
 	if !minDate.IsZero() {
 		if err := ReaggregateDateRange(db, chainID, minDate, maxDate); err != nil {
-			log.Printf("[monitor][%s] backfill: re-aggregate [%s..%s] failed: %v",
-				chainID, minDate.Format("2006-01-02"), maxDate.Format("2006-01-02"), err)
+			log.Printf("[monitor][%s] %s: re-aggregate [%s..%s] failed: %v",
+				chainID, logPrefix, minDate.Format("2006-01-02"), maxDate.Format("2006-01-02"), err)
 		}
 	}
 	return nil
