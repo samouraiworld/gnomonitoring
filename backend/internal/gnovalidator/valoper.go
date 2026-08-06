@@ -336,7 +336,8 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 	}
 	type ValidatorsResponse struct {
 		Result struct {
-			Validators []Validator `json:"validators"`
+			BlockHeight string      `json:"block_height"`
+			Validators  []Validator `json:"validators"`
 		} `json:"result"`
 	}
 	// Step 1 — Retrieve active validators from the RPC endpoint `/validators`
@@ -421,6 +422,17 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 
 	ReplaceMonikerMap(chainID, tempMonikers)
 
+	// joinHeight is the block height this /validators snapshot was taken at,
+	// used as the best available proxy for "the block a brand-new address
+	// joined the valset" (UpsertAddrMonikerVPBatch only applies it on the
+	// very first INSERT for an addr; existing rows keep whatever height they
+	// were first recorded at). -1 ("unknown") if the RPC omitted or returned
+	// an unparseable block_height, matching addr_monikers' sentinel default.
+	joinHeight, err := strconv.ParseInt(validatorsResp.Result.BlockHeight, 10, 64)
+	if err != nil {
+		joinHeight = -1
+	}
+
 	// Persist current voting power for score severity weighting (best-effort),
 	// in a single batched upsert rather than one round-trip per validator.
 	vpRows := make([]database.AddrVP, 0, len(validatorsResp.Result.Validators))
@@ -434,7 +446,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 		}
 		vpRows = append(vpRows, database.AddrVP{Addr: val.Address, VotingPower: vp})
 	}
-	if err := database.UpsertAddrMonikerVPBatch(db, chainID, vpRows); err != nil {
+	if err := database.UpsertAddrMonikerVPBatch(db, chainID, vpRows, joinHeight); err != nil {
 		log.Printf("[valoper][%s] failed to persist voting power batch: %v", chainID, err)
 	}
 

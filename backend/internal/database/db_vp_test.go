@@ -41,7 +41,7 @@ func TestUpsertAddrMonikerVPBatch(t *testing.T) {
 	for i := 1; i < 350; i++ {
 		rows = append(rows, database.AddrVP{Addr: fmt.Sprintf("v%03d", i), VotingPower: int64(i)})
 	}
-	if err := database.UpsertAddrMonikerVPBatch(db, "test13", rows); err != nil {
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", rows, -1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -63,6 +63,158 @@ func TestUpsertAddrMonikerVPBatch(t *testing.T) {
 	}
 }
 
+func TestUpsertAddrMonikerVPBatch_SetsFirstActiveBlockOnlyOnFirstInsert(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	// "a" is brand new: first_active_block must be set to the join-height
+	// snapshot (5929), the best available proxy for "block it joined the
+	// valset" — this is what lets a validator that never signs a single
+	// block still accumulate real missed-block history instead of being
+	// skipped forever as "activation unknown".
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
+		{Addr: "a", VotingPower: 100},
+	}, 5929); err != nil {
+		t.Fatal(err)
+	}
+	var fab int64
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != 5929 {
+		t.Fatalf("first_active_block = %d, want 5929 (the join-height snapshot)", fab)
+	}
+
+	// A later poll re-upserts VP for the same, already-known "a" at a much
+	// later height. first_active_block must NOT be overwritten — it records
+	// the FIRST time we ever saw this address, not the most recent poll.
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
+		{Addr: "a", VotingPower: 150},
+	}, 999999); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != 5929 {
+		t.Fatalf("first_active_block changed to %d after a later poll, want it to stay 5929", fab)
+	}
+	var vp int64
+	if err := db.Raw(`SELECT voting_power FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&vp).Error; err != nil {
+		t.Fatal(err)
+	}
+	if vp != 150 {
+		t.Fatalf("voting_power = %d, want 150 (must still update on conflict)", vp)
+	}
+}
+
+func TestUpsertAddrMonikerVPBatch_HealsPreExistingStuckRow(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	// "a" already has a row from before join-height tracking existed (or from
+	// any other insert path), stuck at -1 with zero participation history —
+	// PopulateFirstActiveBlocks alone can never recover this since there is
+	// no daily_participations/agregas evidence to fall back to either.
+	if err := database.UpsertAddrMoniker(db, "test13", "a", "alpha"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
+		{Addr: "a", VotingPower: 100},
+	}, 7000); err != nil {
+		t.Fatal(err)
+	}
+	var fab int64
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != 7000 {
+		t.Fatalf("first_active_block = %d, want 7000 (a stuck -1 row must be healed by the ON CONFLICT branch too)", fab)
+	}
+
+	// A later poll must NOT move it again now that it holds a real value.
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
+		{Addr: "a", VotingPower: 100},
+	}, 9000); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != 7000 {
+		t.Fatalf("first_active_block changed to %d after healing, want it to stay 7000", fab)
+	}
+}
+
+func TestUpsertAddrMonikerVPBatch_HealsPreExistingNullRow(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	if err := db.Exec(`INSERT INTO addr_monikers (chain_id, addr, moniker, first_active_block) VALUES (?, ?, '', NULL)`,
+		"test13", "a").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
+		{Addr: "a", VotingPower: 100},
+	}, 8000); err != nil {
+		t.Fatal(err)
+	}
+	var fab int64
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != 8000 {
+		t.Fatalf("first_active_block = %d, want 8000 (a stuck NULL row must be healed too)", fab)
+	}
+}
+
+func TestUpsertAddrMonikerVPBatch_UnknownJoinHeightFallsBackToSentinel(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
+		{Addr: "a", VotingPower: 100},
+	}, -1); err != nil {
+		t.Fatal(err)
+	}
+	var fab int64
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != -1 {
+		t.Fatalf("first_active_block = %d, want -1 when join height is unknown", fab)
+	}
+}
+
+func TestUpsertFirstActiveBlock_LowersFromNull(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	// A row left over from before UpsertFirstActiveBlock's WHERE clause
+	// matched NULL (a past migration bug) — simulate that stuck state
+	// directly, since no production code path writes NULL anymore.
+	if err := db.Exec(`INSERT INTO addr_monikers (chain_id, addr, moniker, first_active_block) VALUES (?, ?, '', NULL)`,
+		"test13", "a").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// A true participation at height 500 must still be able to record the
+	// real activation, even though first_active_block is NULL rather than
+	// the usual -1 sentinel.
+	if err := database.UpsertFirstActiveBlock(db, "test13", "a", 500); err != nil {
+		t.Fatal(err)
+	}
+	var fab int64
+	if err := db.Raw(`SELECT first_active_block FROM addr_monikers WHERE chain_id=? AND addr=?`,
+		"test13", "a").Scan(&fab).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fab != 500 {
+		t.Fatalf("first_active_block = %d, want 500 (must be set from a stuck NULL state)", fab)
+	}
+}
+
 func TestZeroDepartedVotingPower(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
@@ -71,7 +223,7 @@ func TestZeroDepartedVotingPower(t *testing.T) {
 		{Addr: "a", VotingPower: 100},
 		{Addr: "b", VotingPower: 50},
 		{Addr: "c", VotingPower: 10},
-	}); err != nil {
+	}, -1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,7 +247,7 @@ func TestZeroDepartedVotingPower_EmptyCurrentAddrsIsNoop(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
 		{Addr: "a", VotingPower: 100},
-	}); err != nil {
+	}, -1); err != nil {
 		t.Fatal(err)
 	}
 	// An empty currentAddrs list must never zero out everyone (e.g. a
@@ -114,12 +266,12 @@ func TestZeroDepartedVotingPower_ChainScoped(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	if err := database.UpsertAddrMonikerVPBatch(db, "test13", []database.AddrVP{
 		{Addr: "a", VotingPower: 100},
-	}); err != nil {
+	}, -1); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.UpsertAddrMonikerVPBatch(db, "other13", []database.AddrVP{
 		{Addr: "a", VotingPower: 100},
-	}); err != nil {
+	}, -1); err != nil {
 		t.Fatal(err)
 	}
 	// "a" left test13's valset (currentAddrs excludes it) but is still bonded

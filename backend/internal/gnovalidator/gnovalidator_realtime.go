@@ -580,23 +580,35 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 					continue
 				}
 
-				// Silence permanently dead validators: skip if no participation in the last N days.
+				// Silence permanently dead validators: skip if no participation in the
+				// last N days — but only for a REPEAT incident. A validator's very
+				// first-ever WARNING/CRITICAL must always go through regardless of this
+				// window, otherwise a validator that has never signed a single block
+				// since joining the valset (no participation in "last N days" is then
+				// trivially always true) would never generate a single alert, ever.
 				if t.DeadValidatorSilenceDays > 0 {
-					silenceWindow := fmt.Sprintf("%d days", t.DeadValidatorSilenceDays)
-					var activeRecently int64
-					err = db.Raw(`
-						SELECT COUNT(*) FROM daily_participations
-						WHERE chain_id = ? AND addr = ? AND participated = true
-						AND date >= NOW() - ?::interval
-					`, chainID, addr, silenceWindow).Scan(&activeRecently).Error
+					hasPrior, err := database.HasPriorAlert(db, chainID, addr)
 					if err != nil {
-						log.Printf("[validator][%s] DB error checking silence window: %v", chainID, err)
+						log.Printf("[validator][%s] DB error checking prior alerts: %v", chainID, err)
 						continue
 					}
-					if activeRecently == 0 {
-						log.Printf("[validator][%s] silence: skipping %s alert for %s (%s): no participation in last %d days",
-							chainID, level, moniker, addr, t.DeadValidatorSilenceDays)
-						continue
+					if hasPrior {
+						silenceWindow := fmt.Sprintf("%d days", t.DeadValidatorSilenceDays)
+						var activeRecently int64
+						err = db.Raw(`
+							SELECT COUNT(*) FROM daily_participations
+							WHERE chain_id = ? AND addr = ? AND participated = true
+							AND date >= NOW() - ?::interval
+						`, chainID, addr, silenceWindow).Scan(&activeRecently).Error
+						if err != nil {
+							log.Printf("[validator][%s] DB error checking silence window: %v", chainID, err)
+							continue
+						}
+						if activeRecently == 0 {
+							log.Printf("[validator][%s] silence: skipping %s alert for %s (%s): no participation in last %d days",
+								chainID, level, moniker, addr, t.DeadValidatorSilenceDays)
+							continue
+						}
 					}
 				}
 

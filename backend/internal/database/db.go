@@ -359,14 +359,16 @@ func DeleteAlertContact(db *gorm.DB, id int, userID string) error {
 }
 
 // UpsertFirstActiveBlock sets first_active_block for a validator if it is
-// still unset (-1), or lowers it if block is earlier than what's persisted —
-// mirroring SetFirstActiveBlockIfEarlier's in-memory guarantee that the
-// stored value is always the minimal true-participation height seen so far,
-// even when concurrent backfill workers discover it out of height order.
+// still unset (-1 or NULL — NULL can occur from historical rows written
+// before first_active_block tracking existed, or a past migration bug), or
+// lowers it if block is earlier than what's persisted — mirroring
+// SetFirstActiveBlockIfEarlier's in-memory guarantee that the stored value
+// is always the minimal true-participation height seen so far, even when
+// concurrent backfill workers discover it out of height order.
 func UpsertFirstActiveBlock(db *gorm.DB, chainID, addr string, block int64) error {
 	return db.Exec(`
 		UPDATE addr_monikers SET first_active_block = ?
-		WHERE chain_id = ? AND addr = ? AND (first_active_block = -1 OR first_active_block > ?)
+		WHERE chain_id = ? AND addr = ? AND (first_active_block = -1 OR first_active_block IS NULL OR first_active_block > ?)
 	`, block, chainID, addr, block).Error
 }
 
@@ -398,11 +400,34 @@ type AddrVP struct {
 // UpsertAddrMonikerVPBatch writes voting power for many validators in chunked
 // multi-row upserts, inserting a row (empty moniker) when none exists. Same
 // per-row semantics as UpsertAddrMonikerVP. Scoped to chain_id.
-func UpsertAddrMonikerVPBatch(db *gorm.DB, chainID string, rows []AddrVP) error {
+//
+// joinHeight is the block height of the /validators snapshot rows came from.
+// It is written to first_active_block on a fresh INSERT, recording "the
+// block at which we first observed this address in the valset" — for an
+// address that later turns out to never sign a single block, this is what
+// lets RecordActivationOrSkip count its missed blocks from the real join
+// point instead of skipping them forever as "activation still unknown". A
+// validator that does go on to sign keeps this as an upper bound:
+// UpsertFirstActiveBlock still lowers it if a true participation is found
+// at an earlier height (e.g. the join snapshot slightly lagged the
+// validator's actual first signature). Pass -1 if the snapshot height is
+// unknown, to fall back to the addr_monikers default.
+//
+// The ON CONFLICT branch also heals a row still stuck at -1/NULL — e.g. one
+// created before this join-height tracking existed, by any other insert
+// path, or one this same guard left unset because the snapshot's own
+// joinHeight was unknown — by applying the current joinHeight to it too. A
+// row that already has a real value never gets overwritten. Without this,
+// an address whose row already existed pre-fix, and that has never once
+// signed (so RecordActivationOrSkip has never written a participation row
+// for it either, leaving PopulateFirstActiveBlocks nothing to recover from),
+// would stay stuck at -1 forever — never healed by a fresh INSERT because
+// there is none.
+func UpsertAddrMonikerVPBatch(db *gorm.DB, chainID string, rows []AddrVP, joinHeight int64) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	const perRowBinds = 3 // chain_id, addr, voting_power (moniker is a literal '')
+	const perRowBinds = 4 // chain_id, addr, voting_power, first_active_block (moniker is a literal '')
 	const maxBinds = 990
 	maxRows := maxBinds / perRowBinds
 	for i := 0; i < len(rows); i += maxRows {
@@ -411,16 +436,22 @@ func UpsertAddrMonikerVPBatch(db *gorm.DB, chainID string, rows []AddrVP) error 
 			j = len(rows)
 		}
 		chunk := rows[i:j]
-		q := `INSERT INTO addr_monikers (chain_id, addr, moniker, voting_power) VALUES `
+		q := `INSERT INTO addr_monikers (chain_id, addr, moniker, voting_power, first_active_block) VALUES `
 		args := make([]any, 0, len(chunk)*perRowBinds)
 		for k, r := range chunk {
 			if k > 0 {
 				q += ","
 			}
-			q += "(?, ?, '', ?)"
-			args = append(args, chainID, r.Addr, r.VotingPower)
+			q += "(?, ?, '', ?, ?)"
+			args = append(args, chainID, r.Addr, r.VotingPower, joinHeight)
 		}
-		q += ` ON CONFLICT(chain_id, addr) DO UPDATE SET voting_power = excluded.voting_power`
+		q += ` ON CONFLICT(chain_id, addr) DO UPDATE SET
+			voting_power = excluded.voting_power,
+			first_active_block = CASE
+				WHEN addr_monikers.first_active_block = -1 OR addr_monikers.first_active_block IS NULL
+				THEN excluded.first_active_block
+				ELSE addr_monikers.first_active_block
+			END`
 		if err := db.Exec(q, args...).Error; err != nil {
 			return fmt.Errorf("UpsertAddrMonikerVPBatch(%s): %w", chainID, err)
 		}
