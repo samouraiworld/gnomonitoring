@@ -412,7 +412,17 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 		return
 	}
 
-	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, nil, "webhook_validators")
+	// chain_id is required on update too: a client can't clear it back to
+	// unscoped. Omitting the field entirely (nil) leaves the existing,
+	// already-required chain_id untouched — see UpdateMonitoringWebhook.
+	if webhook.ChainID != nil {
+		if err := requireChainID(webhook.ChainID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, webhook.ChainID, "webhook_validators")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
