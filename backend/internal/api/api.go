@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1038,8 +1039,9 @@ func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		GnowebEndpoints  []string `json:"gnowebs"`
 	}
 	type InfoResponse struct {
-		EnabledChains []string             `json:"enabled_chains"`
-		Chains        map[string]ChainInfo `json:"chains"`
+		EnabledChains  []string             `json:"enabled_chains"`
+		DisabledChains []string             `json:"disabled_chains"`
+		Chains         map[string]ChainInfo `json:"chains"`
 	}
 	info := InfoResponse{
 		EnabledChains: internal.EnabledChains,
@@ -1056,6 +1058,15 @@ func GetInfo(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 			GnowebEndpoints:  cfg.GnowebEndpoints,
 		}
 	}
+	// Chains still present in config.yaml but soft-disabled (enabled: false).
+	// Lets clients tell "temporarily disabled, still a valid chain_id" apart
+	// from "fully removed from config" without exposing their endpoints.
+	for chainID, cfg := range internal.Config.Chains {
+		if cfg != nil && !cfg.Enabled {
+			info.DisabledChains = append(info.DisabledChains, chainID)
+		}
+	}
+	sort.Strings(info.DisabledChains)
 	json.NewEncoder(w).Encode(info)
 }
 
