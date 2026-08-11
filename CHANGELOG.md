@@ -7,6 +7,25 @@ Entries are ordered newest-first within each section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`first_active_block` stuck at `-1`/`NULL` for validators that join but
+  never sign** — it is now anchored on the validator's first observed
+  `/validators` snapshot (valset join) instead of its first true signature,
+  so missed blocks are tracked from the real join point. A companion fix in
+  `WatchValidatorAlerts`' dead-validator silence window means a validator
+  with zero participation since joining can now generate its first
+  WARNING/CRITICAL instead of being silently skipped forever. A follow-up
+  pass heals rows left stuck by the old behavior (both pre-existing
+  `addr_monikers` rows and cases where `PopulateFirstActiveBlocks`' fallback
+  lost its only evidence to `PruneRawData`) on the next startup/poll.
+
+- **Validator webhook `PUT` silently dropped `chain_id`** —
+  `UpdateMonitoringWebhookHandler` hardcoded `nil` when calling
+  `UpdateMonitoringWebhook`, so a client could never set or change a
+  validator webhook's chain_id no matter what it sent. Now mirrors the
+  GovDAO PUT handler: requires and forwards the decoded chain_id.
+
 ### Added
 
 - **Live RPC data in daily report and `/status`** — `ChainHealthSnapshot` now
