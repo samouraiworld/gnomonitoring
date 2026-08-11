@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -184,5 +185,85 @@ func TestUpdateWebhookHandler_RejectsClearingChainID(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "chain_id is required") {
 		t.Fatalf("body = %q, want it to mention chain_id is required", rec.Body.String())
+	}
+}
+
+// TestUpdateMonitoringWebhookHandler_RejectsClearingChainID mirrors
+// TestUpdateWebhookHandler_RejectsClearingChainID for the validator webhook
+// endpoint: an update can't blank out an already-required chain_id.
+func TestUpdateMonitoringWebhookHandler_RejectsClearingChainID(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	withTestChain(t)
+	internal.Config.DevMode = true
+	defer func() { internal.Config.DevMode = false }()
+
+	chainID := "test12"
+	db.Create(&database.WebhookValidator{
+		UserID: "test-user", URL: "https://discord.com/api/webhooks/1/abc",
+		Type: "discord", Description: "x", ChainID: &chainID,
+	})
+
+	body := `{"url":"https://discord.com/api/webhooks/1/abc","type":"discord","description":"x","chain_id":""}`
+	req := httptest.NewRequest(http.MethodPut, "/api/webhooks/validator", bytes.NewBufferString(body))
+	req.Header.Set("X-Debug-UserID", "test-user")
+	rec := httptest.NewRecorder()
+
+	UpdateMonitoringWebhookHandler(rec, req, db)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "chain_id is required") {
+		t.Fatalf("body = %q, want it to mention chain_id is required", rec.Body.String())
+	}
+}
+
+// TestUpdateMonitoringWebhookHandler_PersistsChainIDChange pins the fix to
+// UpdateMonitoringWebhookHandler hardcoding nil instead of forwarding
+// webhook.ChainID to database.UpdateMonitoringWebhook: previously a PUT could
+// never change (or set) a validator webhook's chain_id, no matter what the
+// client sent.
+func TestUpdateMonitoringWebhookHandler_PersistsChainIDChange(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	internal.Config.Chains = map[string]*internal.ChainConfig{
+		"test12": {Enabled: true},
+		"test34": {Enabled: true},
+	}
+	internal.EnabledChains = []string{"test12", "test34"}
+	internal.Config.DefaultChain = "test12"
+	internal.Config.DevMode = true
+	t.Cleanup(func() {
+		internal.Config.Chains = nil
+		internal.EnabledChains = []string{}
+		internal.Config.DefaultChain = ""
+		internal.Config.DevMode = false
+	})
+
+	chainID := "test12"
+	wh := database.WebhookValidator{
+		UserID: "test-user", URL: "https://discord.com/api/webhooks/1/abc",
+		Type: "discord", Description: "x", ChainID: &chainID,
+	}
+	if err := db.Create(&wh).Error; err != nil {
+		t.Fatalf("failed to seed webhook: %v", err)
+	}
+
+	body := `{"id":` + strconv.Itoa(wh.ID) + `,"url":"https://discord.com/api/webhooks/1/abc","type":"discord","description":"x","chain_id":"test34"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/webhooks/validator", bytes.NewBufferString(body))
+	req.Header.Set("X-Debug-UserID", "test-user")
+	rec := httptest.NewRecorder()
+
+	UpdateMonitoringWebhookHandler(rec, req, db)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var updated database.WebhookValidator
+	if err := db.First(&updated, wh.ID).Error; err != nil {
+		t.Fatalf("expected the webhook row to still exist: %v", err)
+	}
+	if updated.ChainID == nil || *updated.ChainID != "test34" {
+		t.Fatalf("expected persisted chain_id = %q, got %+v", "test34", updated.ChainID)
 	}
 }
