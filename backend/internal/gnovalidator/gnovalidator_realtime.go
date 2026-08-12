@@ -171,6 +171,23 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 			}
 			// Stagnation detection
 			lph := GetLastHeight(chainID)
+
+			// The pool may have failed over to an endpoint a few blocks
+			// behind the previous one. That is not chain progress, and
+			// counting it as such would reset the stagnation timer on every
+			// flip-flop between two endpoints at different heights.
+			obs := classifyHeightObservation(latest, lph)
+			if obs == heightRegressed {
+				log.Printf("[monitor][%s] ignoring regressed height %d (highest seen %d); the active endpoint is behind",
+					chainID, latest, lph)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(3 * time.Second):
+				}
+				continue
+			}
+
 			timeMu.Lock()
 			lpt, lptSet := lastProgressTime[chainID]
 			if !lptSet {
@@ -180,7 +197,7 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 			lastAlert := lastStagnationAlertTime[chainID]
 			timeMu.Unlock()
 
-			if lph != 0 && latest == lph {
+			if obs == heightStalled {
 				stuckFor := time.Since(lpt)
 				t := GetThresholds()
 				firstAlert := lastAlert.IsZero()
