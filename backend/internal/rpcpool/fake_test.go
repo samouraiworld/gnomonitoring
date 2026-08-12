@@ -1,6 +1,8 @@
 package rpcpool
 
 import (
+	"sync"
+
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
 	"github.com/gnolang/gno/tm2/pkg/bft/types"
@@ -90,4 +92,73 @@ func fakeDialerFrom(conns map[string]*fakeConn) Dialer {
 		}
 		return c, nil
 	}
+}
+
+// flappingConn is a stub rpcclient.Client whose ABCIInfo verdict can flip
+// from failing to succeeding mid-test, and whose next call can be parked
+// mid-flight so a test can control interleaving between two concurrent
+// callers. Every method it does not override panics, via the embedded
+// fakeConn. Used to reproduce a call that is still in flight — and has
+// already captured a failing verdict — when a second, later-started call
+// observes the same endpoint has since recovered and resolves first.
+type flappingConn struct {
+	*fakeConn
+
+	mu        sync.Mutex
+	recovered bool
+	// entered/release are set together by arm(). entered is a one-shot
+	// marker: the next ABCIInfo call closes it as soon as it is invoked
+	// (after capturing its verdict) and nils it out, so later calls
+	// proceed straight through. release is left in place so releaseGate,
+	// called after that one call has already consumed entered, can still
+	// find and close the same channel that call is blocked on.
+	entered chan struct{}
+	release chan struct{}
+}
+
+// arm makes the next ABCIInfo call block after entering, and returns the
+// channel that closes once that call is parked inside the block.
+func (f *flappingConn) arm() (entered chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.entered = make(chan struct{})
+	f.release = make(chan struct{})
+	return f.entered
+}
+
+// releaseGate unblocks the call parked by arm().
+func (f *flappingConn) releaseGate() {
+	f.mu.Lock()
+	release := f.release
+	f.mu.Unlock()
+	if release != nil {
+		close(release)
+	}
+}
+
+// recover flips the endpoint from failing to succeeding. A call already
+// parked by arm() is unaffected: it captures its verdict before blocking,
+// not after.
+func (f *flappingConn) recover() {
+	f.mu.Lock()
+	f.recovered = true
+	f.mu.Unlock()
+}
+
+func (f *flappingConn) ABCIInfo() (*ctypes.ResultABCIInfo, error) {
+	f.mu.Lock()
+	recovered := f.recovered
+	entered, release := f.entered, f.release
+	f.entered = nil
+	f.mu.Unlock()
+
+	if entered != nil {
+		close(entered)
+		<-release
+	}
+
+	if recovered {
+		return &ctypes.ResultABCIInfo{}, nil
+	}
+	return nil, errDown
 }

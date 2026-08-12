@@ -65,6 +65,13 @@ type Client struct {
 	conns     []rpcclient.Client // index-aligned with endpoints; nil until dialed
 	activeIdx int
 	allDown   bool
+	// gen counts calls that have started. Each call() captures its own
+	// value on entry; onSuccess/onAllDown only apply their result if that
+	// value still matches c.gen when the call concludes, i.e. no other
+	// call has started in the meantime. This discards stale completions
+	// instead of letting them clobber a state transition made by a call
+	// that started later — see call's doc comment.
+	gen uint64
 
 	dial Dialer
 	obs  Observer
@@ -123,10 +130,21 @@ func (c *Client) connAt(i int) (rpcclient.Client, error) {
 // and sticks to the first that answers. A chain-level error (see
 // isEndpointError) is returned immediately: every endpoint would answer the
 // same, so rotating would only strand the pool on a worse node.
+//
+// call is invoked from several goroutines concurrently. Each invocation is
+// tagged with a generation number on entry (c.gen); when it concludes, its
+// state transition (onSuccess/onAllDown) is applied only if that generation
+// is still the latest one to have started. This prevents a call that has
+// been in flight for a while from overwriting the pool's state with a
+// stale, already-superseded result — e.g. a call that observed every
+// endpoint down must not flip the pool back to "all down" after a call
+// that started later already found a healthy endpoint and recovered it.
 func (c *Client) call(fn func(rpcclient.Client) error) error {
 	c.mu.Lock()
 	n := len(c.endpoints)
 	start := c.activeIdx
+	c.gen++
+	gen := c.gen
 	c.mu.Unlock()
 
 	if n == 0 {
@@ -156,7 +174,7 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 
 		err := fn(conn)
 		if err == nil {
-			c.onSuccess(idx, attempt > 0)
+			c.onSuccess(gen, idx, attempt > 0)
 			return nil
 		}
 		record(err)
@@ -174,13 +192,20 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 		log.Printf("[rpcpool] endpoint %s failed (%v), trying the next one", endpoint, err)
 	}
 
-	c.onAllDown(firstErr)
+	c.onAllDown(gen, firstErr)
 	return fmt.Errorf("all %d RPC endpoints failed, first error: %w", n, firstErr)
 }
 
 // onSuccess promotes idx to active and emits the matching transition event.
-func (c *Client) onSuccess(idx int, switched bool) {
+// gen must be the value call() captured on entry; if a newer call has since
+// started, this completion is stale and is discarded without touching state
+// or the observer.
+func (c *Client) onSuccess(gen uint64, idx int, switched bool) {
 	c.mu.Lock()
+	if gen != c.gen {
+		c.mu.Unlock()
+		return
+	}
 	prev := c.activeIdx
 	wasAllDown := c.allDown
 	c.activeIdx = idx
@@ -205,9 +230,16 @@ func (c *Client) onSuccess(idx int, switched bool) {
 }
 
 // onAllDown records a full outage, emitting EventAllDown only on the
-// transition into it so a sustained outage does not spam the observer.
-func (c *Client) onAllDown(err error) {
+// transition into it so a sustained outage does not spam the observer. gen
+// must be the value call() captured on entry; if a newer call has since
+// started (and, in particular, already recovered the pool), this completion
+// is stale and is discarded without touching state or the observer.
+func (c *Client) onAllDown(gen uint64, err error) {
 	c.mu.Lock()
+	if gen != c.gen {
+		c.mu.Unlock()
+		return
+	}
 	already := c.allDown
 	c.allDown = true
 	obs := c.obs
