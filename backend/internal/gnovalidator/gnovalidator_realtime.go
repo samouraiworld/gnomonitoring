@@ -83,6 +83,7 @@ func GetFirstActiveBlockMap(chainID string) map[string]int64 {
 var timeMu sync.Mutex
 var lastProgressTime = make(map[string]time.Time)        // per-chain last block progress time
 var lastStagnationAlertTime = make(map[string]time.Time) // per-chain last stagnation alert time
+var regressionSince = make(map[string]time.Time)         // per-chain: when the current height regression episode started (zero = none in progress)
 
 // lastProgressHeight[chainID] = block height
 var lastProgressHeight = make(map[string]int64)
@@ -176,16 +177,50 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 			// behind the previous one. That is not chain progress, and
 			// counting it as such would reset the stagnation timer on every
 			// flip-flop between two endpoints at different heights.
+			//
+			// Trade-off: never lowering lph on a regression is what makes this
+			// immune to that oscillation, but taken alone it would also make a
+			// *permanent* rewind invisible forever — e.g. an operator restores
+			// a node from an older snapshot and that node then genuinely
+			// halts. latest could then never again reach lph, so this branch
+			// would `continue` forever and the CRITICAL "Blockchain stuck"
+			// alert would never fire — the same class of bug this guard
+			// exists to fix, just triggered from the other side. regressionSince
+			// bounds how long a regression may be ignored: once it has
+			// persisted past GetThresholds().StagnationFirstAlert() — the same
+			// threshold that already governs "no forward progress for too
+			// long" — the lower height is accepted as the new baseline via
+			// SetLastHeight, and classification resumes normally so a
+			// genuinely halted rewound node reaches the stalled branch below
+			// and raises its alert.
 			obs := classifyHeightObservation(latest, lph)
 			if obs == heightRegressed {
-				log.Printf("[monitor][%s] ignoring regressed height %d (highest seen %d); the active endpoint is behind",
-					chainID, latest, lph)
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(3 * time.Second):
+				now := time.Now()
+				timeMu.Lock()
+				since := regressionSince[chainID]
+				accept, next := evaluateRegression(since, now, GetThresholds().StagnationFirstAlert())
+				regressionSince[chainID] = next
+				timeMu.Unlock()
+
+				if !accept {
+					log.Printf("[monitor][%s] ignoring regressed height %d (highest seen %d); the active endpoint is behind",
+						chainID, latest, lph)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(3 * time.Second):
+					}
+					continue
 				}
-				continue
+
+				log.Printf("[monitor][%s] height %d has stayed regressed (highest seen was %d) for %s, longer than the stagnation threshold; accepting it as the new baseline instead of ignoring it forever",
+					chainID, latest, lph, now.Sub(since))
+				SetLastHeight(chainID, latest)
+				obs = heightStalled
+			} else {
+				timeMu.Lock()
+				regressionSince[chainID] = time.Time{}
+				timeMu.Unlock()
 			}
 
 			timeMu.Lock()
