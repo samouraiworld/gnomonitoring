@@ -65,10 +65,17 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 }
 
 // adminStartChain starts the monitoring goroutines for a chain and registers
-// the cancel function with chainmanager. Mirrors startChainMonitoring in main.go.
+// the cancel function with chainmanager. Mirrors startChainMonitoring in main.go,
+// including registering the RPC pool (via gnovalidator.StartRPCPool) before
+// either goroutine starts: a chain restarted through the admin API needs the
+// exact same setup as one started at boot, or StartValidatorMonitoring finds
+// no pool registered and refuses to start.
 func adminStartChain(db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
 	ctx, cancel := context.WithCancel(context.Background())
 	chainmanager.Register(chainID, cancel)
+
+	gnovalidator.StartRPCPool(ctx, db, chainID, chainCfg)
+
 	go gnovalidator.StartValidatorMonitoring(ctx, db, chainID, chainCfg)
 	go govdao.StartGovDAo(ctx, db, chainID, chainCfg)
 }

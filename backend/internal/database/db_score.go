@@ -292,7 +292,7 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 		WITH in_period AS (
 			SELECT addr, level, sent_at, id
 			FROM alert_logs
-			WHERE chain_id = ? AND addr <> 'all'
+			WHERE chain_id = ? AND addr NOT IN ('all', 'rpc')
 			  AND level IN ('WARNING','CRITICAL','RESOLVED')
 			  AND sent_at >= ? AND sent_at < ?
 		),
@@ -341,7 +341,7 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 		LEFT JOIN incidents ON incidents.addr = al.addr
 		WHERE al.chain_id = ?
 		  AND al.level IN ('CRITICAL','WARNING')
-		  AND al.addr <> 'all'
+		  AND al.addr NOT IN ('all', 'rpc')
 		  AND al.sent_at >= ? AND al.sent_at < ?
 		GROUP BY al.addr
 		ORDER BY al.addr
@@ -385,9 +385,9 @@ func GetValidatorVP(db *gorm.DB, chainID string) (perAddr map[string]int64, moni
 
 // GetLastAlertTimes returns, per validator, the timestamp of its most recent
 // WARNING or CRITICAL alert on the chain. Chain-scoped. The chain-wide
-// "blockchain stuck" rows (addr = 'all') are excluded — they don't reflect an
-// individual validator's health. Validators with no such alert are absent from
-// the map.
+// "blockchain stuck" rows (addr = 'all') and RPC-outage rows (addr = 'rpc')
+// are excluded — neither reflects an individual validator's behaviour.
+// Validators with no such alert are absent from the map.
 func GetLastAlertTimes(db *gorm.DB, chainID string) (map[string]time.Time, error) {
 	type row struct {
 		Addr      string
@@ -399,7 +399,7 @@ func GetLastAlertTimes(db *gorm.DB, chainID string) (map[string]time.Time, error
 		FROM alert_logs
 		WHERE chain_id = ?
 		  AND level IN ('WARNING','CRITICAL')
-		  AND addr <> 'all'
+		  AND addr NOT IN ('all', 'rpc')
 		GROUP BY addr
 	`, chainID).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("GetLastAlertTimes(%s): %w", chainID, err)

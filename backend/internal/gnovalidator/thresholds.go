@@ -28,6 +28,7 @@ type Thresholds struct {
 	RecentBlocksWindow               int
 	GapReconciliationIntervalSeconds int
 	GapReconciliationLookbackDays    int
+	RPCHealthCheckSeconds            int
 }
 
 var (
@@ -47,6 +48,7 @@ var (
 		RecentBlocksWindow:               50,
 		GapReconciliationIntervalSeconds: 3600,
 		GapReconciliationLookbackDays:    7,
+		RPCHealthCheckSeconds:            60,
 	}
 	thresholdsMu sync.RWMutex
 )
@@ -72,6 +74,7 @@ func LoadThresholds(db *gorm.DB) {
 		RecentBlocksWindow:               database.GetAdminConfigInt(db, "recent_blocks_window", 50),
 		GapReconciliationIntervalSeconds: database.GetAdminConfigInt(db, "gap_reconciliation_interval_seconds", 3600),
 		GapReconciliationLookbackDays:    database.GetAdminConfigInt(db, "gap_reconciliation_lookback_days", 7),
+		RPCHealthCheckSeconds:            database.GetAdminConfigInt(db, "rpc_health_check_seconds", 60),
 	}
 	log.Printf("[thresholds] loaded: warning=%d critical=%d resend_critical=%dh resend_warning=%dh stagnation_first=%ds stagnation_repeat=%dmin",
 		activeThresholds.WarningThreshold,
@@ -123,6 +126,13 @@ func (t Thresholds) AggregatorPeriod() time.Duration {
 
 func (t Thresholds) GapReconciliationInterval() time.Duration {
 	return time.Duration(t.GapReconciliationIntervalSeconds) * time.Second
+}
+
+// RPCHealthCheckInterval is how often the RPC pool probes its endpoints to
+// promote the highest-priority healthy one. Lower = faster return to the
+// primary, at the cost of one extra /status call per endpoint per interval.
+func (t Thresholds) RPCHealthCheckInterval() time.Duration {
+	return time.Duration(t.RPCHealthCheckSeconds) * time.Second
 }
 
 // ResendHoursForLevel returns the minimum hours between two alerts of the same level

@@ -81,8 +81,7 @@ func GetFirstActiveBlockMap(chainID string) map[string]int64 {
 
 // timeMu protects the per-chain time maps below since time.Time is not atomic-safe.
 var timeMu sync.Mutex
-var lastRPCErrorAlert = make(map[string]time.Time)      // per-chain RPC error anti-spam
-var lastProgressTime = make(map[string]time.Time)       // per-chain last block progress time
+var lastProgressTime = make(map[string]time.Time)        // per-chain last block progress time
 var lastStagnationAlertTime = make(map[string]time.Time) // per-chain last stagnation alert time
 
 // lastProgressHeight[chainID] = block height
@@ -96,9 +95,6 @@ var alertMutex sync.RWMutex
 // restoredNotified[chainID][addr] = bool
 var restoredNotified = make(map[string]map[string]bool)
 var restoreMutex sync.RWMutex
-
-var chainRPCClients = make(map[string]*FallbackRPCClient)
-var chainRPCClientsMu sync.RWMutex
 
 // chainSynced[chainID] = true once the backfill gap drops below the threshold.
 // WatchValidatorAlerts skips processing while false to avoid historical alert spam.
@@ -115,19 +111,6 @@ func isChainSynced(chainID string) bool {
 	chainSyncedMu.RLock()
 	defer chainSyncedMu.RUnlock()
 	return chainSynced[chainID]
-}
-
-func SetChainRPCClient(chainID string, client *FallbackRPCClient) {
-	chainRPCClientsMu.Lock()
-	defer chainRPCClientsMu.Unlock()
-	chainRPCClients[chainID] = client
-}
-
-func GetChainRPCClient(chainID string) (*FallbackRPCClient, bool) {
-	chainRPCClientsMu.RLock()
-	defer chainRPCClientsMu.RUnlock()
-	c, ok := chainRPCClients[chainID]
-	return c, ok
 }
 
 func GetLastProgressTime(chainID string) (time.Time, bool) {
@@ -175,20 +158,10 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 
 			latest, err := client.LatestBlockHeight()
 			if err != nil {
+				// The pool has already tried every endpoint and, on a full
+				// outage, dispatched the CRITICAL alert through its observer
+				// (see NewRPCObserver). Nothing to alert on here.
 				log.Printf("[monitor][%s] error fetching latest height: %v", chainID, err)
-
-				timeMu.Lock()
-				sinceRPCErr := time.Since(lastRPCErrorAlert[chainID])
-				timeMu.Unlock()
-				t := GetThresholds()
-				if sinceRPCErr > t.RPCErrorCooldown() {
-					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
-					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
-					log.Println(msg)
-					timeMu.Lock()
-					lastRPCErrorAlert[chainID] = time.Now()
-					timeMu.Unlock()
-				}
 				select {
 				case <-ctx.Done():
 					return
@@ -281,10 +254,6 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					SetAlertSent(chainID, "all", false)
 				}
 			}
-
-			timeMu.Lock()
-			lastRPCErrorAlert[chainID] = time.Time{}
-			timeMu.Unlock()
 
 			if latest <= currentHeight {
 				select {
@@ -742,8 +711,13 @@ func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, 
 		return
 	}
 
-	rpcClient := NewFallbackRPCClient(chainCfg.RPCEndpoints)
-	SetChainRPCClient(chainID, rpcClient)
+	rpcClient, ok := GetChainRPCClient(chainID)
+	if !ok {
+		// main.startChainMonitoring registers the pool before launching this
+		// goroutine; a missing entry means a caller skipped that step.
+		log.Printf("[monitor][%s] no RPC pool registered, monitoring not started", chainID)
+		return
+	}
 	client := gnoclient.Client{RPCClient: rpcClient}
 
 	t := GetThresholds()
