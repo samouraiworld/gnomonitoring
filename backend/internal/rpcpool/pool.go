@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
@@ -65,13 +66,11 @@ type Client struct {
 	conns     []rpcclient.Client // index-aligned with endpoints; nil until dialed
 	activeIdx int
 	allDown   bool
-	// gen counts calls that have started. Each call() captures its own
-	// value on entry; onSuccess/onAllDown only apply their result if that
-	// value still matches c.gen when the call concludes, i.e. no other
-	// call has started in the meantime. This discards stale completions
-	// instead of letting them clobber a state transition made by a call
-	// that started later — see call's doc comment.
-	gen uint64
+	// lastObservedAt is the timestamp of the most recent outcome
+	// (success or total failure) applied to activeIdx/allDown. A new
+	// outcome is applied only if it was observed strictly after this —
+	// see call's doc comment for why entry order cannot be used instead.
+	lastObservedAt time.Time
 
 	dial Dialer
 	obs  Observer
@@ -131,20 +130,26 @@ func (c *Client) connAt(i int) (rpcclient.Client, error) {
 // isEndpointError) is returned immediately: every endpoint would answer the
 // same, so rotating would only strand the pool on a worse node.
 //
-// call is invoked from several goroutines concurrently. Each invocation is
-// tagged with a generation number on entry (c.gen); when it concludes, its
-// state transition (onSuccess/onAllDown) is applied only if that generation
-// is still the latest one to have started. This prevents a call that has
-// been in flight for a while from overwriting the pool's state with a
-// stale, already-superseded result — e.g. a call that observed every
-// endpoint down must not flip the pool back to "all down" after a call
-// that started later already found a healthy endpoint and recovered it.
+// call is invoked from several goroutines concurrently, and calls can
+// overlap arbitrarily: a slow one may still be walking endpoints when a
+// later, faster one has already finished. Ordering completions by which
+// call *started* first is not a valid way to arbitrate between them — a
+// call that started earlier can easily observe its outcome later than one
+// that started after it (e.g. it hit a slow timeout while the other hit a
+// warm keep-alive connection), and that observation is not stale merely
+// because it started first. So onSuccess/onAllDown instead order by
+// observedAt, the moment each call actually determined its outcome
+// (captured right below, at the two points in this function where that
+// happens), and apply a transition only if it is strictly newer than the
+// last one applied. This prevents an old, already-superseded observation
+// from overwriting newer state (round 1 of this fix), while still letting
+// a slow call that genuinely observed a fresher outcome — e.g. a real
+// total outage — override an earlier, faster call's stale success (what a
+// call-entry-order guard got wrong).
 func (c *Client) call(fn func(rpcclient.Client) error) error {
 	c.mu.Lock()
 	n := len(c.endpoints)
 	start := c.activeIdx
-	c.gen++
-	gen := c.gen
 	c.mu.Unlock()
 
 	if n == 0 {
@@ -174,7 +179,7 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 
 		err := fn(conn)
 		if err == nil {
-			c.onSuccess(gen, idx, attempt > 0)
+			c.onSuccess(time.Now(), idx, attempt > 0)
 			return nil
 		}
 		record(err)
@@ -192,20 +197,22 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 		log.Printf("[rpcpool] endpoint %s failed (%v), trying the next one", endpoint, err)
 	}
 
-	c.onAllDown(gen, firstErr)
+	c.onAllDown(time.Now(), firstErr)
 	return fmt.Errorf("all %d RPC endpoints failed, first error: %w", n, firstErr)
 }
 
 // onSuccess promotes idx to active and emits the matching transition event.
-// gen must be the value call() captured on entry; if a newer call has since
-// started, this completion is stale and is discarded without touching state
-// or the observer.
-func (c *Client) onSuccess(gen uint64, idx int, switched bool) {
+// observedAt must be the moment call() determined this success, right after
+// fn(conn) returned nil; if a newer outcome has already been applied, this
+// completion is stale and is discarded without touching state or the
+// observer.
+func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) {
 	c.mu.Lock()
-	if gen != c.gen {
+	if !observedAt.After(c.lastObservedAt) {
 		c.mu.Unlock()
 		return
 	}
+	c.lastObservedAt = observedAt
 	prev := c.activeIdx
 	wasAllDown := c.allDown
 	c.activeIdx = idx
@@ -230,16 +237,18 @@ func (c *Client) onSuccess(gen uint64, idx int, switched bool) {
 }
 
 // onAllDown records a full outage, emitting EventAllDown only on the
-// transition into it so a sustained outage does not spam the observer. gen
-// must be the value call() captured on entry; if a newer call has since
-// started (and, in particular, already recovered the pool), this completion
-// is stale and is discarded without touching state or the observer.
-func (c *Client) onAllDown(gen uint64, err error) {
+// transition into it so a sustained outage does not spam the observer.
+// observedAt must be the moment call() determined this outcome, right after
+// the endpoint walk exhausted every endpoint; if a newer outcome has
+// already been applied, this completion is stale and is discarded without
+// touching state or the observer.
+func (c *Client) onAllDown(observedAt time.Time, err error) {
 	c.mu.Lock()
-	if gen != c.gen {
+	if !observedAt.After(c.lastObservedAt) {
 		c.mu.Unlock()
 		return
 	}
+	c.lastObservedAt = observedAt
 	already := c.allDown
 	c.allDown = true
 	obs := c.obs

@@ -95,12 +95,18 @@ func fakeDialerFrom(conns map[string]*fakeConn) Dialer {
 }
 
 // flappingConn is a stub rpcclient.Client whose ABCIInfo verdict can flip
-// from failing to succeeding mid-test, and whose next call can be parked
-// mid-flight so a test can control interleaving between two concurrent
-// callers. Every method it does not override panics, via the embedded
-// fakeConn. Used to reproduce a call that is still in flight — and has
-// already captured a failing verdict — when a second, later-started call
-// observes the same endpoint has since recovered and resolves first.
+// between failing and succeeding mid-test, and whose next call can be
+// parked mid-flight so a test can control interleaving between two
+// concurrent callers. Every method it does not override panics, via the
+// embedded fakeConn.
+//
+// A parked call reports whatever recovered says at release time, not at
+// invocation time — deliberately: it models a real in-flight RPC, whose
+// answer reflects the endpoint's condition at the moment the network round
+// trip actually completes, not at the moment the request was sent. This
+// lets a single gate serve both directions: a call parked while the
+// endpoint is down and released after it recovers observes success: a call
+// parked while it is up and released after it fails observes failure.
 type flappingConn struct {
 	*fakeConn
 
@@ -108,10 +114,10 @@ type flappingConn struct {
 	recovered bool
 	// entered/release are set together by arm(). entered is a one-shot
 	// marker: the next ABCIInfo call closes it as soon as it is invoked
-	// (after capturing its verdict) and nils it out, so later calls
-	// proceed straight through. release is left in place so releaseGate,
-	// called after that one call has already consumed entered, can still
-	// find and close the same channel that call is blocked on.
+	// and nils it out, so later calls proceed straight through. release is
+	// left in place so releaseGate, called after that one call has already
+	// consumed entered, can still find and close the same channel that
+	// call is blocked on.
 	entered chan struct{}
 	release chan struct{}
 }
@@ -136,18 +142,23 @@ func (f *flappingConn) releaseGate() {
 	}
 }
 
-// recover flips the endpoint from failing to succeeding. A call already
-// parked by arm() is unaffected: it captures its verdict before blocking,
-// not after.
+// recover flips the endpoint to succeeding.
 func (f *flappingConn) recover() {
 	f.mu.Lock()
 	f.recovered = true
 	f.mu.Unlock()
 }
 
+// fail flips the endpoint to failing — recover's inverse, for modeling an
+// endpoint that goes down after having been healthy.
+func (f *flappingConn) fail() {
+	f.mu.Lock()
+	f.recovered = false
+	f.mu.Unlock()
+}
+
 func (f *flappingConn) ABCIInfo() (*ctypes.ResultABCIInfo, error) {
 	f.mu.Lock()
-	recovered := f.recovered
 	entered, release := f.entered, f.release
 	f.entered = nil
 	f.mu.Unlock()
@@ -156,6 +167,10 @@ func (f *flappingConn) ABCIInfo() (*ctypes.ResultABCIInfo, error) {
 		close(entered)
 		<-release
 	}
+
+	f.mu.Lock()
+	recovered := f.recovered
+	f.mu.Unlock()
 
 	if recovered {
 		return &ctypes.ResultABCIInfo{}, nil
