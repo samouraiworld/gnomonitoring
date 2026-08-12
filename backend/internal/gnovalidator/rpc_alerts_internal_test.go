@@ -1,8 +1,10 @@
 package gnovalidator
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"testing"
 	"time"
 
@@ -105,21 +107,26 @@ func TestRPCAlertFlapping_OneCriticalPerCooldownWindowNoOrphans(t *testing.T) {
 	assert.True(t, shouldSendRPCResolved("chain-a"))
 }
 
-// TestUndoRPCAlertDispatch_ClearsPhantomAnnouncement covers the dispatch-queue-full
-// path: a CRITICAL that shouldSendRPCAlert cleared but that never actually
-// reached the wire (the worker's queue was full) must not leave a phantom
-// "announced" outage waiting for a RESOLVED that will never come, and must
-// not block a genuine retry behind a cooldown for an alert nobody received.
-func TestUndoRPCAlertDispatch_ClearsPhantomAnnouncement(t *testing.T) {
+// TestUnannounceRPCAlert_ClearsPairingButKeepsCooldown covers the
+// dispatch-queue-full path: a CRITICAL that shouldSendRPCAlert cleared but
+// that never actually reached the wire (the worker's queue was full) must
+// not leave a phantom "announced" outage waiting for a RESOLVED that will
+// never come — but, unlike an earlier version of this fix, it must NOT reset
+// the cooldown clock either. A full queue is exactly the kind of sustained
+// backpressure under which flapping is most likely, so this is precisely
+// when the cooldown must survive, not collapse.
+func TestUnannounceRPCAlert_ClearsPairingButKeepsCooldown(t *testing.T) {
 	resetRPCAlertState()
 	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 
 	assert.True(t, shouldSendRPCAlert("chain-a", now, 10*time.Minute))
-	undoRPCAlertDispatch("chain-a")
+	unannounceRPCAlert("chain-a")
 
-	assert.False(t, shouldSendRPCResolved("chain-a"), "rollback must clear the announcement: nothing to resolve")
-	assert.True(t, shouldSendRPCAlert("chain-a", now.Add(time.Second), 10*time.Minute),
-		"rollback must not leave a phantom cooldown blocking a genuine retry")
+	assert.False(t, shouldSendRPCResolved("chain-a"), "clearing the pairing must leave nothing to resolve")
+	assert.False(t, shouldSendRPCAlert("chain-a", now.Add(time.Minute), 10*time.Minute),
+		"the cooldown anchor must survive a dropped dispatch, not reset to zero")
+	assert.True(t, shouldSendRPCAlert("chain-a", now.Add(11*time.Minute), 10*time.Minute),
+		"once the original cooldown window elapses, a new outage may alert again")
 }
 
 // setRPCDispatchForTest overrides the package-level dispatch seam and
@@ -196,4 +203,109 @@ func TestNewRPCObserver_RecoveredWithoutAnnouncedOutage_DispatchesNothing(t *tes
 		t.Fatalf("an unannounced recovery must not dispatch a RESOLVED, got %+v", job)
 	case <-time.After(200 * time.Millisecond):
 	}
+}
+
+// setRPCCooldownForTest overrides the live rpc_error_cooldown_minutes value
+// NewRPCObserver reads via GetThresholds(), and restores it on cleanup. Tests
+// that exercise NewRPCObserver directly cannot inject a fake clock (the
+// observer calls time.Now() internally, not a passed-in time), so an
+// explicit, generous cooldown is what keeps a rapid-fire flap sequence inside
+// a single cooldown window deterministically, instead of depending on
+// whatever admin_config happens to be seeded by other tests in this package.
+func setRPCCooldownForTest(t *testing.T, minutes int) {
+	t.Helper()
+	thresholdsMu.Lock()
+	orig := activeThresholds
+	activeThresholds.RPCErrorCooldownMinutes = minutes
+	thresholdsMu.Unlock()
+	t.Cleanup(func() {
+		thresholdsMu.Lock()
+		activeThresholds = orig
+		thresholdsMu.Unlock()
+	})
+}
+
+// TestNewRPCObserver_Flapping_OneCriticalOneResolvedNoOrphans drives the
+// flapping scenario from the bug report through the real wiring —
+// NewRPCObserver, the gate, the queue and the worker — rather than through
+// the gate functions directly. Several rapid EventAllDown/EventRecovered
+// pairs (well inside one cooldown window) must produce exactly one dispatched
+// CRITICAL followed by exactly one paired RESOLVED, and nothing else: no
+// repeat CRITICAL for the later flaps, and no orphan RESOLVED for any of
+// them.
+func TestNewRPCObserver_Flapping_OneCriticalOneResolvedNoOrphans(t *testing.T) {
+	resetRPCAlertState()
+	setRPCCooldownForTest(t, 5) // 5 minutes: far longer than this test can take to run.
+
+	dispatched := make(chan rpcJob, 32)
+	setRPCDispatchForTest(t, func(job rpcJob) { dispatched <- job })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	obs := NewRPCObserver(ctx, nil, "chain-a")
+
+	const flaps = 5
+	for i := 0; i < flaps; i++ {
+		obs(rpcpool.EventAllDown, "http://a", errors.New("boom"))
+		obs(rpcpool.EventRecovered, "http://a", nil)
+	}
+
+	var got []string
+	for i := 0; i < 2; i++ {
+		select {
+		case job := <-dispatched:
+			got = append(got, job.level)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for dispatch #%d; got so far: %v", i+1, got)
+		}
+	}
+	assert.Equal(t, []string{"CRITICAL", "RESOLVED"}, got,
+		"exactly one CRITICAL followed by exactly one paired RESOLVED, from the first flap only")
+
+	// The remaining flap cycles must be suppressed entirely: no orphan
+	// RESOLVED, and no repeat CRITICAL.
+	select {
+	case job := <-dispatched:
+		t.Fatalf("flapping inside the cooldown window must not produce further dispatches, got %+v", job)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestRunRPCAlertWorker_DrainsAndLogsAbandonedJobsOnShutdown covers the
+// worker's shutdown path directly: ctx is already cancelled before the
+// worker ever looks at the queue, so the deterministic ctx.Done()-first check
+// (see runRPCAlertWorker) must always take the drain-and-return path, never
+// dispatch the buffered jobs, and log how many were abandoned instead of
+// silently discarding them.
+func TestRunRPCAlertWorker_DrainsAndLogsAbandonedJobsOnShutdown(t *testing.T) {
+	dispatchCalled := false
+	setRPCDispatchForTest(t, func(job rpcJob) { dispatchCalled = true })
+
+	queue := make(chan rpcJob, 4)
+	queue <- rpcJob{chainID: "chain-a", level: "CRITICAL"}
+	queue <- rpcJob{chainID: "chain-a", level: "RESOLVED"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already done before the worker is ever started
+
+	var logBuf bytes.Buffer
+	origOutput := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(origOutput)
+
+	done := make(chan struct{})
+	go func() {
+		runRPCAlertWorker(ctx, "chain-a", queue)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker did not stop promptly after ctx cancellation")
+	}
+
+	assert.False(t, dispatchCalled, "a worker started with an already-cancelled ctx must never dispatch buffered jobs")
+	assert.Contains(t, logBuf.String(), "2 queued alert(s) still undelivered",
+		"jobs still buffered when the worker stops must be logged, not silently dropped")
 }

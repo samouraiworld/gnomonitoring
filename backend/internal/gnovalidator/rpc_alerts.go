@@ -32,7 +32,7 @@ const rpcAlertQueueSize = 8
 // alerts.
 //
 //   - lastDispatch is the time of the last CRITICAL that was actually handed
-//     to the dispatch queue (not merely decided upon — see undoRPCAlertDispatch).
+//     to the dispatch queue (not merely decided upon — see unannounceRPCAlert).
 //     It is the anchor the cooldown is measured from, and — this is the fix
 //     for the flapping-endpoint bug — it is deliberately NOT reset when the
 //     outage resolves. Resetting it on every RESOLVED is what let a flapping
@@ -73,7 +73,7 @@ func rpcAlertEntryFor(chainID string) *rpcAlertEntry {
 // the dispatch time and marks the outage "announced" so the paired RESOLVED
 // is not later treated as an orphan. Callers that decide, after a true
 // result, that the event will not actually reach the wire (e.g. the dispatch
-// queue was full) must call undoRPCAlertDispatch to keep the bookkeeping
+// queue was full) must call unannounceRPCAlert to keep the bookkeeping
 // honest.
 func shouldSendRPCAlert(chainID string, now time.Time, cooldown time.Duration) bool {
 	rpcAlertMu.Lock()
@@ -106,18 +106,29 @@ func shouldSendRPCResolved(chainID string) bool {
 	return true
 }
 
-// undoRPCAlertDispatch reverts a shouldSendRPCAlert commitment for chainID
-// when the caller could not actually hand the event to the dispatch queue
-// (queue full). Without this, a dropped CRITICAL would still count as
-// "announced": its paired RESOLVED would later fire for an alert nobody was
-// ever sent, and the cooldown clock would block a genuine retry on an outage
-// that, as far as any operator is concerned, never happened. Wiping the
-// entry entirely (rather than just clearing announced) means the next
-// attempt is judged exactly as if this one had never occurred.
-func undoRPCAlertDispatch(chainID string) {
+// unannounceRPCAlert clears chainID's "announced" flag after a
+// shouldSendRPCAlert commitment could not actually be handed to the dispatch
+// queue (queue full). This only undoes the pairing half of the commitment:
+// without it, a dropped CRITICAL would still count as "announced", and its
+// paired RESOLVED would later fire for an alert nobody was ever sent.
+//
+// It deliberately leaves lastDispatch untouched, unlike an earlier version of
+// this function that deleted the whole entry. A full dispatch queue is most
+// likely to occur under sustained backpressure (many webhooks/Telegram chats,
+// each dispatch bounded at ~10s) — exactly the condition under which a
+// flapping endpoint is also most likely. Wiping lastDispatch there would
+// make the very next EventAllDown look like "the first outage ever" and
+// bypass whatever remained of the cooldown, letting the cooldown collapse to
+// the health-check interval right after a congestion episode — reintroducing
+// a narrower version of the spam this whole cooldown exists to prevent. So
+// the cooldown clock survives a dropped dispatch exactly as it survives a
+// genuine RESOLVED (see shouldSendRPCResolved).
+func unannounceRPCAlert(chainID string) {
 	rpcAlertMu.Lock()
 	defer rpcAlertMu.Unlock()
-	delete(rpcAlertStates, chainID)
+	if e, ok := rpcAlertStates[chainID]; ok {
+		e.announced = false
+	}
 }
 
 // resetRPCAlertState clears all per-chain state. Test helper.
@@ -176,13 +187,54 @@ func defaultRPCDispatch(job rpcJob) {
 // event) is deliberate: it is what guarantees a RESOLVED can never be
 // delivered before its paired CRITICAL, since both share the same chain-scoped
 // queue and are handled strictly FIFO.
-func runRPCAlertWorker(ctx context.Context, queue <-chan rpcJob) {
+//
+// A bare select{} between ctx.Done() and queue gives no priority between its
+// cases: with both ready (ctx cancelled — e.g. an admin-triggered chain
+// restart — while a job still sits in queue), Go picks pseudo-randomly
+// between them, so the worker could return without ever dispatching or even
+// acknowledging that job. Rather than let that be a silent drop — the one
+// path in this file that would otherwise go unlogged, unlike the full-queue
+// path in NewRPCObserver — the shutdown check runs first, non-blocking, on
+// every iteration: once ctx is done, the next iteration always takes the
+// drain-and-return path deterministically, never the queue-read path, no
+// matter how much is still buffered.
+//
+// Whatever is drained here is not delivered: the chain's monitoring context
+// just ended, so dispatching now would race whatever the next pool for this
+// chain does, and a stale "still down" CRITICAL delivered after a restart
+// could be actively misleading. It is logged instead, so the loss is visible.
+func runRPCAlertWorker(ctx context.Context, chainID string, queue <-chan rpcJob) {
 	for {
 		select {
 		case <-ctx.Done():
+			drainAndLogAbandonedRPCJobs(chainID, queue)
+			return
+		default:
+		}
+
+		select {
+		case <-ctx.Done():
+			drainAndLogAbandonedRPCJobs(chainID, queue)
 			return
 		case job := <-queue:
 			getRPCDispatch()(job)
+		}
+	}
+}
+
+// drainAndLogAbandonedRPCJobs empties queue without dispatching and logs how
+// many jobs (if any) were still buffered when the worker stopped.
+func drainAndLogAbandonedRPCJobs(chainID string, queue <-chan rpcJob) {
+	dropped := 0
+	for {
+		select {
+		case <-queue:
+			dropped++
+		default:
+			if dropped > 0 {
+				log.Printf("[rpc][%s] worker stopped with %d queued alert(s) still undelivered", chainID, dropped)
+			}
+			return
 		}
 	}
 }
@@ -206,7 +258,7 @@ func runRPCAlertWorker(ctx context.Context, queue <-chan rpcJob) {
 // fire.
 func NewRPCObserver(ctx context.Context, db *gorm.DB, chainID string) rpcpool.Observer {
 	queue := make(chan rpcJob, rpcAlertQueueSize)
-	go runRPCAlertWorker(ctx, queue)
+	go runRPCAlertWorker(ctx, chainID, queue)
 
 	enqueue := func(job rpcJob) bool {
 		select {
@@ -247,12 +299,12 @@ func NewRPCObserver(ctx context.Context, db *gorm.DB, chainID string) rpcpool.Ob
 				},
 			}
 			if !enqueue(job) {
-				// Drop, never silently: undo the commitment so the next
-				// outage is judged fresh instead of being blocked by a
-				// cooldown for an alert nobody actually received, and so a
-				// later recovery does not send an orphan RESOLVED for it.
+				// Drop, never silently: clear the pairing so a later
+				// recovery does not send an orphan RESOLVED for an alert
+				// nobody actually received. The cooldown clock (lastDispatch)
+				// is deliberately left alone — see unannounceRPCAlert.
 				log.Printf("[rpc][%s] dropping CRITICAL alert: dispatch queue full", chainID)
-				undoRPCAlertDispatch(chainID)
+				unannounceRPCAlert(chainID)
 			}
 
 		case rpcpool.EventRecovered:
