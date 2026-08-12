@@ -162,11 +162,21 @@ func InsertMonitoringWebhook(userID, url, description, typ, chainID string, db *
 	return db.Create(&wh).Error
 }
 
+// DeleteMonitoringWebhook removes a validator webhook and, in the same
+// transaction, any AlertContact rows that reference it — otherwise they'd
+// linger with an id_webhook that matches nothing, permanently unable to
+// fire a mention (see SendAllValidatorAlerts' id_webhook match in fonction.go).
 func DeleteMonitoringWebhook(id int, userID string, db *gorm.DB) error {
-	return db.
-		Where("id = ? AND user_id = ?", id, userID).
-		Delete(&WebhookValidator{}).
-		Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.
+			Where("id_webhook = ? AND user_id = ?", id, userID).
+			Delete(&AlertContact{}).Error; err != nil {
+			return err
+		}
+		return tx.
+			Where("id = ? AND user_id = ?", id, userID).
+			Delete(&WebhookValidator{}).Error
+	})
 }
 
 func ListMonitoringWebhooks(db *gorm.DB, userID string, chainID ...string) ([]WebhookValidator, error) {
@@ -342,9 +352,13 @@ func ListAlertContacts(db *gorm.DB, userID string) ([]AlertContact, error) {
 	return contacts, err
 }
 
-func UpdateAlertContact(db *gorm.DB, id int, userID, moniker, namecontact, mentionTag string, idwebhook int) error {
+// ErrAlertContactNotFound is returned by UpdateAlertContact when no row
+// matches the given id + user_id — either the contact doesn't exist or it
+// belongs to a different user.
+var ErrAlertContactNotFound = errors.New("alert contact not found")
 
-	return db.
+func UpdateAlertContact(db *gorm.DB, id int, userID, moniker, namecontact, mentionTag string, idwebhook int) error {
+	res := db.
 		Model(&AlertContact{}).
 		Where("id = ? AND user_id = ?", id, userID).
 		Updates(map[string]interface{}{
@@ -352,7 +366,14 @@ func UpdateAlertContact(db *gorm.DB, id int, userID, moniker, namecontact, menti
 			"namecontact": namecontact,
 			"mention_tag": mentionTag,
 			"id_webhook":  idwebhook,
-		}).Error
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrAlertContactNotFound
+	}
+	return nil
 }
 func DeleteAlertContact(db *gorm.DB, id int, userID string) error {
 	return db.Where("id = ? AND user_id = ?", id, userID).Delete(&AlertContact{}).Error

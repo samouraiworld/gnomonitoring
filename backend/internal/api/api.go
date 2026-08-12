@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -720,6 +721,11 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
+	if data.Moniker == "" || data.NameContact == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
 	// F6: validate mention_tag is numeric (Discord/Slack snowflake) or empty
 	for _, c := range data.MentionTag {
 		if c < '0' || c > '9' {
@@ -728,7 +734,23 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		}
 	}
 
+	// F7: verify the referenced webhook belongs to the calling user
+	if data.IDwebhook != 0 {
+		var count int64
+		db.Model(&database.WebhookValidator{}).
+			Where("id = ? AND user_id = ?", data.IDwebhook, userID).
+			Count(&count)
+		if count == 0 {
+			http.Error(w, "Webhook not found", http.StatusBadRequest)
+			return
+		}
+	}
+
 	err = database.UpdateAlertContact(db, data.ID, userID, data.Moniker, data.NameContact, data.MentionTag, data.IDwebhook)
+	if errors.Is(err, database.ErrAlertContactNotFound) {
+		http.Error(w, "Alert contact not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to update alert contact: %v", err), http.StatusInternalServerError)
 		return
