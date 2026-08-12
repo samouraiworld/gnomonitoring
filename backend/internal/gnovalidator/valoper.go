@@ -8,11 +8,9 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -145,14 +143,16 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 	log.Printf("[valoper] fetched %d valopers", len(allValopers))
 	return allValopers, nil
 }
-func GetGenesisMonikers(rpcURL string) (map[string]string, error) {
-	url := fmt.Sprintf("%s/genesis", strings.TrimRight(rpcURL, "/"))
-
-	resp, err := http.Get(url)
+// GetGenesisMonikers fetches /genesis from the first endpoint that answers
+// and extracts the validator name for each genesis validator address. The
+// response is streamed rather than buffered: a genesis file can be large.
+func GetGenesisMonikers(endpoints []string) (map[string]string, error) {
+	resp, used, err := getWithFailover(endpoints, "/genesis")
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch genesis: %w", err)
 	}
 	defer resp.Body.Close()
+	log.Printf("[valoper] genesis monikers fetched from %s", used)
 
 	type Validator struct {
 		Address string `json:"address"`
@@ -340,27 +340,18 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 			Validators  []Validator `json:"validators"`
 		} `json:"result"`
 	}
-	// Step 1 — Retrieve active validators from the RPC endpoint `/validators`
-	url := fmt.Sprintf("%s/validators", strings.TrimRight(chainCfg.RPCEndpoint(), "/"))
-	var resp *http.Response
-	err := doWithRetry(3, 2*time.Second, func() error {
-		var e error
-		resp, e = http.Get(url) // nolint:bodyclose // closed via defer resp.Body.Close() below
-		return e
-	})
+	// Step 1 — Retrieve active validators from the first RPC endpoint that answers
+	resp, usedEndpoint, err := getWithFailover(chainCfg.RPCEndpoints, "/validators")
 	if err != nil {
-		log.Printf("[valoper][%s] failed to retrieve validators after retries: %v", chainID, err)
+		log.Printf("[valoper][%s] failed to retrieve validators from any endpoint: %v", chainID, err)
 		return nil
 	}
 	defer resp.Body.Close()
+	log.Printf("[valoper][%s] validators fetched from %s", chainID, usedEndpoint)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("❌ Error reading validator response: %v", err)
-		return nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("❌ Invalid HTTP status %d from /validators: %s", resp.StatusCode, string(body))
 		return nil
 	}
 
@@ -394,7 +385,7 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 	}
 
 	// Step 3 — Genesis monikers
-	genesisMap, err := GetGenesisMonikers(chainCfg.RPCEndpoint())
+	genesisMap, err := GetGenesisMonikers(chainCfg.RPCEndpoints)
 	if err != nil {
 		log.Printf("⚠️ Failed to get genesis monikers: %v", err)
 	}
@@ -493,17 +484,4 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 		chainID, resolved, unresolved)
 
 	return valopers
-}
-func doWithRetry(attempts int, sleep time.Duration, fn func() error) error {
-	var err error
-	for i := 0; i < attempts; i++ {
-		err = fn()
-		if err == nil {
-			return nil
-		}
-		log.Printf("[valoper] retry %d/%d: %v", i+1, attempts, err)
-		time.Sleep(sleep)
-		sleep *= 2 // backoff
-	}
-	return fmt.Errorf("all retries failed: %w", err)
 }
