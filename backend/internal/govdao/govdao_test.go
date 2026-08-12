@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
@@ -27,10 +28,10 @@ func TestProcessProposalSurvivesTitleError(t *testing.T) {
 	t.Cleanup(func() {
 		fetchProposalTitle, fetchProposalStatus, fetchTxByHeight = origTitle, origStatus, origTx
 	})
-	fetchProposalTitle = func(int, string) (string, error) {
+	fetchProposalTitle = func(int, *gnoclient.Client) (string, error) {
 		return "", fmt.Errorf("runtime error: nil pointer dereference")
 	}
-	fetchProposalStatus = func(int, string) (string, error) {
+	fetchProposalStatus = func(int, *gnoclient.Client) (string, error) {
 		return "", fmt.Errorf("render unavailable")
 	}
 	fetchTxByHeight = func(int, []string) (*TxBlock, error) {
@@ -50,7 +51,7 @@ func TestProcessProposalSurvivesTitleError(t *testing.T) {
 	// who="Fetch" exercises the insert path without dispatching real
 	// Telegram/Discord notifications; the notify branch follows the same
 	// non-aborting flow.
-	ProcessProposal(tx, "Fetch", db, "test-13", []string{"http://gql"}, "http://rpc", "https://test13.testnets.gno.land")
+	ProcessProposal(tx, "Fetch", db, "test-13", []string{"http://gql"}, &gnoclient.Client{}, "https://test13.testnets.gno.land")
 
 	var p database.Govdao
 	require.NoError(t, db.Where("chain_id = ? AND id = ?", "test-13", 23).First(&p).Error,
