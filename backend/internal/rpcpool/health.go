@@ -51,7 +51,6 @@ func (c *Client) StartHealthChecks(ctx context.Context, interval time.Duration) 
 func (c *Client) checkOnce() int {
 	c.mu.Lock()
 	n := len(c.endpoints)
-	active := c.activeIdx
 	c.mu.Unlock()
 
 	if n == 0 {
@@ -84,7 +83,19 @@ func (c *Client) checkOnce() int {
 			continue
 		}
 
-		c.onSuccess(observedAt, i, i != active)
+		// Re-read activeIdx right before the call instead of using a
+		// snapshot taken at the top of the loop: with defaultProbeTimeout at
+		// several seconds and several endpoints, a concurrent call() can
+		// have rotated the real active endpoint while this probe was in
+		// flight, and a stale snapshot could silently miss a genuine
+		// transition (onSuccess still re-derives prev itself, so state
+		// cannot be corrupted either way — this only affects whether the
+		// EventRotated log/observer call fires).
+		c.mu.Lock()
+		currentActive := c.activeIdx
+		c.mu.Unlock()
+
+		c.onSuccess(observedAt, i, i != currentActive)
 		return i
 	}
 

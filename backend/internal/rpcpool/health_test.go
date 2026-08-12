@@ -3,9 +3,11 @@ package rpcpool
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,15 +84,31 @@ func TestProbe_TimesOutOnAHangingEndpoint(t *testing.T) {
 }
 
 func TestStartHealthChecks_StopsWithContext(t *testing.T) {
-	c := New([]string{"e0"}, WithDialer(fakeDialerFrom(map[string]*fakeConn{
-		"e0": {endpoint: "e0"},
-	})))
+	conn := &countingConn{fakeConn: fakeConn{endpoint: "e0"}}
+	c := New([]string{"e0"}, WithDialer(func(endpoint string) (rpcclient.Client, error) {
+		return conn, nil
+	}))
+
 	ctx, cancel := context.WithCancel(context.Background())
 	c.StartHealthChecks(ctx, 10*time.Millisecond)
-	time.Sleep(30 * time.Millisecond)
+
+	// Confirm probing actually started before we cancel, so a later
+	// "count did not move" assertion cannot pass merely because nothing
+	// ever ran in the first place.
+	require.Eventually(t, func() bool { return conn.count() > 0 }, 200*time.Millisecond, 5*time.Millisecond,
+		"health checks must have probed at least once before cancellation")
+
 	cancel()
-	// No assertion beyond "does not panic and does not leak past cancel";
-	// -race in CI is what actually guards this.
+
+	// Give any tick already in flight time to land, then take a baseline.
+	time.Sleep(20 * time.Millisecond)
+	afterCancel := conn.count()
+
+	// Wait comfortably longer than several ticker intervals: if the ctx.Done
+	// arm were not honoured, the ticker (10ms) would have fired many more
+	// times by now and moved the count.
+	time.Sleep(150 * time.Millisecond)
+	assert.Equal(t, afterCancel, conn.count(), "health checks must stop probing once ctx is cancelled")
 }
 
 // hangingConn never returns from Status until block is closed. It models an
@@ -103,4 +121,26 @@ type hangingConn struct {
 func (h *hangingConn) Status() (*ctypes.ResultStatus, error) {
 	<-h.block
 	return nil, errors.New("unreachable")
+}
+
+// countingConn counts Status() invocations so a test can observe whether the
+// health-check goroutine is still probing. Everything else delegates to the
+// embedded fakeConn.
+type countingConn struct {
+	fakeConn
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingConn) Status() (*ctypes.ResultStatus, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return c.fakeConn.Status()
+}
+
+func (c *countingConn) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
 }
