@@ -168,10 +168,15 @@ func InsertMonitoringWebhook(userID, url, description, typ, chainID string, db *
 // fire a mention (see SendAllValidatorAlerts' id_webhook match in fonction.go).
 func DeleteMonitoringWebhook(id int, userID string, db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.
-			Where("id_webhook = ? AND user_id = ?", id, userID).
-			Delete(&AlertContact{}).Error; err != nil {
-			return err
+		// NoWebhookLinked never identifies a real webhook, and matching it
+		// against id_webhook would sweep up every contact the user
+		// deliberately left unlinked, not just the ones tied to this webhook.
+		if id != NoWebhookLinked {
+			if err := tx.
+				Where("id_webhook = ? AND user_id = ?", id, userID).
+				Delete(&AlertContact{}).Error; err != nil {
+				return err
+			}
 		}
 		return tx.
 			Where("id = ? AND user_id = ?", id, userID).
@@ -332,6 +337,13 @@ func createHourReport(db *gorm.DB, userID string) error {
 }
 
 // ============================== Alert_contact =============================================
+
+// NoWebhookLinked is the AlertContact.IDwebhook value meaning "not attached to
+// any webhook" — what the API stores when a caller omits id_webhook. Webhook
+// IDs are autoIncrement and therefore always >= 1, so this can never collide
+// with a real webhook.
+const NoWebhookLinked = 0
+
 func InsertAlertContact(db *gorm.DB, userID, moniker, namecontact, mentionTag string, idwebhook int) error {
 	contact := AlertContact{
 		UserID:      userID,
@@ -341,6 +353,22 @@ func InsertAlertContact(db *gorm.DB, userID, moniker, namecontact, mentionTag st
 		IDwebhook:   idwebhook,
 	}
 	return db.Create(&contact).Error
+}
+
+// GetAlertContact returns the caller's contact with this id, or (nil, nil)
+// when no such row exists for that user.
+func GetAlertContact(db *gorm.DB, id int, userID string) (*AlertContact, error) {
+	var contact AlertContact
+	err := db.
+		Where("id = ? AND user_id = ?", id, userID).
+		First(&contact).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &contact, nil
 }
 
 func ListAlertContacts(db *gorm.DB, userID string) ([]AlertContact, error) {
