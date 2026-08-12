@@ -365,6 +365,16 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 		return nil
 	}
 
+	// A node still syncing, or a proxy serving a degraded response, can answer
+	// 200 with an empty validator set. Replacing MonikerMap with that would
+	// make classifyValsetChanges report every validator as having left the
+	// valset — one alert each — and stop SaveParticipation from writing any
+	// row at all. Keep the previous map and retry on the next cycle.
+	if len(validatorsResp.Result.Validators) == 0 {
+		log.Printf("[valoper][%s] /validators returned an empty validator set from %s; keeping the previous MonikerMap", chainID, usedEndpoint)
+		return nil
+	}
+
 	// Step 2 — Use passed client for valopers.Render
 	valopers, err := GetValopers(client)
 	if err != nil {
