@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -652,11 +653,14 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	}
 
 	// F7: verify the referenced webhook belongs to the calling user
-	if input.IDwebhook != 0 {
+	if input.IDwebhook != database.NoWebhookLinked {
 		var count int64
-		db.Model(&database.WebhookValidator{}).
+		if err := db.Model(&database.WebhookValidator{}).
 			Where("id = ? AND user_id = ?", input.IDwebhook, userID).
-			Count(&count)
+			Count(&count).Error; err != nil {
+			http.Error(w, fmt.Sprintf("Failed to verify webhook: %v", err), http.StatusInternalServerError)
+			return
+		}
 		if count == 0 {
 			http.Error(w, "Webhook not found", http.StatusBadRequest)
 			return
@@ -720,6 +724,11 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
+	if data.Moniker == "" || data.NameContact == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
 	// F6: validate mention_tag is numeric (Discord/Slack snowflake) or empty
 	for _, c := range data.MentionTag {
 		if c < '0' || c > '9' {
@@ -728,7 +737,48 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		}
 	}
 
+	// F7: verify the referenced webhook belongs to the calling user
+	if data.IDwebhook != database.NoWebhookLinked {
+		var count int64
+		if err := db.Model(&database.WebhookValidator{}).
+			Where("id = ? AND user_id = ?", data.IDwebhook, userID).
+			Count(&count).Error; err != nil {
+			http.Error(w, fmt.Sprintf("Failed to verify webhook: %v", err), http.StatusInternalServerError)
+			return
+		}
+		if count == 0 {
+			http.Error(w, "Webhook not found", http.StatusBadRequest)
+			return
+		}
+	}
+
+	existing, err := database.GetAlertContact(db, data.ID, userID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to load alert contact: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if existing == nil {
+		http.Error(w, "Alert contact not found", http.StatusNotFound)
+		return
+	}
+
+	// UpdateAlertContact writes through Updates(map[...]), which persists zero
+	// values: an omitted id_webhook would unlink the contact from its webhook
+	// and stop it from ever matching an alert again (SendAllValidatorAlerts
+	// joins on id_webhook). Refuse rather than silently clear. mention_tag is
+	// deliberately left clearable — an empty tag is a legal state that POST
+	// also accepts, and blanking it only drops the ping, it doesn't break the
+	// match.
+	if data.IDwebhook == database.NoWebhookLinked && existing.IDwebhook != database.NoWebhookLinked {
+		http.Error(w, "id_webhook is required: refusing to unlink the contact from its webhook", http.StatusBadRequest)
+		return
+	}
+
 	err = database.UpdateAlertContact(db, data.ID, userID, data.Moniker, data.NameContact, data.MentionTag, data.IDwebhook)
+	if errors.Is(err, database.ErrAlertContactNotFound) {
+		http.Error(w, "Alert contact not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to update alert contact: %v", err), http.StatusInternalServerError)
 		return

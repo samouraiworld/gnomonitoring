@@ -53,6 +53,32 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **`PUT /alert-contacts` skipped the ownership/validation checks `POST` already
+  had** — updating a contact could attach it to a webhook owned by another
+  user, accepted an empty `moniker`/`namecontact` and silently blanked the
+  stored values via `Updates(map[string]interface{}{...})`, and returned 200
+  even when the `id`/`user_id` matched no row (0 rows affected, nil error).
+  `UpdateAlertContactHandler` now runs the same webhook-ownership and
+  required-field checks as `InsertAlertContactHandler`, rejects a payload that
+  would unlink a contact from its webhook (an omitted `id_webhook` decodes to
+  `0` and would otherwise be persisted, breaking the `id_webhook` join in
+  `SendAllValidatorAlerts`), and returns 404 for an unknown contact.
+  `UpdateAlertContact` returns `ErrAlertContactNotFound` when no row is
+  affected as a backstop.
+
+- **Deleting a validator webhook orphaned its `alert_contacts` rows** —
+  `AlertContact.IDwebhook` has no DB-level foreign key, so removing a webhook
+  left contacts pointing at an `id_webhook` that matched nothing, permanently
+  unable to fire a mention. `DeleteMonitoringWebhook` now deletes the
+  webhook's `alert_contacts` in the same transaction, skipping the cascade for
+  the new `NoWebhookLinked` (`0`) sentinel so it can never sweep up every
+  contact the user left unlinked.
+
+- **Webhook-ownership check swallowed DB errors** — the `Count` call in both
+  the `POST` and `PUT` `/alert-contacts` guards ignored its error, so a
+  transient database failure surfaced as 400 "Webhook not found" instead of
+  500.
+
 - **`ValidatorVotingPower` metric wiped all chains on each cycle** — replaced
   `Reset()` with `DeletePartialMatch(chainLabel)` so only the current chain's
   stale entries are cleared.
