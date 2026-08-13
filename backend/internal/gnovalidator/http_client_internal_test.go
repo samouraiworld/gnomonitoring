@@ -67,8 +67,16 @@ func TestGetWithFailover_AllEndpointsFail(t *testing.T) {
 	}))
 	defer s.Close()
 
-	_, _, err := getWithFailover([]string{s.URL, s.URL}, "/validators")
+	resp, _, err := getWithFailover([]string{s.URL, s.URL}, "/validators")
+	// getWithFailover closes every non-2xx body itself and returns a nil
+	// response once every endpoint has failed. Assert that contract rather
+	// than discarding the value: a future change that returned an open body
+	// on the error path would leak a connection on every failed refresh.
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	require.Error(t, err)
+	assert.Nil(t, resp, "no response may be returned once every endpoint failed")
 	assert.Contains(t, err.Error(), "all 2")
 }
 

@@ -74,13 +74,11 @@ func TestEvaluateRegression(t *testing.T) {
 	})
 
 	t.Run("a non-regressed observation in between resets the tracker", func(t *testing.T) {
-		// A regression starts tracking at t0...
-		since := t0
-
-		// ...but before it can accumulate past bound, a non-regressed
-		// observation arrives. CollectParticipation resets the tracker to
-		// the zero Time in that case rather than calling evaluateRegression.
-		since = time.Time{}
+		// A regression started tracking at t0, but before it could accumulate
+		// past bound a non-regressed observation arrived. CollectParticipation
+		// resets the tracker to the zero Time in that case rather than calling
+		// evaluateRegression, so that is the state a fresh episode starts from.
+		since := time.Time{}
 
 		// A fresh regression episode beginning well after t0+bound must NOT
 		// be immediately accepted: it gets its own bound window and does not

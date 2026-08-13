@@ -85,7 +85,9 @@ func (c *Client) checkOnce() int {
 		c.mu.Unlock()
 
 		if dialErr != nil {
-			observedAt = time.Now()
+			// No observedAt is recorded here: this branch always continues to
+			// the next endpoint, and observedAt is only read on the success
+			// path below, so timestamping a failed dial would be dead.
 			log.Printf("[rpcpool] health probe: %v", dialErr)
 			continue
 		}
