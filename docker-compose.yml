@@ -24,6 +24,11 @@ services:
       - "work_mem=64MB"
       - "-c"
       - "maintenance_work_mem=512MB"
+    # Docker's default /dev/shm is 64MB, which is exhausted by the DSM
+    # segments parallel workers allocate on the GROUP BY / UNION ALL metric
+    # queries in db_metrics.go, well before work_mem itself is hit. Raised to
+    # match the shared_buffers tier above.
+    shm_size: '1gb'
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
