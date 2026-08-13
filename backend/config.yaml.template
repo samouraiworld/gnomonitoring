@@ -51,6 +51,10 @@ default_chain: "test12"
 # when both are present. Existing single-URL configs need no changes.
 chains:
   test12:
+    # Endpoints are tried in priority order. The first entry is the primary;
+    # the pool fails over to the next one when it stops answering, and returns
+    # to the primary on its own once it recovers (see rpc_health_check_seconds
+    # in admin_config, default 60).
     rpc_endpoints:
       - "https://rpc.test12.testnets.gno.land"
       # - "https://rpc.test12-fallback.example.com"

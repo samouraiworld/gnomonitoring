@@ -22,7 +22,14 @@ diff_output="$(git diff -W "$BASE"...HEAD -- 'backend/**/*.go' || true)"
 [ -z "$diff_output" ] && exit 0
 
 while IFS= read -r -d '' hunk; do
-    if grep -qE "$TABLES" <<<"$hunk" && ! grep -q 'chain_id' <<<"$hunk"; then
+    # Look for table names in code only. Prose naming a table — a doc comment
+    # explaining which table a helper writes to, or why an addr is excluded
+    # from one — is not a query and must not trip the gate. Only whole-line
+    # comments are dropped (after the diff's +/-/space prefix), so a code line
+    # with a trailing comment is still inspected in full, and a "//" inside a
+    # string literal can never truncate one.
+    hunk_code="$(grep -vE '^[-+ ]?[[:space:]]*//' <<<"$hunk" || true)"
+    if grep -qE "$TABLES" <<<"$hunk_code" && ! grep -q 'chain_id' <<<"$hunk"; then
         echo "::error::Query touching a chain-scoped table with no chain_id in the same function (see CLAUDE.md: DB query WHERE chain_id scoping):"
         echo "$hunk" | head -20
         violations=$((violations + 1))

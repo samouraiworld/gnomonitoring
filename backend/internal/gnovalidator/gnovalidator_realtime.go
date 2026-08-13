@@ -81,9 +81,9 @@ func GetFirstActiveBlockMap(chainID string) map[string]int64 {
 
 // timeMu protects the per-chain time maps below since time.Time is not atomic-safe.
 var timeMu sync.Mutex
-var lastRPCErrorAlert = make(map[string]time.Time)      // per-chain RPC error anti-spam
-var lastProgressTime = make(map[string]time.Time)       // per-chain last block progress time
+var lastProgressTime = make(map[string]time.Time)        // per-chain last block progress time
 var lastStagnationAlertTime = make(map[string]time.Time) // per-chain last stagnation alert time
+var regressionSince = make(map[string]time.Time)         // per-chain: when the current height regression episode started (zero = none in progress)
 
 // lastProgressHeight[chainID] = block height
 var lastProgressHeight = make(map[string]int64)
@@ -96,9 +96,6 @@ var alertMutex sync.RWMutex
 // restoredNotified[chainID][addr] = bool
 var restoredNotified = make(map[string]map[string]bool)
 var restoreMutex sync.RWMutex
-
-var chainRPCClients = make(map[string]*FallbackRPCClient)
-var chainRPCClientsMu sync.RWMutex
 
 // chainSynced[chainID] = true once the backfill gap drops below the threshold.
 // WatchValidatorAlerts skips processing while false to avoid historical alert spam.
@@ -115,19 +112,6 @@ func isChainSynced(chainID string) bool {
 	chainSyncedMu.RLock()
 	defer chainSyncedMu.RUnlock()
 	return chainSynced[chainID]
-}
-
-func SetChainRPCClient(chainID string, client *FallbackRPCClient) {
-	chainRPCClientsMu.Lock()
-	defer chainRPCClientsMu.Unlock()
-	chainRPCClients[chainID] = client
-}
-
-func GetChainRPCClient(chainID string) (*FallbackRPCClient, bool) {
-	chainRPCClientsMu.RLock()
-	defer chainRPCClientsMu.RUnlock()
-	c, ok := chainRPCClients[chainID]
-	return c, ok
 }
 
 func GetLastProgressTime(chainID string) (time.Time, bool) {
@@ -175,20 +159,10 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 
 			latest, err := client.LatestBlockHeight()
 			if err != nil {
+				// The pool has already tried every endpoint and, on a full
+				// outage, dispatched the CRITICAL alert through its observer
+				// (see NewRPCObserver). Nothing to alert on here.
 				log.Printf("[monitor][%s] error fetching latest height: %v", chainID, err)
-
-				timeMu.Lock()
-				sinceRPCErr := time.Since(lastRPCErrorAlert[chainID])
-				timeMu.Unlock()
-				t := GetThresholds()
-				if sinceRPCErr > t.RPCErrorCooldown() {
-					msg := fmt.Sprintf("⚠️ Error when querying latest block height: %v", err)
-					msg += fmt.Sprintf("\nLast known block height: %d", currentHeight)
-					log.Println(msg)
-					timeMu.Lock()
-					lastRPCErrorAlert[chainID] = time.Now()
-					timeMu.Unlock()
-				}
 				select {
 				case <-ctx.Done():
 					return
@@ -198,6 +172,82 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 			}
 			// Stagnation detection
 			lph := GetLastHeight(chainID)
+
+			// The pool may have failed over to an endpoint a few blocks
+			// behind the previous one. That is not chain progress, and
+			// counting it as such would reset the stagnation timer on every
+			// flip-flop between two endpoints at different heights.
+			//
+			// Trade-off: never lowering lph on a regression is what makes this
+			// immune to that oscillation, but taken alone it would also make a
+			// *permanent* rewind invisible forever — e.g. an operator restores
+			// a node from an older snapshot and that node then genuinely
+			// halts. latest could then never again reach lph, so this branch
+			// would `continue` forever and the CRITICAL "Blockchain stuck"
+			// alert would never fire — the same class of bug this guard
+			// exists to fix, just triggered from the other side. regressionSince
+			// bounds how long a regression may be ignored: once it has
+			// persisted past GetThresholds().StagnationFirstAlert() — the same
+			// threshold that already governs "no forward progress for too
+			// long" — the lower height is accepted as the new baseline via
+			// SetLastHeight, and classification resumes normally so a
+			// genuinely halted rewound node reaches the stalled branch below
+			// and raises its alert.
+			obs := classifyHeightObservation(latest, lph)
+			if obs == heightRegressed {
+				now := time.Now()
+				timeMu.Lock()
+				since := regressionSince[chainID]
+				accept, next := evaluateRegression(since, now, GetThresholds().StagnationFirstAlert())
+				regressionSince[chainID] = next
+				timeMu.Unlock()
+
+				if !accept {
+					log.Printf("[monitor][%s] ignoring regressed height %d (highest seen %d); the active endpoint is behind",
+						chainID, latest, lph)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(3 * time.Second):
+					}
+					continue
+				}
+
+				log.Printf("[monitor][%s] height %d has stayed regressed (highest seen was %d) for %s, longer than the stagnation threshold; accepting it as the new baseline instead of ignoring it forever",
+					chainID, latest, lph, now.Sub(since))
+				SetLastHeight(chainID, latest)
+				// Reset the stagnation clock instead of falling straight
+				// into the stalled branch below: lastProgressTime was
+				// deliberately NOT updated while this regression was being
+				// ignored (this path `continue`s before reaching the
+				// progress branch), so stuckFor := time.Since(lpt) would
+				// already exceed StagnationFirstAlert() on this very line —
+				// firing a CRITICAL "Blockchain stuck" instantly on every
+				// acceptance. That is correct for a node truly rewound and
+				// halted, but the far more common trigger for reaching this
+				// branch is the pool failing over to a healthy backup that
+				// is merely a few blocks behind and advancing at the same
+				// rate as before, which never "catches up" to lph and so
+				// always ends up here. Treating the accepted height as a
+				// fresh baseline and letting the *next* poll decide means a
+				// healthy lagging backup (which advances next poll) never
+				// alerts, while a genuinely halted rewound node (which does
+				// not advance) still reaches the stalled branch and alerts,
+				// just one StagnationFirstAlert() window later than an
+				// instant-fire would have. Reuses `now`, captured above at
+				// the top of this observation, rather than taking a fresh
+				// timestamp.
+				timeMu.Lock()
+				lastProgressTime[chainID] = now
+				lastStagnationAlertTime[chainID] = time.Time{}
+				timeMu.Unlock()
+				obs = heightStalled
+			} else {
+				timeMu.Lock()
+				regressionSince[chainID] = time.Time{}
+				timeMu.Unlock()
+			}
+
 			timeMu.Lock()
 			lpt, lptSet := lastProgressTime[chainID]
 			if !lptSet {
@@ -207,7 +257,7 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 			lastAlert := lastStagnationAlertTime[chainID]
 			timeMu.Unlock()
 
-			if lph != 0 && latest == lph {
+			if obs == heightStalled {
 				stuckFor := time.Since(lpt)
 				t := GetThresholds()
 				firstAlert := lastAlert.IsZero()
@@ -281,10 +331,6 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					SetAlertSent(chainID, "all", false)
 				}
 			}
-
-			timeMu.Lock()
-			lastRPCErrorAlert[chainID] = time.Time{}
-			timeMu.Unlock()
 
 			if latest <= currentHeight {
 				select {
@@ -742,8 +788,13 @@ func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, 
 		return
 	}
 
-	rpcClient := NewFallbackRPCClient(chainCfg.RPCEndpoints)
-	SetChainRPCClient(chainID, rpcClient)
+	rpcClient, ok := GetChainRPCClient(chainID)
+	if !ok {
+		// main.startChainMonitoring registers the pool before launching this
+		// goroutine; a missing entry means a caller skipped that step.
+		log.Printf("[monitor][%s] no RPC pool registered, monitoring not started", chainID)
+		return
+	}
 	client := gnoclient.Client{RPCClient: rpcClient}
 
 	t := GetThresholds()

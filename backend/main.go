@@ -35,6 +35,12 @@ func startChainMonitoring(db *gorm.DB, chainID string, chainCfg *internal.ChainC
 	log.Printf("[main] starting monitoring for chain %s", chainID)
 	ctx, cancel := context.WithCancel(context.Background())
 	chainmanager.Register(chainID, cancel)
+
+	// Register the RPC pool before either goroutine starts: both look it up
+	// by chain ID, and govdao would otherwise race the validator monitor for
+	// the registration.
+	gnovalidator.StartRPCPool(ctx, db, chainID, chainCfg)
+
 	go gnovalidator.StartValidatorMonitoring(ctx, db, chainID, chainCfg)
 	go govdao.StartGovDAo(ctx, db, chainID, chainCfg)
 }
