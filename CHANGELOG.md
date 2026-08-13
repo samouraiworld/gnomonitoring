@@ -9,6 +9,32 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **RPC failover only tried the second endpoint, never a third** — the pool
+  now walks every configured endpoint in priority order on a failure, so a
+  third healthy endpoint is used when the first two are down.
+
+- **A full RPC outage was written to the log only, never dispatched** — it
+  now sends a CRITICAL alert to Discord/Slack/Telegram, and recovery sends a
+  RESOLVED alert once connectivity returns.
+
+- **`/validators` and `/genesis` fetches could hang monitoring startup
+  indefinitely** — they previously retried `rpc_endpoints[0]` three times
+  with `http.DefaultClient`, which has no timeout: a hung primary blocked
+  startup forever. They now fail over across all configured endpoints and
+  are bounded by a 15s timeout.
+
+- **An empty `/validators` response wiped the valset** — this used to fire
+  one "Validator left the valset" alert per validator. An empty response is
+  now ignored and the previous valset is kept instead of being replaced.
+
+- **A failover to a lagging endpoint could suppress the "Blockchain stuck"
+  alert indefinitely** — two endpoints a few blocks apart made the observed
+  height oscillate, which reset the stagnation timer on every oscillation.
+  A brief height regression is now tolerated instead of resetting it.
+
+- **GovDAO proposal title and status lookups had no failover** — they now go
+  through the pooled RPC client like the rest of chain monitoring.
+
 - **`first_active_block` stuck at `-1`/`NULL` for validators that join but
   never sign** — it is now anchored on the validator's first observed
   `/validators` snapshot (valset join) instead of its first true signature,
@@ -27,6 +53,10 @@ Entries are ordered newest-first within each section.
   GovDAO PUT handler: requires and forwards the decoded chain_id.
 
 ### Added
+
+- **`rpc_health_check_seconds`** (admin_config, default 60) — how often the
+  RPC pool probes its configured endpoints in the background to return to
+  the highest-priority one once it is healthy again.
 
 - **Live RPC data in daily report and `/status`** — `ChainHealthSnapshot` now
   fetches validator set with voting power (`Validators()`), valset changes from
