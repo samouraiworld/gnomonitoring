@@ -61,6 +61,28 @@ func WithObserver(o Observer) Option { return func(c *Client) { c.obs = o } }
 // rpcclient.Client. Index 0 is the primary; later indexes are backups tried
 // in order. It is safe for concurrent use.
 type Client struct {
+	// notifyMu serializes "apply a transition, then deliver it to the
+	// observer" as a single unit across onSuccess/onAllDown. Lock ordering:
+	// notifyMu is always acquired before mu, and is held across the observer
+	// callback — never acquire mu first and take notifyMu afterwards, that
+	// would deadlock against the ordering used here.
+	//
+	// Without this, the two functions unlock mu before calling obs (there is
+	// a log.Printf, a mutex, a write syscall, in between), so a newer
+	// transition applied by one goroutine can have its callback delivered
+	// before an older transition's callback that already started but had not
+	// yet reached obs(). Downstream, the observer relies on delivery order
+	// matching observedAt order (e.g. shouldSendRPCResolved treats an
+	// out-of-order EventRecovered as an orphan with nothing to pair
+	// against), so an inverted delivery order can permanently drop the
+	// RESOLVED half of an alert pair. Serializing the whole
+	// apply-then-notify sequence under notifyMu closes that window: only one
+	// transition's callback can be in flight at a time, and the observedAt
+	// staleness check inside (under mu) still guarantees that whichever one
+	// wins the notifyMu race is the one that actually reflects the freshest
+	// observation — see call's doc comment below for why observedAt, not
+	// arrival order, is what must decide.
+	notifyMu  sync.Mutex
 	mu        sync.Mutex
 	endpoints []string
 	conns     []rpcclient.Client // index-aligned with endpoints; nil until dialed
@@ -206,7 +228,15 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 // fn(conn) returned nil; if a newer outcome has already been applied, this
 // completion is stale and is discarded without touching state or the
 // observer.
+//
+// notifyMu is held for the whole function, before mu is even taken, so that
+// applying this transition and delivering it to the observer happen as one
+// unit relative to any concurrent onAllDown/onSuccess call — see the lock
+// ordering note on the Client struct.
 func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) {
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
+
 	c.mu.Lock()
 	if !observedAt.After(c.lastObservedAt) {
 		c.mu.Unlock()
@@ -242,7 +272,15 @@ func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) {
 // the endpoint walk exhausted every endpoint; if a newer outcome has
 // already been applied, this completion is stale and is discarded without
 // touching state or the observer.
+//
+// notifyMu is held for the whole function, before mu is even taken, so that
+// applying this transition and delivering it to the observer happen as one
+// unit relative to any concurrent onAllDown/onSuccess call — see the lock
+// ordering note on the Client struct.
 func (c *Client) onAllDown(observedAt time.Time, err error) {
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
+
 	c.mu.Lock()
 	if !observedAt.After(c.lastObservedAt) {
 		c.mu.Unlock()

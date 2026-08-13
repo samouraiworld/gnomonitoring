@@ -14,11 +14,6 @@ import (
 // can reach it too.
 type FallbackRPCClient = rpcpool.Client
 
-// SetChainRPCClient publishes the pool serving chainID.
-func SetChainRPCClient(chainID string, client *FallbackRPCClient) {
-	rpcpool.Register(chainID, client)
-}
-
 // GetChainRPCClient returns the pool serving chainID.
 func GetChainRPCClient(chainID string) (*FallbackRPCClient, bool) {
 	return rpcpool.Get(chainID)

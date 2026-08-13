@@ -177,6 +177,10 @@ func defaultRPCDispatch(job rpcJob) {
 	if sendErr := internal.SendInfoValidator(job.chainID, job.data, job.db); sendErr != nil {
 		log.Printf("[rpc][%s] SendInfoValidator error: %v", job.chainID, sendErr)
 	}
+	// skipped=false (not true) is load-bearing: SendResolveAlerts only
+	// treats alert_logs rows with skipped=true as pending validator
+	// incidents to auto-resolve. Passing false here is what keeps it from
+	// ever picking up this RPC-outage CRITICAL as one.
 	if logErr := database.InsertAlertlog(job.db, job.chainID, rpcAlertAddr, rpcAlertAddr, job.level, 0, 0, false, time.Now(), job.msg); logErr != nil {
 		log.Printf("[rpc][%s] InsertAlertlog error: %v", job.chainID, logErr)
 	}

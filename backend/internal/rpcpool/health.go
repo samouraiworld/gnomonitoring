@@ -9,9 +9,14 @@ import (
 )
 
 // defaultProbeTimeout bounds a single health probe. gno's HTTP RPC client
-// sets no request timeout of its own, so without this an endpoint that
-// accepts the TCP connection and then goes silent would hang the health
-// goroutine forever — the same failure mode this whole probe exists to catch.
+// does set its own request timeout (60s, see
+// tm2/pkg/bft/rpc/client/client.go), but that budget is sized for the data
+// path, which is expected to tolerate a genuinely slow-but-alive node. The
+// probe's only job is to find the highest-priority endpoint that answers
+// quickly enough to be worth promoting, so it deliberately bounds itself far
+// tighter than that 60s: a hung or merely slow endpoint must not be allowed
+// to stall the promotion loop. A probe timeout here is not proof the
+// endpoint is down — see checkOnce, which does not treat it as one.
 const defaultProbeTimeout = 5 * time.Second
 
 // StartHealthChecks probes the endpoints every interval until ctx is done. It
@@ -42,12 +47,26 @@ func (c *Client) StartHealthChecks(ctx context.Context, interval time.Duration) 
 // checkOnce probes endpoints in priority order and promotes the first one
 // that answers. Returns the promoted index, or -1 when none answered.
 //
+// checkOnce is promotion-only: it may only ever call onSuccess, never
+// onAllDown. A probe failure is bounded by defaultProbeTimeout (5s), far
+// tighter than the 60s the data path tolerates per call (see that const's
+// doc comment), so "every probe failed" is not proof of a total outage —
+// only that no endpoint answered within the probe's much narrower budget. A
+// single transient >5s response on an otherwise healthy single-endpoint
+// deployment used to be enough to make checkOnce declare EventAllDown on its
+// own authority, firing a false CRITICAL "block collection and validator
+// alerts are stopped" for a chain that never actually stopped collecting.
+// Detecting a genuine total outage remains call()'s job in pool.go: it
+// already walks every endpoint on the real data path, under the data path's
+// own more tolerant timeout, and calls onAllDown when they all genuinely
+// fail — so removing the call here loses no detection capability.
+//
 // observedAt is captured right after probeWithTimeout returns for each
 // endpoint (or right after a dial failure), never once up front: onSuccess
-// and onAllDown order transitions by when the outcome was actually observed,
-// not by when checkOnce started, so a single timestamp taken at the top of
-// this function would misrepresent every endpoint after the first (see
-// call's doc comment in pool.go for the full rationale).
+// orders transitions by when the outcome was actually observed, not by when
+// checkOnce started, so a single timestamp taken at the top of this function
+// would misrepresent every endpoint after the first (see call's doc comment
+// in pool.go for the full rationale).
 func (c *Client) checkOnce() int {
 	c.mu.Lock()
 	n := len(c.endpoints)
@@ -75,10 +94,21 @@ func (c *Client) checkOnce() int {
 		observedAt = time.Now()
 		if err != nil {
 			log.Printf("[rpcpool] health probe failed for %s: %v", endpoint, err)
-			// Discard the connection so the next dial rebuilds it rather than
-			// reusing a keep-alive socket to a node that stopped answering.
+			// Discard the connection so the next dial rebuilds it rather
+			// than reusing a keep-alive socket to a node that stopped
+			// answering — but never for the endpoint currently serving the
+			// data path. A probe failure only proves the endpoint missed
+			// this probe's tight defaultProbeTimeout budget, not that it is
+			// actually down (see checkOnce's doc comment); nil'ing the
+			// active endpoint's connection on that basis would throw away a
+			// warm keep-alive pool the data path may still be using
+			// successfully under its own, far more tolerant timeout, for no
+			// benefit — the active endpoint stays active regardless of what
+			// this probe found.
 			c.mu.Lock()
-			c.conns[i] = nil
+			if i != c.activeIdx {
+				c.conns[i] = nil
+			}
 			c.mu.Unlock()
 			continue
 		}
@@ -99,7 +129,11 @@ func (c *Client) checkOnce() int {
 		return i
 	}
 
-	c.onAllDown(observedAt, ErrAllEndpointsDown)
+	// Every probe failed within defaultProbeTimeout. This is deliberately
+	// not reported as EventAllDown — see checkOnce's doc comment — but it is
+	// still logged so the condition remains visible to an operator; the data
+	// path's own next call() is what decides whether this is a real outage.
+	log.Printf("[rpcpool] health probe: every endpoint failed to answer within %s", defaultProbeTimeout)
 	return -1
 }
 

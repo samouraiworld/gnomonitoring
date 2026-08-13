@@ -288,6 +288,89 @@ func TestOnAllDown_OlderObservationDiscardedAfterNewerApplied(t *testing.T) {
 	assert.False(t, c.allDown, "allDown must remain as the newer call left it")
 }
 
+// TestNotifyOrdering_DeliveryMatchesObservedAtEvenWhenCallbackIsSlow
+// reproduces the delivery-order inversion a review found: onSuccess and
+// onAllDown apply state under mu and then invoke obs() after releasing it
+// (the production code has a log.Printf — a mutex plus a write syscall — in
+// between), so a later-observed transition's callback could run to
+// completion before an earlier-observed transition's own callback that had
+// already started applying its state but had not yet reached obs().
+//
+// This test forces exactly that interleaving: G1 (onAllDown, observedAt
+// t1) is made to park inside its own observer callback — standing in for
+// the real code's log.Printf delay — while G2 (onSuccess, observedAt
+// t2 > t1) is launched concurrently. Without notifyMu serializing the
+// whole "apply transition, then deliver it" sequence, G2 would sail
+// straight past G1 and deliver EventRecovered first, even though its
+// observation is the newer one and the delivery order therefore ought to
+// be EventAllDown before EventRecovered, never the reverse. This is
+// exactly the interleaving described in the review as capable of
+// permanently orphaning a CRITICAL: an EventRecovered delivered before its
+// paired EventAllDown is treated as an orphan with nothing to resolve
+// (rpc_alerts.go's shouldSendRPCResolved), so the later-delivered
+// EventAllDown alone reaches the wire and no RESOLVED ever can, since
+// EventRecovered is gated on wasAllDown having already been true.
+func TestNotifyOrdering_DeliveryMatchesObservedAtEvenWhenCallbackIsSlow(t *testing.T) {
+	c := New([]string{"e0"}, WithDialer(fakeDialerFrom(map[string]*fakeConn{
+		"e0": {endpoint: "e0"},
+	})))
+
+	inAllDownCallback := make(chan struct{})
+	releaseAllDownCallback := make(chan struct{})
+
+	var evMu sync.Mutex
+	var order []Event
+	c.obs = func(ev Event, endpoint string, err error) {
+		if ev == EventAllDown {
+			close(inAllDownCallback)
+			<-releaseAllDownCallback
+		}
+		evMu.Lock()
+		order = append(order, ev)
+		evMu.Unlock()
+	}
+
+	t1 := time.Now()
+	t2 := t1.Add(time.Second)
+
+	// G1: the older (t1) observation. Parks inside its observer callback,
+	// modeling the real code's log.Printf delay between releasing mu and
+	// invoking obs.
+	done1 := make(chan struct{})
+	go func() {
+		c.onAllDown(t1, errDown)
+		close(done1)
+	}()
+	<-inAllDownCallback
+
+	// G2: the newer (t2) observation, launched while G1 is still parked
+	// inside its callback.
+	done2 := make(chan struct{})
+	go func() {
+		c.onSuccess(t2, 0, false)
+		close(done2)
+	}()
+
+	// G2 must not be able to make any progress — not even to apply its
+	// state, let alone deliver its callback — while G1's own callback is
+	// still in flight. This is what notifyMu (acquired before mu, held
+	// across the callback) guarantees; without it, G2 would run to
+	// completion here and record EventRecovered before G1 ever gets to.
+	time.Sleep(50 * time.Millisecond)
+	evMu.Lock()
+	assert.Empty(t, order, "G2 must be blocked out entirely until G1's callback finishes, not merely delayed")
+	evMu.Unlock()
+
+	close(releaseAllDownCallback)
+	<-done1
+	<-done2
+
+	evMu.Lock()
+	defer evMu.Unlock()
+	assert.Equal(t, []Event{EventAllDown, EventRecovered}, order,
+		"delivery order must match observation order even when the older transition's callback is slow")
+}
+
 func TestCall_EmptyEndpointList(t *testing.T) {
 	c := New(nil)
 	_, err := c.ABCIInfo()

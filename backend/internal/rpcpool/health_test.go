@@ -59,7 +59,70 @@ func TestCheckOnce_SwitchesAwayFromSilentlyBrokenActive(t *testing.T) {
 	assert.Equal(t, "e1", c.ActiveEndpoint())
 }
 
-func TestCheckOnce_AllDownEmitsEventOnce(t *testing.T) {
+// TestCheckOnce_PreservesActiveConnectionOnProbeFailure covers the judgment
+// call made alongside making checkOnce promotion-only: a probe failure on
+// the endpoint currently serving the data path must not discard its
+// connection. The probe's defaultProbeTimeout (5s) is deliberately tighter
+// than what the data path tolerates (60s, see that const's doc comment), so
+// a probe failure there is not proof the endpoint is actually broken —
+// nil'ing it would throw away a warm keep-alive pool the data path may
+// still be using successfully, for no benefit.
+func TestCheckOnce_PreservesActiveConnectionOnProbeFailure(t *testing.T) {
+	e0 := &fakeConn{endpoint: "e0", statusErr: errDown} // active, fails its probe
+	e1 := &fakeConn{endpoint: "e1"}                     // backup, answers and gets promoted
+	c := New([]string{"e0", "e1"}, WithDialer(fakeDialerFrom(map[string]*fakeConn{
+		"e0": e0, "e1": e1,
+	})))
+
+	require.Equal(t, "e0", c.ActiveEndpoint())
+	c.mu.Lock()
+	warmConn, err := c.connAt(0) // dial e0 so its slot is populated before the probe runs
+	c.mu.Unlock()
+	require.NoError(t, err)
+	require.NotNil(t, warmConn)
+
+	assert.Equal(t, 1, c.checkOnce())
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	assert.Same(t, warmConn, c.conns[0],
+		"a probe failure on the (then-)active endpoint must not discard its connection — only a genuine call() failure may")
+}
+
+// TestCheckOnce_DiscardsBackupConnectionOnProbeFailure is the other half of
+// the judgment call above: a probe failure on an endpoint that is NOT
+// currently active still discards the connection, since nothing on the data
+// path depends on it and forcing a fresh dial before it could be promoted
+// (or probed again) is harmless.
+func TestCheckOnce_DiscardsBackupConnectionOnProbeFailure(t *testing.T) {
+	e0 := &fakeConn{endpoint: "e0", statusErr: errDown} // active, fails
+	e1 := &fakeConn{endpoint: "e1", statusErr: errDown} // backup, fails
+	e2 := &fakeConn{endpoint: "e2"}                     // backup, answers and gets promoted
+	c := New([]string{"e0", "e1", "e2"}, WithDialer(fakeDialerFrom(map[string]*fakeConn{
+		"e0": e0, "e1": e1, "e2": e2,
+	})))
+
+	c.mu.Lock()
+	_, err := c.connAt(1) // dial e1 so its slot is populated before the probe runs
+	c.mu.Unlock()
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, c.checkOnce())
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	assert.Nil(t, c.conns[1], "a probe failure on a non-active endpoint must still discard its connection")
+}
+
+// TestCheckOnce_AllProbesFailingNeverReportsAllDown covers the promotion-only
+// contract: checkOnce may never call onAllDown itself, no matter how many
+// times every probe fails in a row. A probe failure only proves an endpoint
+// missed the probe's tight defaultProbeTimeout budget, not that it is
+// genuinely down (the data path tolerates far more); declaring EventAllDown
+// on that basis used to fabricate a CRITICAL "every RPC endpoint is
+// unreachable" alert for an endpoint that was merely slow. Detecting a
+// genuine total outage remains call()'s job (see TestCall_AllDownReportsOnceThenRecovers).
+func TestCheckOnce_AllProbesFailingNeverReportsAllDown(t *testing.T) {
 	var events []Event
 	c := New([]string{"e0", "e1"},
 		WithDialer(fakeDialerFrom(map[string]*fakeConn{
@@ -71,7 +134,8 @@ func TestCheckOnce_AllDownEmitsEventOnce(t *testing.T) {
 
 	assert.Equal(t, -1, c.checkOnce())
 	assert.Equal(t, -1, c.checkOnce())
-	assert.Equal(t, []Event{EventAllDown}, events)
+	assert.Empty(t, events, "checkOnce must never emit EventAllDown on its own authority")
+	assert.False(t, c.allDown, "checkOnce must never flip allDown either")
 }
 
 func TestProbe_TimesOutOnAHangingEndpoint(t *testing.T) {

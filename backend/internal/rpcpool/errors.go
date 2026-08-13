@@ -24,9 +24,6 @@ var (
 
 	// ErrProbeTimeout is recorded when a health probe exceeded probeTimeout.
 	ErrProbeTimeout = errors.New("rpcpool: health probe timed out")
-
-	// ErrAllEndpointsDown is recorded when every endpoint failed a probe.
-	ErrAllEndpointsDown = errors.New("rpcpool: all endpoints failed the health probe")
 )
 
 // endpointErrorSubstrings are the error texts gno's HTTP RPC transport
@@ -35,9 +32,9 @@ var (
 // so substring matching is the only option; see
 // tm2/pkg/bft/rpc/lib/client/http/client.go.
 var endpointErrorSubstrings = []string{
-	"unable to send request",           // dial / TLS / timeout
-	"invalid status code received",     // 5xx from the node or its proxy
-	"unable to read response body",     // truncated response
+	"unable to send request",            // dial / TLS / timeout
+	"invalid status code received",      // 5xx from the node or its proxy
+	"unable to read response body",      // truncated response
 	"unable to unmarshal response body", // HTML error page from a proxy
 	"connection refused",
 	"connection reset",

@@ -216,6 +216,31 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 				log.Printf("[monitor][%s] height %d has stayed regressed (highest seen was %d) for %s, longer than the stagnation threshold; accepting it as the new baseline instead of ignoring it forever",
 					chainID, latest, lph, now.Sub(since))
 				SetLastHeight(chainID, latest)
+				// Reset the stagnation clock instead of falling straight
+				// into the stalled branch below: lastProgressTime was
+				// deliberately NOT updated while this regression was being
+				// ignored (this path `continue`s before reaching the
+				// progress branch), so stuckFor := time.Since(lpt) would
+				// already exceed StagnationFirstAlert() on this very line —
+				// firing a CRITICAL "Blockchain stuck" instantly on every
+				// acceptance. That is correct for a node truly rewound and
+				// halted, but the far more common trigger for reaching this
+				// branch is the pool failing over to a healthy backup that
+				// is merely a few blocks behind and advancing at the same
+				// rate as before, which never "catches up" to lph and so
+				// always ends up here. Treating the accepted height as a
+				// fresh baseline and letting the *next* poll decide means a
+				// healthy lagging backup (which advances next poll) never
+				// alerts, while a genuinely halted rewound node (which does
+				// not advance) still reaches the stalled branch and alerts,
+				// just one StagnationFirstAlert() window later than an
+				// instant-fire would have. Reuses `now`, captured above at
+				// the top of this observation, rather than taking a fresh
+				// timestamp.
+				timeMu.Lock()
+				lastProgressTime[chainID] = now
+				lastStagnationAlertTime[chainID] = time.Time{}
+				timeMu.Unlock()
 				obs = heightStalled
 			} else {
 				timeMu.Lock()
