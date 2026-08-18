@@ -32,14 +32,17 @@ func nativeSQLDB(db *gorm.DB, opName string) (*sql.DB, error) {
 }
 
 // ===================================State GovDao=====================================
-func InsertGovdao(db *gorm.DB, id int, chainID, url, title, tx, status string) error {
+// InsertGovdao stores a newly discovered proposal. statusSynced reports
+// whether status was actually read from the chain; see Govdao.StatusSynced.
+func InsertGovdao(db *gorm.DB, id int, chainID, url, title, tx, status string, statusSynced bool) error {
 	govdao := Govdao{
-		Id:      id,
-		ChainID: chainID,
-		Url:     url,
-		Title:   title,
-		Tx:      tx,
-		Status:  status,
+		Id:           id,
+		ChainID:      chainID,
+		Url:          url,
+		Title:        title,
+		Tx:           tx,
+		Status:       status,
+		StatusSynced: statusSynced,
 	}
 	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&govdao).Error
 

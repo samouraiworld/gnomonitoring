@@ -319,10 +319,10 @@ func TestGovdaoWithChainID(t *testing.T) {
 func TestInsertGovdaoAcrossChainsWithSameID(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
-	err := database.InsertGovdao(db, 5, "chainA", "https://a.example/5", "Proposal A5", "txA5", "ACTIVE")
+	err := database.InsertGovdao(db, 5, "chainA", "https://a.example/5", "Proposal A5", "txA5", "ACTIVE", true)
 	require.NoError(t, err)
 
-	err = database.InsertGovdao(db, 5, "chainB", "https://b.example/5", "Proposal B5", "txB5", "ACTIVE")
+	err = database.InsertGovdao(db, 5, "chainB", "https://b.example/5", "Proposal B5", "txB5", "ACTIVE", true)
 	require.NoError(t, err)
 
 	var count int64
@@ -342,8 +342,8 @@ func TestInsertGovdaoAcrossChainsWithSameID(t *testing.T) {
 func TestInsertGovdaoDuplicateSameChainIsNoOp(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
-	require.NoError(t, database.InsertGovdao(db, 7, "chainA", "https://a.example/7", "First title", "tx7", "ACTIVE"))
-	require.NoError(t, database.InsertGovdao(db, 7, "chainA", "https://a.example/7", "First title", "tx7", "ACTIVE"))
+	require.NoError(t, database.InsertGovdao(db, 7, "chainA", "https://a.example/7", "First title", "tx7", "ACTIVE", true))
+	require.NoError(t, database.InsertGovdao(db, 7, "chainA", "https://a.example/7", "First title", "tx7", "ACTIVE", true))
 
 	var count int64
 	require.NoError(t, db.Model(&database.Govdao{}).Where("chain_id = ? AND id = ?", "chainA", 7).Count(&count).Error)

@@ -19,6 +19,13 @@ type Govdao struct {
 	Title   string `gorm:"column:title;" `
 	Tx      string `gorm:"column:tx;" `
 	Status  string `gorm:"column:status;" `
+	// StatusSynced reports whether Status came from a successful on-chain
+	// read. Rows written before the proposal-status parser was fixed default
+	// to false: the old parser reported every rejected proposal as
+	// "IN PROGRESS", so their stored status cannot be trusted. The watcher
+	// reconciles such a row against the chain once, silently, before it starts
+	// treating status changes as live events worth announcing.
+	StatusSynced bool `gorm:"column:status_synced;not null;default:false"`
 }
 type Telegram struct {
 	ChatID    int64  `gorm:"primaryKey;column:chat_id;"                                           json:"chat_id"`

@@ -422,7 +422,25 @@ var (
 	fetchProposalTitle  = ExtractTitle
 	fetchProposalStatus = ExtractProposalRender
 	fetchTxByHeight     = GetTxsByBlockHeight
+
+	// fetchChainProposalStatus resolves a proposal's current on-chain status
+	// from its chain ID alone. CheckProposalStatus polls proposals across all
+	// chains, so it needs the client resolution folded in.
+	fetchChainProposalStatus = chainProposalStatus
+
+	// notifyProposalStatus announces a proposal reaching a terminal status.
+	notifyProposalStatus = sendProposalStatusNotification
 )
+
+// chainProposalStatus reads proposalID's current status from chainID's pooled
+// RPC client.
+func chainProposalStatus(chainID string, proposalID int) (string, error) {
+	client, err := clientForChain(chainID)
+	if err != nil {
+		return "", err
+	}
+	return fetchProposalStatus(proposalID, client)
+}
 
 func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, graphqlEndpoints []string, client *gnoclient.Client, gnowebEndpoint string) {
 	for _, ev := range tx.Response.Events {
@@ -457,11 +475,16 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, gr
 				title = fmt.Sprintf("Proposal #%d", idInt)
 			}
 
+			// statusSynced records whether the stored status actually came
+			// from the chain. A failed query, or a render the parser could
+			// not read, leaves the proposal open to silent reconciliation on
+			// a later watcher pass instead of being treated as confirmed.
 			status, err := fetchProposalStatus(idInt, client)
 			if err != nil {
 				log.Printf("[govdao][%s] status unavailable for proposal %d: %v", chainID, idInt, err)
-				status = "UNKNOWN"
+				status = StatusUnknown
 			}
+			statusSynced := err == nil && status != StatusUnknown
 
 			txurl := ""
 			if txData, err := fetchTxByHeight(tx.BlockHeight, graphqlEndpoints); err != nil {
@@ -471,7 +494,7 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, gr
 			}
 
 			// Insert to db
-			if err := database.InsertGovdao(db, idInt, chainID, url, title, txurl, status); err != nil {
+			if err := database.InsertGovdao(db, idInt, chainID, url, title, txurl, status, statusSynced); err != nil {
 				log.Printf("[govdao][%s] InsertGovdao error: %v", chainID, err)
 			}
 			if who == "socket" {
@@ -493,6 +516,58 @@ func GnoQueryRender(client *gnoclient.Client, cfg gnoclient.QueryCfg) (string, e
 	return string(res.Response.Data), nil
 }
 
+// Proposal statuses stored in govdaos.status. ACCEPTED and REJECTED are the
+// two terminal states; IN PROGRESS means the proposal is still open for votes;
+// UNKNOWN means the render could not be read and carries no information about
+// the proposal at all.
+const (
+	StatusAccepted   = "ACCEPTED"
+	StatusRejected   = "REJECTED"
+	StatusInProgress = "IN PROGRESS"
+	StatusUnknown    = "UNKNOWN"
+)
+
+// Marker lines emitted by gno.land/r/gov/dao/v3/impl's proposalStatus.String()
+// on a single-proposal page. Exactly one of them is present per render.
+const (
+	markerAccepted   = "**PROPOSAL HAS BEEN ACCEPTED**"
+	markerDenied     = "**PROPOSAL HAS BEEN DENIED**"
+	markerInProgress = "**Proposal is open for votes**"
+)
+
+// isTerminalProposalStatus reports whether s is a final on-chain outcome, i.e.
+// one worth notifying about. A proposal never leaves a terminal state.
+func isTerminalProposalStatus(s string) bool {
+	return s == StatusAccepted || s == StatusRejected
+}
+
+// parseProposalStatus reads the proposal status out of a gov/dao proposal page
+// render.
+//
+// It matches only the explicit status marker lines the realm emits. Matching
+// anything looser is unsafe here: the page also renders the proposal's own
+// description (which may contain the word "ACCEPTED") and an action bar with
+// "Vote YES"/"Vote NO" links that the realm emits unconditionally — including
+// on already accepted and denied proposals.
+//
+// An unrecognised render yields StatusUnknown, never a terminal state: failing
+// to read the page tells us nothing about the proposal, and treating that as a
+// rejection would fabricate an alert out of an RPC hiccup or a realm upgrade.
+func parseProposalStatus(render string) string {
+	for _, line := range strings.Split(render, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.Contains(trimmed, markerAccepted):
+			return StatusAccepted
+		case strings.Contains(trimmed, markerDenied):
+			return StatusRejected
+		case strings.Contains(trimmed, markerInProgress):
+			return StatusInProgress
+		}
+	}
+	return StatusUnknown
+}
+
 func ExtractProposalRender(proposalID int, client *gnoclient.Client) (string, error) {
 	data := fmt.Sprintf("gno.land/r/gov/dao:%d", proposalID)
 	res, err := GnoQueryRender(client, gnoclient.QueryCfg{
@@ -503,18 +578,69 @@ func ExtractProposalRender(proposalID int, client *gnoclient.Client) (string, er
 		return "", err
 	}
 
-	switch {
-	case strings.Contains(res, "ACCEPTED"):
-		return "ACCEPTED", nil
-	case strings.Contains(res, "ACTIVE"):
-		return "ACTIVE", nil
-	case strings.Contains(res, "Vote YES"):
-		return "IN PROGRESS", nil
-	default:
-		return "REJECTED", nil
+	return parseProposalStatus(res), nil
+}
+
+// terminalStatusDisplay carries the per-status presentation of a terminal
+// outcome, so the ACCEPTED and REJECTED notifications share one code path.
+var terminalStatusDisplay = map[string]struct {
+	emoji string
+	verb  string
+}{
+	StatusAccepted: {emoji: "✅", verb: "accepted"},
+	StatusRejected: {emoji: "❌", verb: "rejected"},
+}
+
+// sendProposalStatusNotification announces that p reached the terminal status
+// status, on Discord/Slack and on Telegram.
+func sendProposalStatusNotification(db *gorm.DB, p database.Govdao, status string) {
+	display := terminalStatusDisplay[status]
+
+	msg := fmt.Sprintf("--- \n 🗳️"+
+		"Proposal N° %d: %s  -  \n"+
+		" 🔗source: %s \n "+
+		" %s",
+		p.Id, p.Title, p.Url, status)
+	if err := internal.SendInfoGovdao(p.ChainID, msg, db); err != nil {
+		log.Printf("[govdao] SendInfoGovdao error: %v", err)
+	}
+
+	msgT := fmt.Sprintf(
+		"🗳️ [%s] <b>%s Proposal Nº %d</b>: %s\n"+
+			"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
+			"<b>%s</b>\n",
+		p.ChainID,
+		display.emoji,
+		p.Id,
+		p.Title,
+		p.Url,
+		status,
+	)
+	if err := telegram.MsgTelegram(msgT, internal.Config.TokenTelegramGovdao, "govdao", db); err != nil {
+		log.Printf("[govdao] MsgTelegram error: %v", err)
 	}
 }
 
+// storeProposalStatus persists a proposal's status. govdaos is keyed on
+// (id, chain_id), so the WHERE clause must carry both: proposal #0 exists
+// independently on every chain.
+func storeProposalStatus(db *gorm.DB, p database.Govdao, status string) {
+	if err := db.Model(&database.Govdao{}).
+		Where("id = ? AND chain_id = ?", p.Id, p.ChainID).
+		Updates(map[string]any{"status": status, "status_synced": true}).Error; err != nil {
+		log.Printf("[govdao][%s] failed to update proposal %d status: %v", p.ChainID, p.Id, err)
+	}
+}
+
+// CheckProposalStatus polls every known proposal's on-chain status and
+// announces the ones that just reached a terminal outcome.
+//
+// A proposal whose stored status was never confirmed against the chain by the
+// current parser (status_synced = false) is reconciled silently: its status is
+// corrected in place with no notification. Rows predating the parser fix all
+// land here, because the old parser read every rejected proposal as
+// "IN PROGRESS" — announcing those would flood every channel with rejections
+// of months-old proposals on the first run after deploy.
 func CheckProposalStatus(db *gorm.DB) {
 	var govdao []database.Govdao
 	if err := db.Find(&govdao).Error; err != nil {
@@ -523,52 +649,38 @@ func CheckProposalStatus(db *gorm.DB) {
 	}
 
 	for _, p := range govdao {
-		client, err := clientForChain(p.ChainID)
-		if err != nil {
-			log.Printf("[govdao] %v (proposal %d)", err, p.Id)
-			continue
-		}
-		currentStatus, err := ExtractProposalRender(p.Id, client)
+		currentStatus, err := fetchChainProposalStatus(p.ChainID, p.Id)
 		if err != nil {
 			log.Printf("[govdao][%s] error fetching status for proposal %d: %v", p.ChainID, p.Id, err)
 			continue
 		}
-
-		chainID := p.ChainID
-		if currentStatus == "ACCEPTED" && p.Status != "ACCEPTED" {
-			log.Printf("[govdao] proposal %d (%s) accepted", p.Id, p.Title)
-
-			// Send notification
-			msg := fmt.Sprintf("--- \n 🗳️"+
-				"Proposal N° %d: %s  -  \n"+
-				" 🔗source: %s \n "+
-				" ACCEPTED",
-				p.Id, p.Title, p.Url)
-			if err := internal.SendInfoGovdao(chainID, msg, db); err != nil {
-				log.Printf("[govdao] SendInfoGovdao error: %v", err)
-			}
-
-			// Send Telegram message
-			msgT := fmt.Sprintf(
-				"🗳️ [%s] <b>✅ Proposal Nº %d</b>: %s\n"+
-					"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
-					"<b>ACCEPTED</b>\n",
-				chainID,
-				p.Id,
-				p.Title,
-				p.Url,
-			)
-			if err := telegram.MsgTelegram(msgT, internal.Config.TokenTelegramGovdao, "govdao", db); err != nil {
-				log.Printf("[govdao] MsgTelegram error: %v", err)
-			}
-
-			// update GovDao (explicit WHERE to handle id=0)
-			if err := db.Model(&database.Govdao{}).
-				Where("id = ?", p.Id).
-				Update("status", "ACCEPTED").Error; err != nil {
-				log.Printf("[govdao] failed to update proposal %d status: %v", p.Id, err)
-			}
+		// An unreadable render says nothing about the proposal. Never let it
+		// overwrite a known status, and never let it stand in for a rejection.
+		if currentStatus == StatusUnknown {
+			log.Printf("[govdao][%s] unreadable render for proposal %d, leaving status %q untouched",
+				p.ChainID, p.Id, p.Status)
+			continue
 		}
+
+		if !p.StatusSynced {
+			if currentStatus != p.Status {
+				log.Printf("[govdao][%s] reconciling proposal %d: %q -> %q (no notification)",
+					p.ChainID, p.Id, p.Status, currentStatus)
+			}
+			storeProposalStatus(db, p, currentStatus)
+			continue
+		}
+
+		if currentStatus == p.Status {
+			continue
+		}
+
+		if isTerminalProposalStatus(currentStatus) {
+			log.Printf("[govdao][%s] proposal %d (%s) %s",
+				p.ChainID, p.Id, p.Title, terminalStatusDisplay[currentStatus].verb)
+			notifyProposalStatus(db, p, currentStatus)
+		}
+		storeProposalStatus(db, p, currentStatus)
 	}
 }
 
