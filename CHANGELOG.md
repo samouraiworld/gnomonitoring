@@ -9,6 +9,30 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **GovDAO proposal statuses were parsed from the wrong strings, so a rejected
+  proposal was never detected** (#112) — the parser keyed off `"ACTIVE"`, a
+  string the proposal page never contains, then fell back to `"Vote YES"`,
+  which comes from the action bar the realm renders on *every* proposal
+  including accepted and denied ones. A rejected proposal was therefore stored
+  as `IN PROGRESS` forever, and its `default: REJECTED` branch only fired when
+  the render was unreadable — fabricating a rejection out of an RPC hiccup.
+  The parser now matches the explicit marker lines emitted by
+  `proposalStatus.String()` (`PROPOSAL HAS BEEN ACCEPTED` / `HAS BEEN DENIED` /
+  `Proposal is open for votes`) and returns `UNKNOWN`, which is inert, for
+  anything it cannot read. This also stops a proposal whose own description
+  contains the word "ACCEPTED" from being read as accepted.
+
+- **No alert was ever sent when a GovDAO proposal was rejected** (#112) — only
+  the `ACCEPTED` transition notified. Rejections now send the same
+  Discord/Slack + Telegram notification (❌) and update `govdaos.status`, both
+  branches sharing one code path. Note that gov/dao v3 has no expiry concept:
+  `ACCEPTED` and `REJECTED` are the only terminal states the realm exposes.
+
+- **A GovDAO status update overwrote its namesakes on every other chain** —
+  `govdaos` is keyed on `(id, chain_id)`, but the update filtered on `id`
+  alone, so proposal #0 turning `ACCEPTED` on betanet rewrote the status of
+  proposal #0 on every configured chain. The update is now scoped by both.
+
 - **RPC failover only tried the second endpoint, never a third** — the pool
   now walks every configured endpoint in priority order on a failure, so a
   third healthy endpoint is used when the first two are down.
@@ -53,6 +77,15 @@ Entries are ordered newest-first within each section.
   GovDAO PUT handler: requires and forwards the decoded chain_id.
 
 ### Added
+
+- **`govdaos.status_synced`** (new column, defaults false) — records whether a
+  proposal's stored status was actually read from the chain. Rows written
+  before the GovDAO parser fix land on false, because the old parser reported
+  every rejected proposal as `IN PROGRESS`. The watcher corrects such a row
+  against the chain once, *silently*, before it starts treating status changes
+  as live events: without this, the first run after deploy would announce a
+  rejection for every historical proposal in the backlog at once. Added by
+  AutoMigrate; no manual migration needed.
 
 - **`rpc_health_check_seconds`** (admin_config, default 60) — how often the
   RPC pool probes its configured endpoints in the background to return to

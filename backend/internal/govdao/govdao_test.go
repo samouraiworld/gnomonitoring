@@ -58,6 +58,8 @@ func TestProcessProposalSurvivesTitleError(t *testing.T) {
 		"proposal must be stored even when title/status/tx enrichment fails")
 	assert.Equal(t, "Proposal #23", p.Title)
 	assert.Equal(t, "UNKNOWN", p.Status)
+	assert.False(t, p.StatusSynced,
+		"a fallback status was never read from the chain, so it must stay open to reconciliation")
 	assert.Equal(t, "https://test13.testnets.gno.land/r/gov/dao:23", p.Url)
 	assert.Empty(t, p.Tx)
 }
