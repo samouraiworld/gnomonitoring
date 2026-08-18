@@ -239,9 +239,9 @@ scenario4-restart:
 	docker compose --profile phase2 start validator validator2 validator3 validator4
 	@echo "Validators restarted. The monitor loop should resume fetching heights."
 
-# scenario5: GovDAO rejection path. Mirrors scenario1 but votes NO and never
-# executes, so the proposal is rejected instead of onboarding validator4. This
-# exercises the GovDAO watcher's CheckProposalStatus (status -> rejected/expired).
+# scenario5: GovDAO rejection path. Mirrors scenario1 but votes NO, so the
+# proposal is rejected instead of onboarding validator4. This exercises the
+# GovDAO watcher's CheckProposalStatus (status -> REJECTED + notification).
 # Run on a FRESH chain (targets proposal #0): 'make reinit && make scenario5'.
 scenario5: up-validator4
 	@echo ">>> Rejected-proposal scenario (FRESH chain expected: targets proposal #0)"
@@ -273,16 +273,30 @@ scenario5: up-validator4
 		-chainid dev -remote $(RPC) \
 		-home "$(DEV_HOME)" -insecure-password-stdin \
 		dev propose-validator4.gno
-	@echo ">>> Step 4: vote NO on proposal #0 (rejection path - NOT executed)"
+	@echo ">>> Step 4: vote NO on proposal #0"
 	echo "$(DEV_PASS)" | gnokey maketx call \
 		-pkgpath gno.land/r/gov/dao -func MustVoteOnProposalSimple \
 		-args 0 -args NO \
 		-gas-fee 1000000ugnot -gas-wanted 50000000 -broadcast \
 		-chainid dev -remote $(RPC) \
 		-home "$(DEV_HOME)" -insecure-password-stdin dev
-	@echo ">>> Done. Expect the GovDAO watcher to track it and mark it rejected/expired:"
+	@echo ">>> Step 5: settle proposal #0 via ExecuteProposal"
+	@echo "    A NO supermajority alone does NOT mark a proposal rejected on chain:"
+	@echo "    gov/dao v3 only sets Denied inside PreExecuteProposal. Without this"
+	@echo "    call the proposal renders 'open for votes' forever and the watcher"
+	@echo "    has nothing to report. The call returns false (the payload is NOT"
+	@echo "    executed, validator4 is NOT onboarded) but flips the status."
+	echo "$(DEV_PASS)" | gnokey maketx call \
+		-pkgpath gno.land/r/gov/dao -func ExecuteProposal \
+		-args 0 \
+		-gas-fee 1000000ugnot -gas-wanted 50000000 -broadcast \
+		-chainid dev -remote $(RPC) \
+		-home "$(DEV_HOME)" -insecure-password-stdin dev
+	@echo ">>> Done. The render now carries 'PROPOSAL HAS BEEN DENIED'. Expect a"
+	@echo ">>> rejection notification on Discord/Slack/Telegram, and status=REJECTED:"
 	@echo "  docker exec gnomonitoring-postgres psql -U gnomonitoring -d gnomonitoring \\"
-	@echo "    -c \"SELECT id, status FROM govdaos WHERE chain_id='dev';\""
+	@echo "    -c \"SELECT id, status, status_synced FROM govdaos WHERE chain_id='dev';\""
+	@echo ">>> Note: the watcher polls every 5 minutes, so allow one cycle."
 
 # scenario-mute: NOT a separate chain action - it asserts the resend DEDUP
 # (CLAUDE.md's "4 repeats -> MUTED" is outdated; the real rule is one alert per
