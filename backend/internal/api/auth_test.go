@@ -16,7 +16,7 @@ import (
 
 func newTestVerifier(t *testing.T, realm *kctest.Realm) *keycloakauth.Verifier {
 	t.Helper()
-	v, err := keycloakauth.New(context.Background(), realm.Issuer)
+	v, err := keycloakauth.New(context.Background(), realm.Issuer, []string{keycloakauth.PanelClientID})
 	require.NoError(t, err)
 	return v
 }
@@ -246,6 +246,7 @@ func TestBuildAuthSetup_KeycloakMode(t *testing.T) {
 	defer func() { internal.Config = prev }()
 	internal.Config.AuthProvider = internal.AuthProviderKeycloak
 	internal.Config.KeycloakIssuer = realm.Issuer
+	internal.Config.KeycloakAllowedClients = []string{keycloakauth.PanelClientID}
 	internal.Config.ClerkSecretKey = "sk_test_dummy"
 	internal.Config.DevMode = false
 

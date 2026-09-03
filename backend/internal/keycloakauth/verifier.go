@@ -17,8 +17,10 @@ package keycloakauth
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -46,10 +48,35 @@ type Claims struct {
 	Subject     string `json:"sub"`
 	ClerkUserID string `json:"clerk_user_id"`
 	Email       string `json:"email"`
+	// AuthorizedParty is the OIDC "azp" claim: the client the token was
+	// actually issued to. Keycloak always sets it on an access token.
+	AuthorizedParty string `json:"azp"`
+	// Audience is the "aud" claim, used as a fallback audience signal when a
+	// token carries no azp. Keycloak commonly sets it to "account" rather than
+	// the client id, so it is not a reliable primary check.
+	Audience audience `json:"aud"`
 	// RealmAccess is decoded for logging/debugging only. It is deliberately
 	// NOT consulted by IsAdmin: see PanelClientID.
 	RealmAccess    ClientRoles            `json:"realm_access"`
 	ResourceAccess map[string]ClientRoles `json:"resource_access"`
+}
+
+// audience decodes the "aud" claim, which JWT permits to be either a single
+// string or an array of strings.
+type audience []string
+
+func (a *audience) UnmarshalJSON(data []byte) error {
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		*a = audience{single}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(data, &many); err != nil {
+		return fmt.Errorf("keycloakauth: decode aud claim: %w", err)
+	}
+	*a = many
+	return nil
 }
 
 // IsAdmin reports whether the token carries the `admin` role on the
@@ -77,12 +104,21 @@ func (c *Claims) EffectiveUserID() string {
 type Verifier struct {
 	provider *oidc.Provider
 	verifier *oidc.IDTokenVerifier
+	// allowedClients restricts which realm clients' tokens this backend
+	// accepts. Empty means "any client in the realm".
+	allowedClients []string
 }
 
 // New fetches the realm's OIDC discovery document (JWKS included) and returns
-// a Verifier. issuerURL is e.g.
-// "https://auth.samourai.app/realms/gno-world".
-func New(ctx context.Context, issuerURL string) (*Verifier, error) {
+// a Verifier. issuerURL is e.g. "https://auth.samourai.app/realms/gno-world".
+//
+// allowedClients names the realm clients whose tokens this backend accepts. The
+// gno-world realm is shared with memba and gnolove, so without this every
+// present and future client in the realm could authenticate here — the
+// client-scoped admin role limits what such a token can *do*, but an audience
+// boundary is what stops it being presented at all. Pass nil/empty only to
+// deliberately accept every client in the realm.
+func New(ctx context.Context, issuerURL string, allowedClients []string) (*Verifier, error) {
 	issuerURL = strings.TrimSpace(issuerURL)
 	if issuerURL == "" {
 		return nil, fmt.Errorf("keycloakauth: keycloak_issuer is empty")
@@ -91,14 +127,34 @@ func New(ctx context.Context, issuerURL string) (*Verifier, error) {
 	if err != nil {
 		return nil, fmt.Errorf("keycloakauth: discover issuer %s: %w", issuerURL, err)
 	}
-	// SkipClientIDCheck: this backend accepts tokens minted for any client in
-	// the realm (gnomonitoring-panel today, memba-web and gnolove-web once
-	// those cut over) rather than pinning to one audience — matching
-	// clerkhttp's prior behaviour of trusting any valid session token from the
-	// shared Clerk app. Authorization is enforced separately, and per client,
-	// by Claims.IsAdmin.
+	// SkipClientIDCheck: go-oidc's own audience check compares "aud" against a
+	// single expected client id, which does not fit Keycloak — its access
+	// tokens carry aud "account", and this backend legitimately serves several
+	// clients. The audience boundary is enforced by checkAllowedClient below,
+	// against "azp", instead.
 	verifier := provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
-	return &Verifier{provider: provider, verifier: verifier}, nil
+	return &Verifier{provider: provider, verifier: verifier, allowedClients: allowedClients}, nil
+}
+
+// checkAllowedClient enforces the audience boundary New documents. Keycloak
+// sets "azp" to the client that obtained the token, so that is the primary
+// signal; "aud" is consulted only for a token that carries no azp at all.
+func (v *Verifier) checkAllowedClient(c *Claims) error {
+	if len(v.allowedClients) == 0 {
+		return nil
+	}
+	if c.AuthorizedParty != "" {
+		if slices.Contains(v.allowedClients, c.AuthorizedParty) {
+			return nil
+		}
+		return fmt.Errorf("keycloakauth: token issued to client %q, which is not in keycloak_allowed_clients", c.AuthorizedParty)
+	}
+	for _, aud := range c.Audience {
+		if slices.Contains(v.allowedClients, aud) {
+			return nil
+		}
+	}
+	return fmt.Errorf("keycloakauth: token has no azp and no allowed audience")
 }
 
 // VerifyToken validates a raw bearer token's signature, issuer and expiry and
@@ -112,6 +168,9 @@ func (v *Verifier) VerifyToken(ctx context.Context, rawToken string) (*Claims, e
 	var claims Claims
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, fmt.Errorf("keycloakauth: decode claims: %w", err)
+	}
+	if err := v.checkAllowedClient(&claims); err != nil {
+		return nil, err
 	}
 	return &claims, nil
 }

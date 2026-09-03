@@ -129,7 +129,10 @@ func (r *Realm) token(t *testing.T, signer jose.Signer, issuer, subject string, 
 	payload := map[string]any{
 		"iss": issuer,
 		"sub": subject,
-		"aud": "gnomonitoring-panel",
+		// Keycloak's own shape: aud is "account", and azp names the client the
+		// token was issued to. Tests override azp to exercise the allowlist.
+		"aud": "account",
+		"azp": "gnomonitoring-panel",
 		"exp": now.Add(time.Hour).Unix(),
 		"iat": now.Unix(),
 	}

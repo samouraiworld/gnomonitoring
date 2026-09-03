@@ -34,6 +34,14 @@ keycloak_issuer: ""  # e.g. "https://auth.samourai.app/realms/gno-world"
 # backend. Defaults to true when absent.
 keycloak_clerk_fallback: true
 
+# keycloak_allowed_clients restricts which realm clients' tokens are accepted.
+# gno-world is shared with memba and gnolove, so without this every present and
+# future client in the realm could authenticate here. Defaults to
+# ["gnomonitoring-panel"]; add "memba-web" / "gnolove-web" as those apps cut
+# over. An empty list accepts any client in the realm — deliberate opt-out only.
+keycloak_allowed_clients:
+  - "gnomonitoring-panel"
+
 token_telegram_validator: ""
 token_telegram_govdao: ""
 

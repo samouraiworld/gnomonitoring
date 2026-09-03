@@ -55,7 +55,7 @@ func buildAuthSetup(ctx context.Context) (*authSetup, error) {
 		}, nil
 	}
 
-	verifier, err := keycloakauth.New(ctx, internal.Config.KeycloakIssuer)
+	verifier, err := keycloakauth.New(ctx, internal.Config.KeycloakIssuer, internal.Config.KeycloakAllowedClients)
 	if err != nil {
 		return nil, err
 	}

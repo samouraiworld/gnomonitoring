@@ -10,9 +10,12 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/keycloakauth/kctest"
 )
 
-func newVerifier(t *testing.T, realm *kctest.Realm) *keycloakauth.Verifier {
+func newVerifier(t *testing.T, realm *kctest.Realm, allowedClients ...string) *keycloakauth.Verifier {
 	t.Helper()
-	v, err := keycloakauth.New(context.Background(), realm.Issuer)
+	if len(allowedClients) == 0 {
+		allowedClients = []string{keycloakauth.PanelClientID}
+	}
+	v, err := keycloakauth.New(context.Background(), realm.Issuer, allowedClients)
 	if err != nil {
 		t.Fatalf("keycloakauth.New: %v", err)
 	}
@@ -20,7 +23,7 @@ func newVerifier(t *testing.T, realm *kctest.Realm) *keycloakauth.Verifier {
 }
 
 func TestNew_RejectsEmptyIssuer(t *testing.T) {
-	if _, err := keycloakauth.New(context.Background(), "  "); err == nil {
+	if _, err := keycloakauth.New(context.Background(), "  ", nil); err == nil {
 		t.Fatal("New(\"\") returned no error, want one: an empty keycloak_issuer must fail loudly at startup")
 	}
 }
@@ -119,6 +122,57 @@ func TestMiddleware(t *testing.T) {
 					t.Errorf("next handler ran with claims %+v, want it not to run at all", seen)
 				}
 			})
+		}
+	})
+}
+
+// The gno-world realm is shared with memba and gnolove. A correctly signed
+// token issued to another client must not authenticate here unless that client
+// was explicitly allowed.
+func TestVerifyToken_EnforcesClientAllowlist(t *testing.T) {
+	realm := kctest.NewRealm(t)
+	v := newVerifier(t, realm, keycloakauth.PanelClientID)
+
+	t.Run("rejects another realm client", func(t *testing.T) {
+		raw := realm.Token(t, "kc-sub-1", map[string]any{"azp": "memba-web"})
+		if _, err := v.VerifyToken(context.Background(), raw); err == nil {
+			t.Error("VerifyToken() accepted a token issued to memba-web, want it rejected")
+		}
+	})
+
+	t.Run("rejects a token whose only audience is account", func(t *testing.T) {
+		raw := realm.Token(t, "kc-sub-1", map[string]any{"azp": ""})
+		if _, err := v.VerifyToken(context.Background(), raw); err == nil {
+			t.Error("VerifyToken() accepted a token with no azp and aud=account, want it rejected")
+		}
+	})
+
+	t.Run("accepts an explicitly allowed second client", func(t *testing.T) {
+		multi := newVerifier(t, realm, keycloakauth.PanelClientID, "memba-web")
+		claims, err := multi.VerifyToken(context.Background(), realm.Token(t, "kc-sub-1", map[string]any{"azp": "memba-web"}))
+		if err != nil {
+			t.Fatalf("VerifyToken() = %v, want nil once memba-web is allowed", err)
+		}
+		if claims.Subject != "kc-sub-1" {
+			t.Errorf("Subject = %q, want %q", claims.Subject, "kc-sub-1")
+		}
+	})
+
+	t.Run("empty allowlist accepts any client in the realm", func(t *testing.T) {
+		open, err := keycloakauth.New(context.Background(), realm.Issuer, nil)
+		if err != nil {
+			t.Fatalf("keycloakauth.New: %v", err)
+		}
+		if _, err := open.VerifyToken(context.Background(), realm.Token(t, "kc-sub-1", map[string]any{"azp": "anything"})); err != nil {
+			t.Errorf("VerifyToken() = %v, want nil for an explicitly empty allowlist", err)
+		}
+	})
+
+	t.Run("aud is honoured when a token carries no azp", func(t *testing.T) {
+		audOnly := newVerifier(t, realm, "gnolove-web")
+		raw := realm.Token(t, "kc-sub-1", map[string]any{"azp": "", "aud": []string{"account", "gnolove-web"}})
+		if _, err := audOnly.VerifyToken(context.Background(), raw); err != nil {
+			t.Errorf("VerifyToken() = %v, want nil when aud names an allowed client", err)
 		}
 	})
 }

@@ -19,6 +19,7 @@ config edit plus a restart, never a code change or a revert.
 ```yaml
 auth_provider: "keycloak"                                       # or "clerk"
 keycloak_issuer: "https://auth.samourai.app/realms/gno-world"   # required in keycloak mode
+keycloak_allowed_clients: ["gnomonitoring-panel"]               # audience boundary; see below
 keycloak_clerk_fallback: true                                   # default true; see below
 clerk_secret_key: "sk_live_..."                                 # still needed while the fallback is on
 ```
@@ -49,6 +50,52 @@ role, or Users → *user* → Role mapping → **Filter by clients** → Assign 
 The realm-wide role filter is the wrong one.
 
 See `docs/2026-09-02-samourai-lasuite-realm-naming.md` in `samouraiworld/keycloak`.
+
+## Which clients' tokens are accepted
+
+`gno-world` is shared with memba and gnolove, and a token signed by the realm is
+valid whichever client obtained it. `keycloak_allowed_clients` is the audience
+boundary: the verifier checks the token's `azp` claim (Keycloak sets it to the
+client that obtained the token) against this list, falling back to `aud` only
+for a token carrying no `azp` — Keycloak access tokens normally have
+`aud: "account"`, which is why go-oidc's own single-audience check is disabled
+in favour of this one.
+
+It defaults to `["gnomonitoring-panel"]`. Add `memba-web` / `gnolove-web` when
+those apps cut over and start calling the general routes with Keycloak tokens.
+An empty list disables the check and accepts every client in the realm.
+
+The client-scoped admin role limits what a foreign token can *do*; the allowlist
+is what stops it being accepted at all. Both matter.
+
+## ⚠️ Realm prerequisite: `clerk_user_id` must not be user-writable
+
+Because `EffectiveUserID()` treats `clerk_user_id` as the account identity (see
+below), **whoever can write that attribute can take over the gnomonitoring rows
+of the user it names** — their webhooks, alert contacts and report hours.
+
+`clerk_user_id` is an *unmanaged* attribute in the `gno-world` realm's
+declarative user profile. As of 2026-09-03 that profile has
+`"unmanagedAttributePolicy": "ENABLED"`, which makes unmanaged attributes
+readable **and writable by users themselves**, not only by admins and the sync
+tool. Under that setting an authenticated realm user can set their own
+`clerk_user_id` to a victim's Clerk id and inherit their rows.
+
+**Before flipping `auth_provider: "keycloak"` in production**, change the policy
+to `ADMIN_EDIT` (admins and the sync can write it, users cannot) in
+`samouraiworld/keycloak`'s `deploy/keycloak/import/gno-world-realm.json` *and*
+on the live prod and staging realms — the import file only applies at realm
+creation, so an existing realm must also be changed by hand. Verify with:
+
+```bash
+kcadm.sh get users/<some-user-id> -r gno-world --fields attributes
+```
+
+after attempting a self-service edit as a non-admin user.
+
+This cannot be fixed in this repository: the claim arrives inside a validly
+signed token, and nothing in that token distinguishes a sync-set value from a
+self-set one.
 
 ## Why there is no database migration
 
@@ -84,6 +131,17 @@ live traffic.
 
 ## Rollback
 
-Set `auth_provider: "clerk"` in the backend config, restore the panel's Clerk
-env vars, rebuild the frontend image, restart. No code change is involved,
-because the Clerk path was left intact rather than replaced.
+**Backend:** set `auth_provider: "clerk"` and restart. No code change is
+involved — the Clerk path was left intact rather than replaced, so this is a
+complete rollback for the API and for any caller holding a Clerk token (memba,
+gnolove).
+
+**Panel:** *not* config-only. This branch removes `@clerk/clerk-react` from the
+panel entirely, so restoring `VITE_CLERK_PUBLISHABLE_KEY` does nothing — the
+bundle has no Clerk code left to mint a token with. Rolling the panel back means
+redeploying the **previous frontend image** (the last one built before this
+change), which still contains the Clerk integration.
+
+So plan the cutover accordingly: keep the pre-cutover frontend image tag
+available and note it before deploying, because `docker compose build frontend`
+overwrites the local image.

@@ -70,3 +70,29 @@ keycloak_clerk_fallback: false
 
 	assert.False(t, Config.ClerkFallbackEnabled())
 }
+
+// The audience boundary must exist by default: gno-world is shared, so an
+// absent keycloak_allowed_clients must mean "this backend's own client", never
+// "any client in the realm".
+func TestLoadConfig_KeycloakAllowedClientsDefaultsToOwnClient(t *testing.T) {
+	loadConfigFrom(t, `
+backend_port: "8989"
+auth_provider: "keycloak"
+keycloak_issuer: "https://auth.samourai.app/realms/gno-world"
+`+authTestChains)
+
+	assert.Equal(t, []string{"gnomonitoring-panel"}, Config.KeycloakAllowedClients)
+}
+
+func TestLoadConfig_KeycloakAllowedClientsExplicit(t *testing.T) {
+	loadConfigFrom(t, `
+backend_port: "8989"
+auth_provider: "keycloak"
+keycloak_issuer: "https://auth.samourai.app/realms/gno-world"
+keycloak_allowed_clients:
+  - "gnomonitoring-panel"
+  - "memba-web"
+`+authTestChains)
+
+	assert.Equal(t, []string{"gnomonitoring-panel", "memba-web"}, Config.KeycloakAllowedClients)
+}

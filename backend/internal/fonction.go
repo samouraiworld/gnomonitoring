@@ -121,7 +121,13 @@ type config struct {
 	// gnolove's leaderboard-webhooks route with tokens from *their* Clerk
 	// sessions; turning this off before those two apps have cut over to
 	// Keycloak breaks them with 401s. Defaults to true.
-	KeycloakClerkFallback  *bool                   `yaml:"keycloak_clerk_fallback"`
+	KeycloakClerkFallback *bool `yaml:"keycloak_clerk_fallback"`
+	// KeycloakAllowedClients names the realm clients whose tokens this backend
+	// accepts. gno-world is shared with memba and gnolove; without this any
+	// client in the realm could authenticate here. Add "memba-web" /
+	// "gnolove-web" as those apps cut over. An empty list accepts every client
+	// in the realm — deliberate opt-out only.
+	KeycloakAllowedClients []string                `yaml:"keycloak_allowed_clients"`
 	DevMode                bool                    `yaml:"dev_mode"`
 	TokenTelegramValidator string                  `yaml:"token_telegram_validator"`
 	TokenTelegramGovdao    string                  `yaml:"token_telegram_govdao"`
@@ -245,13 +251,22 @@ func LoadConfig() {
 	if Config.AuthProvider == AuthProviderKeycloak && strings.TrimSpace(Config.KeycloakIssuer) == "" {
 		log.Fatalf("Config error: keycloak_issuer is required when auth_provider is %q", AuthProviderKeycloak)
 	}
+	if Config.AuthProvider == AuthProviderKeycloak && len(Config.KeycloakAllowedClients) == 0 {
+		// Default to this backend's own client only. memba and gnolove must be
+		// added explicitly when they cut over, so widening the audience is
+		// always a deliberate act.
+		// Literal rather than keycloakauth.PanelClientID: this package is the
+		// config root and must not depend on a consumer of its config.
+		Config.KeycloakAllowedClients = []string{"gnomonitoring-panel"}
+	}
 	if Config.KeycloakClerkFallback == nil {
 		// Default on: see the field comment — dropping it early is an outage
 		// for memba and gnolove, so it must be an explicit opt-out.
 		enabled := true
 		Config.KeycloakClerkFallback = &enabled
 	}
-	log.Printf("Auth provider: %s (keycloak clerk fallback: %v)", Config.AuthProvider, *Config.KeycloakClerkFallback)
+	log.Printf("Auth provider: %s (keycloak clerk fallback: %v, allowed clients: %v)",
+		Config.AuthProvider, *Config.KeycloakClerkFallback, Config.KeycloakAllowedClients)
 
 	// Build EnabledChains sorted alphabetically. Reset first: LoadConfig
 	// appends, so without this a second call in the same process (only tests
