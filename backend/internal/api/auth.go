@@ -41,10 +41,10 @@ type authSetup struct {
 // do, the general routes must accept both token types or they break with 401s.
 func buildAuthSetup(ctx context.Context) (*authSetup, error) {
 	// Clerk's key is needed whenever any Clerk path can still run: in Clerk
-	// mode, and in Keycloak mode while the general-route fallback is on.
-	if internal.Config.ClerkSecretKey != "" {
-		clerk.SetKey(internal.Config.ClerkSecretKey)
-	}
+	// mode, and in Keycloak mode while the general-route fallback is on. Set
+	// unconditionally, exactly as StartWebhookAPI did before this switch
+	// existed, so Clerk mode's behaviour is bit-for-bit unchanged.
+	clerk.SetKey(internal.Config.ClerkSecretKey)
 
 	if internal.Config.AuthProvider != internal.AuthProviderKeycloak {
 		clerkProtect := middleware(clerkhttp.RequireHeaderAuthorization())
