@@ -22,7 +22,6 @@ func loadConfigFrom(t *testing.T, body string) {
 	require.NoError(t, os.Chdir(dir))
 	t.Cleanup(func() { _ = os.Chdir(originalWd) })
 
-	EnabledChains = nil
 	LoadConfig()
 }
 

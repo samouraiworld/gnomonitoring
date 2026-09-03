@@ -253,7 +253,10 @@ func LoadConfig() {
 	}
 	log.Printf("Auth provider: %s (keycloak clerk fallback: %v)", Config.AuthProvider, *Config.KeycloakClerkFallback)
 
-	// Build EnabledChains sorted alphabetically.
+	// Build EnabledChains sorted alphabetically. Reset first: LoadConfig
+	// appends, so without this a second call in the same process (only tests
+	// do it today) accumulates duplicates and corrupts DefaultChain.
+	EnabledChains = nil
 	for id, chain := range Config.Chains {
 		if chain.Enabled {
 			EnabledChains = append(EnabledChains, id)
