@@ -1,24 +1,13 @@
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
-import { lazy, Suspense } from 'react'
-
-const CLERK_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
-
-const ClerkUserButton = CLERK_KEY
-  ? lazy(async () => {
-      const { UserButton } = await import('@clerk/clerk-react')
-      return {
-        default: () => (
-          <UserButton
-            appearance={{ elements: { avatarBox: { width: 30, height: 30 } } }}
-          />
-        ),
-      }
-    })
-  : null
+import { useKeycloak, displayName } from '../lib/auth'
 
 function TopBarUser() {
-  if (!ClerkUserButton) {
+  const kc = useKeycloak()
+
+  // No Keycloak instance means this build has no VITE_KEYCLOAK_* config and is
+  // running against a dev_mode backend — there is no session to show.
+  if (!kc) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span className="dot dot-ok" />
@@ -26,10 +15,14 @@ function TopBarUser() {
       </div>
     )
   }
+
   return (
-    <Suspense fallback={null}>
-      <ClerkUserButton />
-    </Suspense>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{displayName(kc)}</span>
+      <button className="btn btn-sm" onClick={() => void kc.logout()}>
+        Sign out
+      </button>
+    </div>
   )
 }
 

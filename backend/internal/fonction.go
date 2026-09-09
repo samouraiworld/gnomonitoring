@@ -104,10 +104,30 @@ func (c DatabaseConfig) DSN() string {
 }
 
 type config struct {
-	BackendPort            string                  `yaml:"backend_port"`
-	AllowOrigin            string                  `yaml:"allow_origin"`
-	MetricsPort            int                     `yaml:"metrics_port"`
-	ClerkSecretKey         string                  `yaml:"clerk_secret_key"`
+	BackendPort    string `yaml:"backend_port"`
+	AllowOrigin    string `yaml:"allow_origin"`
+	MetricsPort    int    `yaml:"metrics_port"`
+	ClerkSecretKey string `yaml:"clerk_secret_key"`
+	// AuthProvider selects which identity provider protects the API:
+	// "clerk" (default, back-compat) or "keycloak". See internal/api/auth.go.
+	AuthProvider string `yaml:"auth_provider"`
+	// KeycloakIssuer is the realm's OIDC issuer URL, e.g.
+	// "https://auth.samourai.app/realms/gno-world". Required when
+	// AuthProvider is "keycloak".
+	KeycloakIssuer string `yaml:"keycloak_issuer"`
+	// KeycloakClerkFallback keeps the general (non-/admin) routes accepting
+	// Clerk tokens in addition to Keycloak ones while AuthProvider is
+	// "keycloak". Those routes are called by memba's /alerts page and
+	// gnolove's leaderboard-webhooks route with tokens from *their* Clerk
+	// sessions; turning this off before those two apps have cut over to
+	// Keycloak breaks them with 401s. Defaults to true.
+	KeycloakClerkFallback *bool `yaml:"keycloak_clerk_fallback"`
+	// KeycloakAllowedClients names the realm clients whose tokens this backend
+	// accepts. gno-world is shared with memba and gnolove; without this any
+	// client in the realm could authenticate here. Add "memba-web" /
+	// "gnolove-web" as those apps cut over. An empty list accepts every client
+	// in the realm — deliberate opt-out only.
+	KeycloakAllowedClients []string                `yaml:"keycloak_allowed_clients"`
 	DevMode                bool                    `yaml:"dev_mode"`
 	TokenTelegramValidator string                  `yaml:"token_telegram_validator"`
 	TokenTelegramGovdao    string                  `yaml:"token_telegram_govdao"`
@@ -119,7 +139,19 @@ type config struct {
 	AllowedOrigins []string `yaml:"-"`
 }
 
+// Supported auth_provider values.
+const (
+	AuthProviderClerk    = "clerk"
+	AuthProviderKeycloak = "keycloak"
+)
+
 var Config config
+
+// ClerkFallbackEnabled reports whether the general (non-/admin) routes should
+// still accept Clerk tokens while running in Keycloak mode.
+func (c *config) ClerkFallbackEnabled() bool {
+	return c.KeycloakClerkFallback == nil || *c.KeycloakClerkFallback
+}
 
 // EnabledChains holds the IDs of all chains with Enabled: true, sorted alphabetically.
 var EnabledChains []string
@@ -204,7 +236,42 @@ func LoadConfig() {
 		log.Fatalf("Config error: no chains defined under 'chains:'")
 	}
 
-	// Build EnabledChains sorted alphabetically.
+	// Default auth_provider to "clerk" so config files predating this key
+	// (every currently deployed one) keep working unchanged until the
+	// cutover is deliberately flipped.
+	if Config.AuthProvider == "" {
+		Config.AuthProvider = AuthProviderClerk
+	}
+	switch Config.AuthProvider {
+	case AuthProviderClerk, AuthProviderKeycloak:
+	default:
+		log.Fatalf("Config error: auth_provider must be %q or %q, got %q",
+			AuthProviderClerk, AuthProviderKeycloak, Config.AuthProvider)
+	}
+	if Config.AuthProvider == AuthProviderKeycloak && strings.TrimSpace(Config.KeycloakIssuer) == "" {
+		log.Fatalf("Config error: keycloak_issuer is required when auth_provider is %q", AuthProviderKeycloak)
+	}
+	if Config.AuthProvider == AuthProviderKeycloak && len(Config.KeycloakAllowedClients) == 0 {
+		// Default to this backend's own client only. memba and gnolove must be
+		// added explicitly when they cut over, so widening the audience is
+		// always a deliberate act.
+		// Literal rather than keycloakauth.PanelClientID: this package is the
+		// config root and must not depend on a consumer of its config.
+		Config.KeycloakAllowedClients = []string{"gnomonitoring-panel"}
+	}
+	if Config.KeycloakClerkFallback == nil {
+		// Default on: see the field comment — dropping it early is an outage
+		// for memba and gnolove, so it must be an explicit opt-out.
+		enabled := true
+		Config.KeycloakClerkFallback = &enabled
+	}
+	log.Printf("Auth provider: %s (keycloak clerk fallback: %v, allowed clients: %v)",
+		Config.AuthProvider, *Config.KeycloakClerkFallback, Config.KeycloakAllowedClients)
+
+	// Build EnabledChains sorted alphabetically. Reset first: LoadConfig
+	// appends, so without this a second call in the same process (only tests
+	// do it today) accumulates duplicates and corrupts DefaultChain.
+	EnabledChains = nil
 	for id, chain := range Config.Chains {
 		if chain.Enabled {
 			EnabledChains = append(EnabledChains, id)
@@ -362,6 +429,7 @@ func (c *config) GetEnabledChainIDs() []string {
 	sort.Strings(ids)
 	return ids
 }
+
 // DiscordEmbed mirrors the subset of Discord's embed object this project
 // uses. See https://discord.com/developers/docs/resources/channel#embed-object
 // for the full schema.

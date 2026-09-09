@@ -74,8 +74,9 @@ rpc_endpoint: "https://rpc.test9.testnets.gno.land"
 metrics_port: 8888
 gnoweb: "https://test9.testnets.gno.land"
 graphql: "indexer.test9.testnets.gno.land/graphql/query"
+auth_provider: "clerk" # "clerk" or "keycloak" — see docs/authentication.md
 clerk_secret_key: "sk_test...." #change me
-dev_mode: false # Set to true for local development without Clerk auth
+dev_mode: false # Set to true for local development without auth
 token_telegram_validator: ""
 token_telegram_govdao: ""
 ```
@@ -619,7 +620,10 @@ The penalty itself is driven by `incident_rate_per_week`, not the raw `incident_
 
 #### 👤 User Management (protected)
 
-All endpoints below require a valid Clerk `Authorization: Bearer <token>` header (or `X-Debug-UserID` in dev mode).
+All endpoints below require a valid `Authorization: Bearer <token>` header — a
+Clerk session token or a Keycloak access token, depending on `auth_provider`
+(see [docs/authentication.md](docs/authentication.md)) — or `X-Debug-UserID` in
+dev mode.
 
 **Create user:**
 

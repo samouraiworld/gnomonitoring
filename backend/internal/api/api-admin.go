@@ -10,7 +10,6 @@ import (
 	"time"
 
 	clerk "github.com/clerk/clerk-sdk-go/v2"
-	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	clerkuser "github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/chainmanager"
@@ -81,9 +80,10 @@ func adminStartChain(db *gorm.DB, chainID string, chainCfg *internal.ChainConfig
 }
 
 // registerAdminRoutes attaches all /admin/* handlers to mux.
-// In production: Clerk JWT validation + admin role check.
-// In dev_mode: no auth required.
-func registerAdminRoutes(mux *http.ServeMux, db *gorm.DB) {
+// In production: JWT validation by the configured auth provider, then the
+// matching admin role check (auth.admin then auth.adminRole, both built by
+// buildAuthSetup). In dev_mode: no auth required.
+func registerAdminRoutes(mux *http.ServeMux, db *gorm.DB, auth *authSetup) {
 	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		EnableCORS(w, r)
 		if r.Method == http.MethodOptions {
@@ -96,8 +96,7 @@ func registerAdminRoutes(mux *http.ServeMux, db *gorm.DB) {
 	if internal.Config.DevMode {
 		mux.Handle("/admin/", router)
 	} else {
-		protected := clerkhttp.RequireHeaderAuthorization()
-		authed := protected(adminRoleMiddleware(router))
+		authed := auth.admin(auth.adminRole(router))
 		corsFirst := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			EnableCORS(w, r)
 			if r.Method == http.MethodOptions {

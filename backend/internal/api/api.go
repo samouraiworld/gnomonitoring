@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,12 +13,11 @@ import (
 	"strings"
 	"time"
 
-	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
-
 	clerk "github.com/clerk/clerk-sdk-go/v2"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/keycloakauth"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/scheduler"
 	"gorm.io/gorm"
 )
@@ -86,7 +86,14 @@ func GetChainIDFromRequest(r *http.Request) (string, error) {
 	return chainID, nil
 }
 
-// function for get userid with clerk
+// authUserIDFromContext returns the user id the request is authenticated as.
+//
+// It checks Keycloak claims before Clerk ones rather than branching on
+// Config.AuthProvider, because in Keycloak mode the general routes accept both
+// token types (see dualAccept in auth.go) and only the context says which one
+// this particular request presented. Keycloak claims resolve through
+// EffectiveUserID, which returns the original clerk_user_id for every migrated
+// user — so a row written under Clerk is still found after the cutover.
 func authUserIDFromContext(r *http.Request) (string, error) {
 	// Development mode: allow bypassing auth when explicitly enabled
 	if internal.Config.DevMode {
@@ -95,6 +102,10 @@ func authUserIDFromContext(r *http.Request) (string, error) {
 		}
 		// If no debug header provided, use a default local user ID
 		return "local-dev-user", nil
+	}
+
+	if kcClaims, ok := keycloakauth.ClaimsFromContext(r.Context()); ok {
+		return kcClaims.EffectiveUserID(), nil
 	}
 
 	claims, ok := clerk.SessionClaimsFromContext(r.Context())
@@ -1174,8 +1185,8 @@ type chainHealthResponse struct {
 	PeerCount         int                           `json:"peer_count"`
 	MempoolTxCount    int                           `json:"mempool_tx_count"`
 	MempoolTotalBytes int64                         `json:"mempool_total_bytes"`
-	ValidatorSet      []chainHealthValidatorJSON     `json:"validator_set,omitempty"`
-	ValsetChanges     []chainHealthValsetChangeJSON  `json:"valset_changes,omitempty"`
+	ValidatorSet      []chainHealthValidatorJSON    `json:"validator_set,omitempty"`
+	ValsetChanges     []chainHealthValsetChangeJSON `json:"valset_changes,omitempty"`
 	PrecommitBitmap   map[string]bool               `json:"precommit_bitmap,omitempty"`
 }
 
@@ -1299,11 +1310,15 @@ func corsThenAuth(next http.Handler, protect func(http.Handler) http.Handler) ht
 
 // ======================== Start API =====================================
 func StartWebhookAPI(db *gorm.DB) {
-	clerk.SetKey(internal.Config.ClerkSecretKey)
+	auth, err := buildAuthSetup(context.Background())
+	if err != nil {
+		log.Fatalf("auth setup: %v", err)
+	}
+
 	mux := http.NewServeMux()
 
 	// ====================== Admin routes ===================================
-	registerAdminRoutes(mux, db)
+	registerAdminRoutes(mux, db, auth)
 
 	// Create handler wrapper function
 	webhookGovDAOHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1393,19 +1408,19 @@ func StartWebhookAPI(db *gorm.DB) {
 	})
 
 	if internal.Config.DevMode {
-		// In development mode, don't use Clerk protection
+		// In development mode, don't protect these routes at all
 		mux.Handle("/webhooks/govdao", webhookGovDAOHandler)
 		mux.Handle("/webhooks/validator", webhookValidatorHandler)
 		mux.Handle("/users", userHandler)
 		mux.Handle("/alert-contacts", alertContactsHandler)
 		mux.Handle("/usersH", usersHHandler)
 	} else {
-		// In production mode, use Clerk protection.
+		// In production mode, protect with the configured provider.
 		// CORS headers (and OPTIONS preflight short-circuit) must be applied
-		// before the Clerk auth check, since RequireHeaderAuthorization
-		// returns 403 for preflight requests and would otherwise prevent
-		// EnableCORS from ever running.
-		protected := clerkhttp.RequireHeaderAuthorization()
+		// before the auth check, since RequireHeaderAuthorization (and the
+		// Keycloak middleware, which mirrors it) reject preflight requests and
+		// would otherwise prevent EnableCORS from ever running.
+		protected := auth.general
 		mux.Handle("/webhooks/govdao", corsThenAuth(webhookGovDAOHandler, protected))
 		mux.Handle("/webhooks/validator", corsThenAuth(webhookValidatorHandler, protected))
 		mux.Handle("/users", corsThenAuth(userHandler, protected))

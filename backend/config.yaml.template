@@ -2,8 +2,46 @@ backend_port: "8989"
 metrics_port: 8888
 dev_mode: false
 allow_origin: "http://localhost:3000"  # Comma-separated for multiple origins, e.g. "https://gnolove.world, https://memba.samourai.app"
+
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+# auth_provider selects which identity provider protects the API.
+#   "clerk"    — the historical provider (default when this key is absent)
+#   "keycloak" — the gno-world Keycloak realm
+# Switching is a config edit, not a code change: both paths ship in the binary,
+# so a failed cutover rolls back by setting this key back to "clerk".
+auth_provider: "clerk"
+
+# --- Clerk (used when auth_provider: clerk, and by the fallback below) ---
 clerk_secret_key: "sk_test...."  # change me
 # Admin access: set { "role": "admin" } in Clerk dashboard → User → Public metadata
+
+# --- Keycloak (required when auth_provider: keycloak) ---
+keycloak_issuer: ""  # e.g. "https://auth.samourai.app/realms/gno-world"
+# Admin access: assign the "admin" role scoped to the gnomonitoring-panel
+# CLIENT — Keycloak admin console → Clients → gnomonitoring-panel → Users in
+# role, or Users → <user> → Role mapping → Filter by clients → Assign role.
+# NOT the realm-wide role filter: gno-world is shared with memba and gnolove,
+# and a realm-wide admin role would grant admin on all three.
+#
+# keycloak_clerk_fallback keeps the general routes (/webhooks/govdao,
+# /webhooks/validator, /users, /alert-contacts, /usersH) accepting Clerk tokens
+# in addition to Keycloak ones. Those routes are called by memba's /alerts page
+# and gnolove's leaderboard-webhooks route with tokens from *their* Clerk
+# sessions; turning this off before both apps have cut over to Keycloak breaks
+# them with 401s. /admin/* is never dual-accept — the panel cuts over with this
+# backend. Defaults to true when absent.
+keycloak_clerk_fallback: true
+
+# keycloak_allowed_clients restricts which realm clients' tokens are accepted.
+# gno-world is shared with memba and gnolove, so without this every present and
+# future client in the realm could authenticate here. Defaults to
+# ["gnomonitoring-panel"]; add "memba-web" / "gnolove-web" as those apps cut
+# over. An empty list accepts any client in the realm — deliberate opt-out only.
+keycloak_allowed_clients:
+  - "gnomonitoring-panel"
+
 token_telegram_validator: ""
 token_telegram_govdao: ""
 

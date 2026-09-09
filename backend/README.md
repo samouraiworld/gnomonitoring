@@ -10,7 +10,9 @@ cp config.yaml.template config.yaml
 nano config.yaml
 ```
 
-Set `dev_mode: true` in `config.yaml` to bypass Clerk authentication.
+Set `dev_mode: true` in `config.yaml` to bypass authentication entirely.
+Otherwise pick an identity provider with `auth_provider` (`clerk` or
+`keycloak`) — see [docs/authentication.md](../docs/authentication.md).
 
 2. **Run with Docker**
 ```bash
@@ -55,7 +57,10 @@ Also available for validators with the endpoint `/webhooks/validator`.
 
 ### 🔐 Authentication
 
-**Production Mode**: Most endpoints require Clerk authentication. Include your Clerk session token in the `Authorization` header:
+**Production Mode**: Most endpoints require authentication by the configured
+`auth_provider` (Clerk or Keycloak — see
+[docs/authentication.md](../docs/authentication.md)). Include the session/access
+token in the `Authorization` header:
 ```bash
 curl -H "Authorization: Bearer YOUR_SESSION_TOKEN" \
      http://localhost:8989/endpoint
@@ -322,7 +327,9 @@ daily_report_minute: 30                   # Daily report minute
 metrics_port: 8888                        # Prometheus metrics port
 gnoweb: "https://test9.testnets.gno.land"
 graphql: "indexer.test9.testnets.gno.land/graphql/query"
-clerk_secret_key: "sk_test_..."          # Clerk authentication key
+auth_provider: "clerk"                    # "clerk" or "keycloak"
+clerk_secret_key: "sk_test_..."           # Clerk authentication key
+keycloak_issuer: ""                       # required when auth_provider: keycloak
 dev_mode: false                           # Set to true for local development
 ```
 
@@ -331,14 +338,27 @@ dev_mode: false                           # Set to true for local development
 **For Local Development:**
 ```yaml
 dev_mode: true                            # Enable development mode
-clerk_secret_key: ""                     # Can be empty in dev mode
+clerk_secret_key: ""                      # Can be empty in dev mode
 ```
 
-**For Production:**
+**For Production (Clerk):**
 ```yaml
 dev_mode: false                           # Disable development mode (default)
-clerk_secret_key: "sk_live_your_key"     # Required in production
+auth_provider: "clerk"
+clerk_secret_key: "sk_live_your_key"      # Required
 ```
+
+**For Production (Keycloak):**
+```yaml
+dev_mode: false
+auth_provider: "keycloak"
+keycloak_issuer: "https://auth.samourai.app/realms/gno-world"
+keycloak_clerk_fallback: true             # keep accepting memba/gnolove Clerk tokens
+clerk_secret_key: "sk_live_your_key"      # still required while the fallback is on
+```
+
+See [docs/authentication.md](../docs/authentication.md) for the admin-role model
+and the cutover/rollback procedure.
 
 ## Prometheus Metrics
 

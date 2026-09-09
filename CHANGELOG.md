@@ -7,7 +7,53 @@ Entries are ordered newest-first within each section.
 
 ## [Unreleased]
 
+### Added
+
+- **Keycloak authentication, behind an `auth_provider` config switch** — the API
+  can now be protected by the self-hosted `gno-world` Keycloak realm instead of
+  Clerk, as Phase 1 of the org-wide migration off Clerk. `auth_provider:
+  "clerk"` (the default when the key is absent) leaves every existing
+  deployment on the previous path unchanged; `"keycloak"` verifies bearer
+  tokens against the realm's JWKS (`internal/keycloakauth`) and reads the admin
+  role for `/admin/*` straight out of the validated token, replacing a live
+  Clerk API call per admin request. Both paths ship in the binary, so the
+  backend rolls back by editing config rather than reverting code.
+
+  The admin role is the `admin` role scoped to the `gnomonitoring-panel`
+  *client*, not a realm role: `gno-world` is shared with memba and gnolove, and
+  a realm-wide role would make an admin on any one of them an admin on all
+  three. `keycloak_allowed_clients` (default `["gnomonitoring-panel"]`)
+  additionally restricts which clients' tokens are accepted at all.
+
+  No database migration: every stored `user_id` is a Clerk id, and the realm
+  carries that value forward as a `clerk_user_id` claim which
+  `Claims.EffectiveUserID()` prefers over Keycloak's own `sub`.
+
+  The general routes (`/webhooks/*`, `/users`, `/alert-contacts`, `/usersH`)
+  accept *both* token types in Keycloak mode — memba's `/alerts` page and
+  gnolove's leaderboard-webhooks route call them with tokens from those apps'
+  own Clerk sessions, and those apps migrate on their own schedule. Set
+  `keycloak_clerk_fallback: false` to drop the bridge once both have moved.
+
+  A non-admin who authenticates now gets a clear "Access denied" page instead
+  of a panel whose every request fails with 403 — the realm is shared, and its
+  social identity providers self-provision accounts, so reaching the panel while
+  holding no admin role is an ordinary case rather than an anomaly. The check is
+  UX only; the backend remains the authorization boundary.
+
+  The admin panel now uses `keycloak-js` in place of `@clerk/clerk-react`,
+  wired into the pre-existing `setTokenProvider` seam in `panel/src/lib/api.ts`
+  so no other panel code changed. See `docs/authentication.md`, including the
+  realm prerequisite that must be satisfied before the production cutover.
+
 ### Fixed
+
+- **`LoadConfig` accumulated duplicate chain IDs when called twice in one
+  process** — it appended to the package-level `EnabledChains` without
+  resetting it first, so a second call produced duplicates and could leave
+  `DefaultChain` resolved against a corrupted list. Only tests call it twice
+  today, but the reset belongs in `LoadConfig` either way.
+
 
 - **GovDAO proposal statuses were parsed from the wrong strings, so a rejected
   proposal was never detected** (#112) — the parser keyed off `"ACTIVE"`, a

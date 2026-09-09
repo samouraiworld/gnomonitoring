@@ -76,18 +76,34 @@ No specific UI library is mandated. Choose what fits your style:
 
 ## Authentication
 
-### Production: Clerk JWT
+### Production: Keycloak JWT
 
-In production, the admin panel is protected by Clerk authentication:
+In production, the admin panel is protected by the `gno-world` Keycloak realm:
 
-1. User logs in via Clerk (Google, email, or SAML)
-2. Clerk issues a JWT token
-3. Frontend stores the token in **sessionStorage** (NOT localStorage, for security)
-4. Every API request includes the header: `Authorization: Bearer <token>`
-5. Backend validates the token and checks `user.publicMetadata.role == "admin"`
+1. `keycloak-js` initializes with `onLoad: 'login-required'` and redirects an
+   unauthenticated visitor to Keycloak's hosted login (GitHub, Google, or
+   username/password)
+2. Keycloak issues an access token, held in memory by the `keycloak-js` instance
+3. `lib/auth.ts`'s `makeGetToken` is installed into `lib/api.ts` via
+   `setTokenProvider`, so every API request gets a fresh
+   `Authorization: Bearer <token>` header (refreshed when within 30s of expiry)
+4. The backend validates the signature/issuer/expiry against the realm's JWKS
+5. `/admin/*` additionally requires the `admin` role on the
+   `gnomonitoring-panel` **client** — a realm-wide `admin` role does not count,
+   since the realm is shared with memba and gnolove
 6. Non-admin users get **403 Forbidden**
 
-The frontend typically lives on the same domain as an existing Clerk-powered app. You can reuse Clerk integration from the main site, or set up a new Clerk application if needed.
+Configure with three build-time env vars (Vite bakes them in, so a rebuild — not
+just a restart — is required after a change):
+
+```env
+VITE_KEYCLOAK_URL=https://auth.samourai.app
+VITE_KEYCLOAK_REALM=gno-world
+VITE_KEYCLOAK_CLIENT_ID=gnomonitoring-panel
+```
+
+The backend must be running with `auth_provider: "keycloak"` for these tokens to
+be accepted. See [../docs/authentication.md](../docs/authentication.md).
 
 ### Development: Dev Mode
 
@@ -101,9 +117,10 @@ backend_port: "8989"
 In dev mode:
 - **No authentication is required**
 - You can call the API directly from Vite without any auth header
-- Clerk SDK is still loaded but auth checks are skipped on the backend
+- Leaving the `VITE_KEYCLOAK_*` vars unset makes the panel skip Keycloak
+  initialization entirely, so no redirect to a login page happens
 
-This is ideal for rapid frontend iteration without Clerk setup. When ready to test real auth, flip `dev_mode: false`.
+This is ideal for rapid frontend iteration without Keycloak setup. When ready to test real auth, flip `dev_mode: false`.
 
 ### Vite Proxy for CORS
 
@@ -975,7 +992,7 @@ panel/src/
 ├── main.tsx                    # Vite entry point
 ├── App.tsx                     # Router setup
 ├── hooks/
-│   ├── useAuth.ts             # Clerk auth, token management
+│   ├── auth.ts                # Keycloak instance, token provider, context
 │   ├── useApi.ts              # Fetch wrapper with error handling
 │   └── useTitle.ts            # Page title management
 ├── pages/
@@ -1227,7 +1244,7 @@ Before declaring the frontend complete, test:
 
 7. **Vite proxy** only works in dev mode. In production, ensure the frontend and backend are served from the same origin (same hostname).
 
-8. **Clerk integration** requires setting up a Clerk application and configuring the frontend SDK. This is outside the scope of this handoff but see Clerk docs.
+8. **Keycloak integration** requires the `gnomonitoring-panel` client to exist in the `gno-world` realm with the panel origin in its redirect URIs. See [../docs/authentication.md](../docs/authentication.md).
 
 9. **Session Storage vs. Local Storage:** Store JWT in sessionStorage to prevent persistence across browser close. This is more secure for admin tokens.
 
