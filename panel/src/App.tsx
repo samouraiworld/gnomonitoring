@@ -4,7 +4,7 @@ import type Keycloak from 'keycloak-js'
 
 import { ToastProvider } from './hooks/useToast'
 import { setTokenProvider } from './lib/api'
-import { createKeycloak, makeGetToken, KeycloakContext } from './lib/auth'
+import { createKeycloak, makeGetToken, hasAdminRole, displayName, KeycloakContext } from './lib/auth'
 import { Layout } from './components/Layout'
 
 import Dashboard from './pages/Dashboard'
@@ -40,6 +40,28 @@ function AppRoutes() {
   )
 }
 
+/** Full-page message, styled like the old sign-in card. */
+function Notice({
+  title,
+  children,
+  action,
+}: {
+  title: string
+  children: React.ReactNode
+  action?: React.ReactNode
+}) {
+  return (
+    <div className="login-container">
+      <div className="login-card fade-in">
+        <div className="login-title">Gnomonitoring</div>
+        <div className="login-subtitle">{title}</div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{children}</p>
+        {action}
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   // Created once: keycloak-js keeps its session state on the instance, and a
   // second instance would re-run the redirect dance on every render.
@@ -68,21 +90,36 @@ export default function App() {
   }, [kc])
 
   if (initError) {
-    return (
-      <div className="login-container">
-        <div className="login-card fade-in">
-          <div className="login-title">Gnomonitoring</div>
-          <div className="login-subtitle">Sign-in unavailable</div>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>{initError}</p>
-        </div>
-      </div>
-    )
+    return <Notice title="Sign-in unavailable">{initError}</Notice>
   }
 
   // Brief blank frame while keycloak-js checks the session; when the user is
   // not signed in it navigates away to Keycloak rather than rendering at all.
   if (!ready) return null
   if (kc && !authenticated) return null
+
+  // Authenticated but not an admin. `login-required` only proves the visitor
+  // belongs to the realm, which is shared with memba and gnolove, so this is
+  // reachable by design. Rendering the panel anyway would just produce a
+  // "Forbidden" error on every page — the backend rejects each /admin/* call
+  // with 403 regardless of what is shown here, which remains the actual
+  // security boundary.
+  if (kc && !hasAdminRole(kc)) {
+    return (
+      <Notice
+        title="Access denied"
+        action={
+          <button className="btn btn-sm" onClick={() => void kc.logout()}>
+            Sign out
+          </button>
+        }
+      >
+        Signed in as {displayName(kc)}, but this account does not have the admin
+        role for the Gnomonitoring panel. Ask an administrator to grant it, then
+        sign in again.
+      </Notice>
+    )
+  }
 
   return (
     <KeycloakContext.Provider value={kc}>

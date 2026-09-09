@@ -97,6 +97,33 @@ This cannot be fixed in this repository: the claim arrives inside a validly
 signed token, and nothing in that token distinguishes a sync-set value from a
 self-set one.
 
+## Panel access is gated twice, and only one gate matters
+
+The panel initializes with `onLoad: 'login-required'`, which proves only that
+the visitor belongs to the realm — and `gno-world` is shared with memba and
+gnolove, so that is a much wider set than "gnomonitoring admins". Worse, the
+realm's GitHub and Google identity providers create an account on first broker
+login, so `registrationAllowed: false` does **not** stop a stranger from
+obtaining a `gno-world` identity: anyone with a GitHub account can.
+
+So the panel additionally checks `hasAdminRole()` (`panel/src/lib/auth.ts`)
+after init and renders an "Access denied" page instead of the app when the token
+carries no `admin` role on the panel's own client.
+
+**That check is UX only.** It reads a token the browser already holds and could
+be bypassed by anyone willing to edit their own JavaScript. The real boundary is
+the backend, which re-derives the same role from the token *it* validates and
+answers 403 to every `/admin/*` request from a non-admin regardless. Never move
+an authorization decision into the panel on the strength of this gate.
+
+Note that a stranger holding a `gno-world` token is still *authenticated* for
+the general routes (`/users`, `/webhooks/*`, `/alert-contacts`, `/usersH`) and
+can create rows there under their own user id — those routes are per-user by
+design and have never required the admin role, under Clerk or Keycloak. Whether
+social-login self-provisioning into `gno-world` should be allowed at all is a
+realm-level decision (`samouraiworld/keycloak`, first broker login flow), not
+something this backend can settle.
+
 ## Why there is no database migration
 
 Every `user_id` already stored in Postgres (webhooks, alert contacts, report

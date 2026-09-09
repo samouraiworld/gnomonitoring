@@ -35,6 +35,12 @@ Entries are ordered newest-first within each section.
   own Clerk sessions, and those apps migrate on their own schedule. Set
   `keycloak_clerk_fallback: false` to drop the bridge once both have moved.
 
+  A non-admin who authenticates now gets a clear "Access denied" page instead
+  of a panel whose every request fails with 403 — the realm is shared, and its
+  social identity providers self-provision accounts, so reaching the panel while
+  holding no admin role is an ordinary case rather than an anomaly. The check is
+  UX only; the backend remains the authorization boundary.
+
   The admin panel now uses `keycloak-js` in place of `@clerk/clerk-react`,
   wired into the pre-existing `setTokenProvider` seam in `panel/src/lib/api.ts`
   so no other panel code changed. See `docs/authentication.md`, including the

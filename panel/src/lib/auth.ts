@@ -54,6 +54,26 @@ export function makeGetToken(kc: Keycloak) {
   }
 }
 
+/**
+ * Whether the signed-in user holds the `admin` role on this panel's own
+ * Keycloak client — the same claim the backend's `Claims.IsAdmin()` reads,
+ * `resource_access[<clientId>].roles`.
+ *
+ * This is a UX check, not a security boundary. The backend is the boundary: it
+ * re-derives this from the token it validates itself and answers 403 to every
+ * /admin/* request from a non-admin, whatever this function returns. Its only
+ * job is to replace a panel full of "Forbidden" errors with a clear message —
+ * `onLoad: 'login-required'` gets any realm user past the login screen, and the
+ * realm is shared with memba and gnolove.
+ */
+export function hasAdminRole(kc: Keycloak): boolean {
+  const claims = kc.tokenParsed as
+    | { resource_access?: Record<string, { roles?: string[] }> }
+    | undefined
+  const roles = claims?.resource_access?.[KEYCLOAK_CLIENT_ID]?.roles
+  return Array.isArray(roles) && roles.includes('admin')
+}
+
 /** Display name for the signed-in user, best-effort across realm setups. */
 export function displayName(kc: Keycloak): string {
   const claims = kc.tokenParsed as
