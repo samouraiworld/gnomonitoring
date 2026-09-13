@@ -452,6 +452,12 @@ The Latest Incidents metric retrieves the most recent critical or warning events
 curl -X GET '127.0.0.1:8989/latest_incidents?period=all_time'
 ```
 
+Without other parameters this is the chain's 10 most recent incidents. For one validator's own history, add `addr`, and optionally `limit` (1–100):
+
+```bash
+curl -X GET '127.0.0.1:8989/latest_incidents?period=all_time&addr=g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2&limit=50'
+```
+
 Response:
 
 ```json

@@ -41,7 +41,33 @@ func HasPriorAlert(db *gorm.DB, chainID, addr string) (bool, error) {
 	return count > 0, err
 }
 
+// DefaultAlertLogLimit is how many rows GetAlertLog returns — the long-standing
+// behaviour of /latest_incidents. MaxAlertLogLimit bounds any caller-chosen limit.
+const (
+	DefaultAlertLogLimit = 10
+	MaxAlertLogLimit     = 100
+)
+
+// AlertLogQuery narrows GetAlertLogFiltered. The zero value is exactly
+// GetAlertLog: every validator on the chain, DefaultAlertLogLimit rows.
+type AlertLogQuery struct {
+	// Addr, when set, returns only this validator's incidents.
+	Addr string
+	// Limit caps the rows returned: <= 0 means DefaultAlertLogLimit, and it is
+	// clamped to MaxAlertLogLimit.
+	Limit int
+}
+
+// GetAlertLog returns the chain's most recent incidents in period.
 func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
+	return GetAlertLogFiltered(db, chainID, period, AlertLogQuery{})
+}
+
+// GetAlertLogFiltered is GetAlertLog with an optional per-validator filter and
+// row limit. Without the filter the result is a chain-wide top 10, so once one
+// validator has been noisy, a client asking about any other validator's history
+// gets none of it.
+func GetAlertLogFiltered(db *gorm.DB, chainID, period string, q AlertLogQuery) ([]AlertSummary, error) {
 	var alerts []AlertSummary
 
 	var start, end time.Time
@@ -96,17 +122,32 @@ func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 	// moniker-bearing queries. sent_at is a timestamptz column, so pass the
 	// time.Time bounds directly (the pgx driver handles the conversion) rather
 	// than formatting to strings.
-	err := db.Raw(`
+	limit := q.Limit
+	if limit <= 0 {
+		limit = DefaultAlertLogLimit
+	}
+	if limit > MaxAlertLogLimit {
+		limit = MaxAlertLogLimit
+	}
+
+	query := `
 		SELECT DISTINCT
 		       COALESCE(NULLIF(am.moniker, 'unknown'), al.moniker, '') AS moniker,
 		       al.level, al.addr, al.start_height, al.end_height, al.msg, al.sent_at
 		FROM alert_logs al
 		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
-		WHERE al.chain_id = ? AND al.sent_at BETWEEN ? AND ?
+		WHERE al.chain_id = ? AND al.sent_at BETWEEN ? AND ?`
+	args := []any{chainID, start, end}
+	if q.Addr != "" {
+		query += ` AND al.addr = ?`
+		args = append(args, q.Addr)
+	}
+	query += `
 		ORDER BY al.end_height DESC
-		LIMIT 10
-	`, chainID, start, end).Scan(&alerts).Error
+		LIMIT ?`
+	args = append(args, limit)
 
+	err := db.Raw(query, args...).Scan(&alerts).Error
 	return alerts, err
 }
 
@@ -323,6 +364,7 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough tim
 
 	return results, nil
 }
+
 // aggregatedThrough is the chain's aggregation watermark — see
 // GetCurrentPeriodParticipationRate's doc comment.
 func UptimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough time.Time) ([]UptimeMetrics, error) {
