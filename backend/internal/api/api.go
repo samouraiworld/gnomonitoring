@@ -872,12 +872,55 @@ func Getlastincident(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	incident, err := database.GetAlertLog(db, chainID, period)
+	q, err := parseAlertLogQuery(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	incident, err := database.GetAlertLogFiltered(db, chainID, period, q)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(incident)
+}
+
+// parseAlertLogQuery reads the optional `addr` and `limit` parameters of
+// /latest_incidents. Absent parameters keep the endpoint's original behaviour.
+// An out-of-range limit is rejected rather than clamped, so a client never
+// silently receives fewer rows than it asked for.
+func parseAlertLogQuery(v url.Values) (database.AlertLogQuery, error) {
+	var q database.AlertLogQuery
+	if addr := v.Get("addr"); addr != "" {
+		if !isAlertLogAddr(addr) {
+			return q, fmt.Errorf("invalid addr: lowercase letters and digits only, at most 64")
+		}
+		q.Addr = addr
+	}
+	if raw := v.Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > database.MaxAlertLogLimit {
+			return q, fmt.Errorf("limit must be an integer between 1 and %d", database.MaxAlertLogLimit)
+		}
+		q.Limit = n
+	}
+	return q, nil
+}
+
+// isAlertLogAddr accepts the character set of a lowercase bech32 address. It is
+// not an address validator — the query is parameterised either way — it only
+// stops input that cannot be an address from reaching the database.
+func isAlertLogAddr(s string) bool {
+	if len(s) == 0 || len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 // ============================ Participation Rate ========================

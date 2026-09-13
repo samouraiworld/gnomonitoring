@@ -9,6 +9,16 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **`/latest_incidents` can return one validator's incident history** — new
+  optional `addr` and `limit` (1–100) query parameters. Without them the
+  endpoint is unchanged: the chain's 10 most recent incidents. That cap is why a
+  client asking about one validator (a validator profile page) saw few or none
+  of its incidents as soon as another validator had been noisy. `addr` accepts
+  lowercase letters and digits only (at most 64), and an out-of-range `limit` is
+  rejected with `400` rather than silently clamped. Backed by
+  `database.GetAlertLogFiltered`; `GetAlertLog` keeps its signature and
+  delegates to it.
+
 - **Keycloak authentication, behind an `auth_provider` config switch** — the API
   can now be protected by the self-hosted `gno-world` Keycloak realm instead of
   Clerk, as Phase 1 of the org-wide migration off Clerk. `auth_provider:
