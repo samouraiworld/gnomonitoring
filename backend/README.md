@@ -270,11 +270,17 @@ curl -X POST http://localhost:8989/alert-contacts \
   -H "Authorization: Bearer TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "alerts@example.com",
-    "name": "Alert Manager",
-    "active": true
+    "moniker": "gnocore-val-01",
+    "namecontact": "On-call",
+    "mention_tag": "&123456789012345678",
+    "id_webhook": 1
   }'
 ```
+
+A contact is mentioned on WARNING and CRITICAL alerts for its validator
+`moniker`, through the linked webhook only. `mention_tag` is a Discord user ID
+(`123…`), a role ID prefixed with `&` (`&123…`), a pasted `<@id>` / `<@&id>`
+(normalized on write), or empty (no ping). Role mentions are Discord-only.
 
 **List Alert Contacts**
 ```bash

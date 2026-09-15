@@ -478,9 +478,13 @@ func SendDiscordEmbed(embed DiscordEmbed, webhookURL string) error {
 // content string to a Discord webhook. content carries @mentions, which
 // Discord does not parse when written inside an embed (see
 // RenderAlertDiscordEmbed); an empty content is omitted from the payload
-// entirely rather than sent as "".
-func SendDiscordAlertEmbed(content string, embed DiscordEmbed, webhookURL string) error {
-	payload := map[string]any{"embeds": []DiscordEmbed{embed}}
+// entirely rather than sent as "". allowed restricts which of those
+// mentions actually ping (see DiscordAllowedMentionsFor).
+func SendDiscordAlertEmbed(content string, allowed DiscordAllowedMentions, embed DiscordEmbed, webhookURL string) error {
+	if allowed.Parse == nil {
+		allowed.Parse = []string{}
+	}
+	payload := map[string]any{"embeds": []DiscordEmbed{embed}, "allowed_mentions": allowed}
 	if content != "" {
 		payload["content"] = content
 	}
@@ -612,24 +616,16 @@ func SendAllValidatorAlerts(chainID string, missed int, today, level, addr, moni
 
 	for _, wh := range webhooks {
 		whData := data
-		if level == "CRITICAL" && (wh.Type == "discord" || wh.Type == "slack") {
-			type tag struct{ MentionTag string }
-			var res []tag
-			if err := db.Model(&database.AlertContact{}).
-				Select("mention_tag").
-				Where("user_id = ? AND moniker = ? AND id_webhook = ?", wh.UserID, moniker, wh.ID).
-				Find(&res).Error; err != nil {
-				return fmt.Errorf("failed to fetch mentions: %w", err)
-			}
-			for _, r := range res {
-				whData.Mentions = append(whData.Mentions, r.MentionTag)
-			}
+		mentions, err := mentionsForAlert(db, level, wh.Type, wh.UserID, moniker, wh.ID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch mentions: %w", err)
 		}
+		whData.Mentions = mentions
 
 		switch wh.Type {
 		case "discord":
 			content, embed := RenderAlertDiscordEmbed(whData)
-			if err := SendDiscordAlertEmbed(content, embed, wh.URL); err != nil {
+			if err := SendDiscordAlertEmbed(content, DiscordAllowedMentionsFor(whData.Mentions), embed, wh.URL); err != nil {
 				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
@@ -714,7 +710,7 @@ func SendResolveValidator(chainID, addr, moniker string, resumeHeight int64, db 
 		switch wh.Type {
 		case "discord":
 			content, embed := RenderAlertDiscordEmbed(data)
-			if err := SendDiscordAlertEmbed(content, embed, wh.URL); err != nil {
+			if err := SendDiscordAlertEmbed(content, DiscordAllowedMentionsFor(data.Mentions), embed, wh.URL); err != nil {
 				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}
@@ -753,7 +749,7 @@ func SendInfoValidator(chainID string, data AlertData, db *gorm.DB) error {
 		switch wh.Type {
 		case "discord":
 			content, embed := RenderAlertDiscordEmbed(data)
-			if err := SendDiscordAlertEmbed(content, embed, wh.URL); err != nil {
+			if err := SendDiscordAlertEmbed(content, DiscordAllowedMentionsFor(data.Mentions), embed, wh.URL); err != nil {
 				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
 				continue
 			}

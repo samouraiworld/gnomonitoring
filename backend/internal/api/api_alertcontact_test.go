@@ -218,3 +218,46 @@ func TestDeleteMonitoringWebhookHandler_CascadesAlertContacts(t *testing.T) {
 		t.Fatalf("contacts after delete = %d, want 0 (orphaned id_webhook=%d)", len(contactsAfter), webhookID)
 	}
 }
+
+// TestInsertAlertContactHandler_NormalizesRoleAndUserTags pins that a Discord
+// role can be targeted (&<id>) and that a pasted mention (<@id>, <@&id>) is
+// stored in its canonical form, while anything else is still refused.
+func TestInsertAlertContactHandler_NormalizesRoleAndUserTags(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	internal.Config.DevMode = true
+	defer func() { internal.Config.DevMode = false }()
+	const userID = "user-tags"
+
+	post := func(tag string) *httptest.ResponseRecorder {
+		body := fmt.Sprintf(`{"moniker":"val1","namecontact":"c","mention_tag":%q,"id_webhook":0}`, tag)
+		req := httptest.NewRequest(http.MethodPost, "/alert-contacts", bytes.NewBufferString(body))
+		req.Header.Set("X-Debug-UserID", userID)
+		rec := httptest.NewRecorder()
+		InsertAlertContactHandler(rec, req, db)
+		return rec
+	}
+
+	for _, tag := range []string{"111", "&222", "<@333>", "<@&444>"} {
+		if rec := post(tag); rec.Code != http.StatusCreated {
+			t.Fatalf("tag %q: status = %d, want 201, body = %s", tag, rec.Code, rec.Body.String())
+		}
+	}
+	for _, tag := range []string{"bob", "&", "@everyone"} {
+		if rec := post(tag); rec.Code != http.StatusBadRequest {
+			t.Fatalf("tag %q: status = %d, want 400, body = %s", tag, rec.Code, rec.Body.String())
+		}
+	}
+
+	contacts, err := database.ListAlertContacts(db, userID)
+	if err != nil {
+		t.Fatalf("list contacts: %v", err)
+	}
+	var got []string
+	for _, c := range contacts {
+		got = append(got, c.MentionTag)
+	}
+	want := []string{"111", "&222", "333", "&444"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("stored tags = %v, want %v", got, want)
+	}
+}

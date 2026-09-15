@@ -453,7 +453,7 @@ func TestSendDiscordAlertEmbed_PostsContentAndEmbeds(t *testing.T) {
 	defer func() { alertHTTPClient = orig }()
 
 	embed := DiscordEmbed{Title: "t", Color: 0xE74C3C}
-	if err := SendDiscordAlertEmbed("<@111>", embed, srv.URL); err != nil {
+	if err := SendDiscordAlertEmbed("<@111>", DiscordAllowedMentionsFor([]string{"111"}), embed, srv.URL); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if captured["content"] != "<@111>" {
@@ -477,7 +477,7 @@ func TestSendDiscordAlertEmbed_OmitsContentWhenEmpty(t *testing.T) {
 	alertHTTPClient = &http.Client{Timeout: 10 * time.Second}
 	defer func() { alertHTTPClient = orig }()
 
-	if err := SendDiscordAlertEmbed("", DiscordEmbed{Title: "t"}, srv.URL); err != nil {
+	if err := SendDiscordAlertEmbed("", DiscordAllowedMentions{}, DiscordEmbed{Title: "t"}, srv.URL); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, present := captured["content"]; present {

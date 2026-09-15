@@ -655,12 +655,11 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
-	// F6: validate mention_tag is a numeric Discord/Slack snowflake (or empty)
-	for _, c := range input.MentionTag {
-		if c < '0' || c > '9' {
-			http.Error(w, "Invalid mention_tag: must be numeric", http.StatusBadRequest)
-			return
-		}
+	// F6: mention_tag must be a numeric user ID, &<id> for a role, or empty
+	input.MentionTag, err = internal.NormalizeMentionTag(input.MentionTag)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// F7: verify the referenced webhook belongs to the calling user
@@ -740,12 +739,11 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 
-	// F6: validate mention_tag is numeric (Discord/Slack snowflake) or empty
-	for _, c := range data.MentionTag {
-		if c < '0' || c > '9' {
-			http.Error(w, "Invalid mention_tag: must be numeric", http.StatusBadRequest)
-			return
-		}
+	// F6: mention_tag must be a numeric user ID, &<id> for a role, or empty
+	data.MentionTag, err = internal.NormalizeMentionTag(data.MentionTag)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// F7: verify the referenced webhook belongs to the calling user
