@@ -9,6 +9,23 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **Alert contacts are mentioned on WARNING alerts too, and can target a
+  Discord role** — `SendAllValidatorAlerts` used to attach contact mentions
+  to CRITICAL alerts only; WARNING alerts now carry them as well (RESOLVED and
+  info notices still never ping). A `mention_tag` prefixed with `&`
+  (`&<role_id>`) is rendered as a role mention `<@&id>` instead of a user
+  mention: a snowflake alone does not say whether it identifies a user or a
+  role, so the prefix carries the type, and no migration or new API field is
+  needed. `POST`/`PUT /alert-contacts` also accept a pasted `<@id>`, `<@!id>`
+  or `<@&id>` and store the canonical form. Discord alert payloads now send an
+  explicit `allowed_mentions` listing exactly the contact IDs, so nothing else
+  in the message can ping. Role tags are dropped on Slack webhooks, and
+  contacts with an empty tag no longer render a stray `<@>`.
+
+  Note: a WARNING that escalates to CRITICAL now pings its contacts twice (the
+  resend dedup is per level), and a flapping validator can ping every
+  `alert_warning_resend_hours` (default 6h).
+
 - **Keycloak authentication, behind an `auth_provider` config switch** — the API
   can now be protected by the self-hosted `gno-world` Keycloak realm instead of
   Clerk, as Phase 1 of the org-wide migration off Clerk. `auth_provider:

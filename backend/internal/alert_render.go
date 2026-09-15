@@ -45,9 +45,9 @@ type AlertData struct {
 
 	Fields []AlertField
 
-	// Mentions holds raw Discord/Slack mention tags (as stored in
-	// AlertContact). Empty for most alerts (only CRITICAL missed-block
-	// alerts populate it today).
+	// Mentions holds mention tags as stored in AlertContact: "<id>" for a
+	// user, "&<id>" for a Discord role (see NormalizeMentionTag). Empty for
+	// most alerts (only WARNING/CRITICAL missed-block alerts populate it).
 	Mentions []string
 }
 
@@ -79,6 +79,7 @@ func RenderAlertDiscordEmbed(d AlertData) (content string, embed DiscordEmbed) {
 	if len(d.Mentions) > 0 {
 		lines := make([]string, len(d.Mentions))
 		for i, m := range d.Mentions {
+			// A role tag already carries its "&", yielding <@&id>.
 			lines[i] = "<@" + m + ">"
 		}
 		content = strings.Join(lines, "\n")
@@ -133,11 +134,15 @@ func RenderAlertSlackBlocks(d AlertData) []SlackBlock {
 		})
 	}
 
-	if len(d.Mentions) > 0 {
-		mentionText := make([]string, len(d.Mentions))
-		for i, m := range d.Mentions {
-			mentionText[i] = "<@" + m + ">"
+	// Role tags (&<id>) are Discord role IDs with no Slack equivalent, so they
+	// are dropped here rather than rendered as a broken <@&id>.
+	var mentionText []string
+	for _, m := range d.Mentions {
+		if !isRoleMention(m) {
+			mentionText = append(mentionText, "<@"+m+">")
 		}
+	}
+	if len(mentionText) > 0 {
 		blocks = append(blocks, SlackBlock{
 			Type:     "context",
 			Elements: []SlackText{{Type: "mrkdwn", Text: strings.Join(mentionText, " ")}},

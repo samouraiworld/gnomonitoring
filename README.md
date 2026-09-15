@@ -661,7 +661,19 @@ curl -X DELETE ‘localhost:8989/users’ \
 
 #### 🔔 Alert Contacts (protected)
 
-Manage contacts that receive mention tags in CRITICAL alerts.
+Manage contacts that are mentioned in WARNING and CRITICAL validator alerts
+for a given validator moniker, through the linked webhook only.
+
+`mention_tag` accepts:
+
+- a Discord user ID: `123456789012345678`
+- a Discord role ID, prefixed with `&`: `&123456789012345678`
+- the mention as Discord shows it when escaped in chat (type `\@name` or
+  `\@RoleName`): `<@123456789012345678>` / `<@&123456789012345678>` — stored
+  as the canonical form above
+- an empty string (the alert still fires, it just doesn't ping)
+
+Role mentions are Discord-only and are dropped on Slack webhooks.
 
 **List contacts:**
 
