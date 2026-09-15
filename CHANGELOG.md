@@ -7,6 +7,31 @@ Entries are ordered newest-first within each section.
 
 ## [Unreleased]
 
+### Changed
+
+- **The root `docker-compose.yml` is now `docker-compose-prod.yml`, and the
+  local devnet has its own `compose_dev_chain.yml`** — the root compose
+  declared the external `gnoland-test_default` devnet network, and
+  `backend/docker-compose.yml` attached the backend to it unconditionally, so
+  a plain `docker compose up -d` failed whenever the local devnet was not
+  running. Production now runs `docker compose -f docker-compose-prod.yml up
+  -d` with no devnet dependency (project name pinned to `gnomonitoring`, so the
+  `gnomonitoring_pgdata` volume is unchanged), and `backend/docker-compose.yml`
+  no longer joins the devnet network. Any deploy script calling a bare
+  `docker compose` from a checkout of this repository must pass `-f
+  docker-compose-prod.yml`.
+
+  `compose_dev_chain.yml` runs the gnoland-test devnet, the backend and
+  Postgres as one project (`cd gnoland-test && make dev-up`). Every start
+  resets the chain to block 0 and purges the `dev` chain rows (webhooks,
+  alert contacts and Telegram subscriptions are kept) via the one-shot
+  `chain-reset` service, which skips the reset if the validators are already
+  running. The backend, tx-indexer and gnoweb wait for a `validator`
+  healthcheck (RPC answering with at least one block), which removes the
+  "restart the backend after every reset" step and the spurious RPC-outage
+  alert of a backend started before the chain. Backend config:
+  `backend/config_dev_chain.yaml` (gitignored, from the committed template).
+
 ### Added
 
 - **Alert contacts are mentioned on WARNING alerts too, and can target a

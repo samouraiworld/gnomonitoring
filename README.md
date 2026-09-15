@@ -84,7 +84,7 @@ token_telegram_govdao: ""
 3.Start the backend:
 
 ```bash
-docker compose up -d 
+docker compose -f docker-compose-prod.yml up -d
 ```
 
 ---
@@ -105,10 +105,16 @@ fresh keys). Requires a local clone of the
 
 ```bash
 cd gnoland-test
-make full-reinit     # build images, regenerate keys/genesis, start the chain
+make full-reinit     # once: build images, regenerate keys/genesis
+cp ../backend/config_dev_chain.yaml.template ../backend/config_dev_chain.yaml
+make dev-up          # devnet + backend + Postgres, always from block 0
 make scenario1       # onboard a 4th validator via a GovDAO proposal
 make help            # full list of lifecycle + test-scenario targets
 ```
+
+`make dev-up` runs [`compose_dev_chain.yml`](compose_dev_chain.yml): every
+start resets the chain to block 0 and purges the `dev` chain rows from the
+database (webhooks, alert contacts and Telegram subscriptions are kept).
 
 Scenarios cover validator downtime (`scenario2`), chain halt/stagnation
 (`scenario3`), total RPC outage (`scenario4`), a rejected GovDAO proposal

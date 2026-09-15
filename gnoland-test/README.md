@@ -157,62 +157,48 @@ or query the API/Telegram bot with `?chain=local`. The devnet's RPC/GraphQL/
 gnoweb ports are published on `127.0.0.1`, so `localhost:26658` etc. are
 reachable directly from the host.
 
-### Option B — dockerized gnomonitoring backend (`backend/docker-compose.yml`)
+### Option B — full dockerized stack (`compose_dev_chain.yml`, recommended)
 
-The `gnomonitoring-backend` container can't reach `127.0.0.1:<port>` on the
-host, so it needs to join the devnet's Docker network and address the devnet
-services by their compose service name instead of `localhost`.
+[`compose_dev_chain.yml`](../compose_dev_chain.yml) at the repository root
+runs the devnet, the gnomonitoring backend and Postgres as one compose project
+(named `gnoland-test`, so every `make scenario*` target drives the same
+containers). The backend reaches the devnet by service name
+(`http://validator:26657`, `http://tx-indexer:8546`, `http://gnoweb:8888`).
 
-1. **Start the devnet first** (so the `gnoland-test_default` network exists):
-
-   ```bash
-   cd gnoland-test && docker compose up -d
-   ```
-
-2. `backend/docker-compose.yml` already attaches the `detect-proposal`
-   service to the external `gnoland-test_default` network (in addition to
-   its own `default` network for Postgres).
-
-3. Configure `backend/config_docker.yaml` (gitignored — copy from
-   `backend/config.yaml.template` if it doesn't exist yet) with:
-
-   ```yaml
-   default_chain: "local"
-   chains:
-     local:
-       rpc_endpoints:
-         - "http://validator:26657"
-       graphqls:
-         - "http://tx-indexer:8546/graphql/query"
-       gnowebs:
-         - "http://gnoweb:8888"
-       enabled: true
-   ```
-
-4. Start the backend:
+1. **Once:** generate keys/genesis and build the validator image
+   (`make full-reinit`), then create the backend config:
 
    ```bash
-   cd backend && docker compose up -d --build
+   cp ../backend/config_dev_chain.yaml.template ../backend/config_dev_chain.yaml
+   # set database.password to POSTGRES_PASSWORD from the repository root .env
    ```
 
-5. Check it picked up the devnet:
+2. **Start (always from block 0):**
 
    ```bash
-   docker logs gnomonitoring-backend --tail=20
-   curl -s http://localhost:8989/api/validators?chain=local | jq
+   make dev-up     # down, reset, then up --build
+   make dev-logs   # follow the backend
+   make dev-down   # stop everything (the Postgres volume is kept)
    ```
 
-**Troubleshooting:** if `gnomonitoring-backend` logs
-`lookup postgres on 127.0.0.11:53: no such host`, the `gnomonitoring-postgres`
-container was started without joining the compose network (e.g. left over
-from a previous run). Fix with:
+`make dev-up` tears the stack down first, then the one-shot `chain-reset`
+service ([`dev-chain-reset.sh`](dev-chain-reset.sh)) wipes every node's
+`config`/`db`/`wal`, resets `priv_validator_state.json` and purges the `dev`
+chain rows from the database — the in-container equivalent of `make reinit`.
+Webhooks, alert contacts and Telegram subscriptions are kept. The tx-indexer
+keeps its data in memory, so it follows the chain back to block 0.
 
-```bash
-docker compose up -d --force-recreate postgres
-docker restart gnomonitoring-backend
-```
+Startup is ordered: the backend, tx-indexer and gnoweb wait until the
+`validator` healthcheck sees the RPC answer with at least one block. Starting
+the backend any earlier leaves its validator map empty (no participation
+ingested until the 5-minute refresh) and fires a spurious RPC-outage alert.
 
-The `pgdata` volume is untouched, so no data is lost.
+A plain `docker compose -f compose_dev_chain.yml up -d` against a running
+stack is safe: `chain-reset` detects the live validator and skips the reset.
+
+The Postgres container and volume are the same as `docker-compose-prod.yml`'s
+on a local machine (`gnomonitoring-postgres`, `gnomonitoring_pgdata`): stop one
+stack before starting the other.
 
 ## Test scenarios
 

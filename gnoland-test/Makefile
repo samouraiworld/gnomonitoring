@@ -1,6 +1,6 @@
 # Pin the compose project name so the devnet network is always
 # "gnoland-test_default", regardless of the directory name. The gnomonitoring
-# backend (backend/docker-compose.yml) attaches to that network by name, so a
+# stack (../compose_dev_chain.yml) shares this project name, so a
 # stable project name prevents DNS breakage ("no such host: validator") when
 # this folder gets copied or renamed.
 export COMPOSE_PROJECT_NAME := gnoland-test
@@ -23,13 +23,22 @@ PG_USER      := gnomonitoring
 PG_DB        := gnomonitoring
 DEV_CHAIN    := dev
 
-.PHONY: help up up-validator4 ensure-bootstrap down reinit regen-genesis full-reinit clean-db clean-all status logs \
+# Full local stack (devnet + gnomonitoring backend + Postgres), see
+# compose_dev_chain.yml at the repository root.
+DEV_COMPOSE := docker compose -f ../compose_dev_chain.yml --profile phase2
+
+.PHONY: help dev-up dev-down dev-logs up up-validator4 ensure-bootstrap down reinit regen-genesis full-reinit clean-db clean-all status logs \
         stop-val1 stop-val2 stop-val3 stop-val4 \
         start-val1 start-val2 start-val3 start-val4 \
         scenario1 scenario2 scenario2-restart scenario3 scenario3-restart \
         scenario4 scenario4-restart scenario5 scenario-mute
 
 help:
+	@echo "Full stack (devnet + gnomonitoring, ../compose_dev_chain.yml):"
+	@echo "  make dev-up            - tear down, reset the chain to block 0, purge dev DB rows, start everything"
+	@echo "  make dev-down          - stop and remove the whole stack (keeps the Postgres volume)"
+	@echo "  make dev-logs          - follow the gnomonitoring backend logs"
+	@echo ""
 	@echo "Chain lifecycle:"
 	@echo "  make up                - start validator/validator2/validator3 + tx-indexer + gnoweb"
 	@echo "  make up-validator4     - start validator4 (phase2 profile, needed for scenario1)"
@@ -69,6 +78,22 @@ ensure-bootstrap:
 		echo "ℹ️  .env/genesis.json missing — running bootstrap.sh first..."; \
 		./bootstrap.sh; \
 	fi
+
+# The stack is always torn down first: the chain-reset service only wipes
+# chain state when the validators are not running, so 'dev-up' guarantees a
+# fresh chain on every call. validator4 (phase2) is not started here; run
+# 'make scenario1' to onboard it.
+dev-up: ensure-bootstrap
+	@test -f ../backend/config_dev_chain.yaml || { \
+		echo "❌ ../backend/config_dev_chain.yaml missing - copy it from config_dev_chain.yaml.template"; exit 1; }
+	$(DEV_COMPOSE) down --remove-orphans
+	docker compose -f ../compose_dev_chain.yml up -d --build
+
+dev-down:
+	$(DEV_COMPOSE) down --remove-orphans
+
+dev-logs:
+	docker logs -f gnomonitoring-backend
 
 up: ensure-bootstrap
 	docker compose up -d
