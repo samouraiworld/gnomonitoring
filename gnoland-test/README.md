@@ -193,12 +193,40 @@ Startup is ordered: the backend, tx-indexer and gnoweb wait until the
 the backend any earlier leaves its validator map empty (no participation
 ingested until the 5-minute refresh) and fires a spurious RPC-outage alert.
 
-A plain `docker compose -f compose_dev_chain.yml up -d` against a running
-stack is safe: `chain-reset` detects the live validator and skips the reset.
+#### Running it from the repository root
 
-The Postgres container and volume are the same as `docker-compose-prod.yml`'s
-on a local machine (`gnomonitoring-postgres`, `gnomonitoring_pgdata`): stop one
-stack before starting the other.
+The Makefile targets are thin wrappers; the same stack can be driven with
+plain `docker compose` from the repository root. Whether `up` resets the chain
+depends on the state of the stack:
+
+| Stack state before `up -d`                          | Result                                                        |
+|-----------------------------------------------------|---------------------------------------------------------------|
+| Never started, or stopped (`down` / `stop`)         | Chain reset to block 0 and `dev` DB rows purged, then started |
+| Already running                                     | Nothing is wiped — `chain-reset` sees the live validator and skips |
+
+So a plain `up -d` against a running stack is safe. To **force** a fresh chain
+(what `make dev-up` does):
+
+```bash
+docker compose -f compose_dev_chain.yml --profile phase2 down
+docker compose -f compose_dev_chain.yml up -d --build
+```
+
+- `--profile phase2` on `down` also removes `validator4` if `make scenario1`
+  started it; otherwise it can keep running on the old chain while its state
+  is wiped.
+- `--build` on `up` rebuilds the backend image after Go code changes; without
+  it the previously built image is reused.
+
+Before the first run:
+
+- `gnoland-test/.env` and `gnoland-test/genesis.json` must exist
+  (`make full-reinit`) — `chain-reset` exits with an error otherwise;
+- `backend/config_dev_chain.yaml` must exist (see step 1 above);
+- stop the local production stack if it runs
+  (`docker compose -f docker-compose-prod.yml down`): both use the same
+  Postgres container and volume (`gnomonitoring-postgres`,
+  `gnomonitoring_pgdata`).
 
 ## Test scenarios
 

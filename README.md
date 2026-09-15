@@ -116,6 +116,19 @@ make help            # full list of lifecycle + test-scenario targets
 start resets the chain to block 0 and purges the `dev` chain rows from the
 database (webhooks, alert contacts and Telegram subscriptions are kept).
 
+The same stack can be driven from the repository root. `up -d` resets the
+chain only when the stack is not running (never started, or after `down` /
+`stop`); against a running stack it wipes nothing. To force a fresh chain:
+
+```bash
+docker compose -f compose_dev_chain.yml --profile phase2 down   # also stops validator4
+docker compose -f compose_dev_chain.yml up -d --build           # --build picks up Go changes
+```
+
+Stop the local production stack first (`docker compose -f
+docker-compose-prod.yml down`): both use the same Postgres container. Details
+in [`gnoland-test/README.md`](gnoland-test/README.md#running-it-from-the-repository-root).
+
 Scenarios cover validator downtime (`scenario2`), chain halt/stagnation
 (`scenario3`), total RPC outage (`scenario4`), a rejected GovDAO proposal
 (`scenario5`) and alert resend dedup (`scenario-mute`); `make clean-all` nukes
