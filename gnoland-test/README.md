@@ -231,6 +231,36 @@ Before the first run:
   Postgres container and volume (`gnomonitoring-postgres`,
   `gnomonitoring_pgdata`).
 
+#### Running the test scenarios on the dev stack
+
+The `make scenario*` targets work unchanged: the stack shares the
+`gnoland-test` compose project, so they drive its containers by service name.
+
+```bash
+cd gnoland-test
+make dev-up             # returns once the validator has produced a block
+make scenario1          # onboard validator4 via GovDAO
+# wait for the backend to track samourai-crew-4 (next moniker refresh, <= 5 min):
+#   docker logs gnomonitoring-backend | grep 'New Validator detected'
+make scenario2          # stop validator4 -> WARNING (>= 5 missed) then CRITICAL (>= 30)
+make scenario2-restart  # -> RESOLVED
+make dev-up             # fresh chain before scenario5 (targets proposal #0)
+```
+
+- **Reset with `make dev-up`, never `make reinit` / `make full-reinit`** while
+  the dev stack runs: those restart the chain from `gnoland-test/docker-compose.yml`,
+  without the healthcheck ordering and without recreating the backend, which
+  brings back the "backend ingests nothing" problem. `make full-reinit` is
+  still the way to regenerate keys — then run `make dev-up`.
+- Do not run `make dev-up` while a scenario is in progress: it restarts the
+  whole stack and the scenario's next transaction fails with
+  `connection reset by peer`.
+- The `Found orphan containers (gnomonitoring-backend, ...)` warning printed by
+  `scenario1`/`scenario5` is expected and harmless: those services are defined
+  in `compose_dev_chain.yml`, not in this directory's compose file.
+- Assertions are unchanged (see each scenario below): `docker exec
+  gnomonitoring-postgres psql ...` and `docker logs gnomonitoring-backend`.
+
 ## Test scenarios
 
 These scenarios exercise gnomonitoring end-to-end against this devnet (block
