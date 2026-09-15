@@ -110,6 +110,9 @@ make full-reinit   # bootstrap (new keys+genesis) + purge dev DB + start
 >
 > This also reconnects the **GovDAO websocket**, which is what fires "New
 > Proposal" alerts (see the GovDAO note under Scenario 1).
+>
+> Not needed with `make dev-up` (Option B below): it recreates the backend on
+> every reset.
 
 ## Local dev accounts
 
@@ -199,10 +202,10 @@ The Makefile targets are thin wrappers; the same stack can be driven with
 plain `docker compose` from the repository root. Whether `up` resets the chain
 depends on the state of the stack:
 
-| Stack state before `up -d`                          | Result                                                        |
-|-----------------------------------------------------|---------------------------------------------------------------|
-| Never started, or stopped (`down` / `stop`)         | Chain reset to block 0 and `dev` DB rows purged, then started |
-| Already running                                     | Nothing is wiped — `chain-reset` sees the live validator and skips |
+| Stack state before `up -d`                  | Result                                                             |
+|---------------------------------------------|--------------------------------------------------------------------|
+| Never started, or stopped (`down` / `stop`) | Chain reset to block 0 and `dev` DB rows purged, then started      |
+| Already running                             | Nothing is wiped — `chain-reset` sees the live validator and skips |
 
 So a plain `up -d` against a running stack is safe. To **force** a fresh chain
 (what `make dev-up` does):
