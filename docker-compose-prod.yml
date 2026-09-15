@@ -1,3 +1,12 @@
+# Production stack: Postgres + backend + panel.
+#   docker compose -f docker-compose-prod.yml up -d --build
+# For local end-to-end testing against the gnoland-test devnet, use
+# compose_dev_chain.yml instead (see gnoland-test/README.md).
+#
+# The project name is pinned so the Postgres volume stays "gnomonitoring_pgdata"
+# now that this file is no longer the directory's default docker-compose.yml.
+name: gnomonitoring
+
 services:
   postgres:
     image: postgres:16
@@ -68,11 +77,3 @@ services:
 
 volumes:
   pgdata:
-networks:
-  default:
-  # Local devnet network (gnoland-test/). Must be started first:
-  #   cd gnoland-test && docker compose up -d
-  # Without it, docker compose up fails because the external network doesn't exist.
-  gno-devnet:
-    name: gnoland-test_default
-    external: true

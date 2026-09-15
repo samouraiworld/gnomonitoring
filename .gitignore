@@ -12,6 +12,7 @@ Validator/secrets/*
 **.csv
 **.tar.gz
 **config_docker.yaml
+**config_dev_chain.yaml
 **deploy-preprod.sh
 .claude/**
 CLAUDE.md

@@ -84,7 +84,7 @@ token_telegram_govdao: ""
 3.Start the backend:
 
 ```bash
-docker compose up -d 
+docker compose -f docker-compose-prod.yml up -d
 ```
 
 ---
@@ -105,10 +105,35 @@ fresh keys). Requires a local clone of the
 
 ```bash
 cd gnoland-test
-make full-reinit     # build images, regenerate keys/genesis, start the chain
+make full-reinit     # once: build images, regenerate keys/genesis
+cp ../.env.example ../.env   # if not done yet (POSTGRES_PASSWORD)
+cp ../backend/config_dev_chain.yaml.template ../backend/config_dev_chain.yaml
+make dev-up          # devnet + backend + Postgres, always from block 0
 make scenario1       # onboard a 4th validator via a GovDAO proposal
 make help            # full list of lifecycle + test-scenario targets
 ```
+
+`make dev-up` runs [`compose_dev_chain.yml`](compose_dev_chain.yml): every
+start resets the chain to block 0 and purges the `dev` chain rows from the
+database (webhooks, alert contacts and Telegram subscriptions are kept).
+
+The same stack can be driven from the repository root. `up -d` resets the
+chain only when no validator is running (never started, or after `down` /
+`stop`); if any validator still answers it wipes nothing. To force a fresh chain:
+
+```bash
+# --profile phase2 also stops validator4; --build picks up Go changes
+docker compose -f compose_dev_chain.yml --env-file .env --env-file gnoland-test/.env --profile phase2 down
+docker compose -f compose_dev_chain.yml --env-file .env --env-file gnoland-test/.env up -d --build
+```
+
+Both `--env-file` flags are required: compose resolves `DOCKER_USER` /
+`GNO_IMAGE` (generated into `gnoland-test/.env`) and `POSTGRES_PASSWORD` (root
+`.env`) before starting anything; `chain-reset` refuses to run without them.
+
+Stop the local production stack first (`docker compose -f
+docker-compose-prod.yml down`): both use the same Postgres container. Details
+in [`gnoland-test/README.md`](gnoland-test/README.md#running-it-from-the-repository-root).
 
 Scenarios cover validator downtime (`scenario2`), chain halt/stagnation
 (`scenario3`), total RPC outage (`scenario4`), a rejected GovDAO proposal
