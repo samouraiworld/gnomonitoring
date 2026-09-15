@@ -16,7 +16,7 @@ database:
   host: "postgres"
   port: 5432
   user: "gnomonitoring"
-  password: ""  # must match POSTGRES_PASSWORD in the repository root .env
+  password: "changeme"  # must match POSTGRES_PASSWORD in the repository root .env (.env.example default)
   dbname: "gnomonitoring"
   sslmode: "disable"
 

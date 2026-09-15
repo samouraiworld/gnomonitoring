@@ -25,7 +25,10 @@ DEV_CHAIN    := dev
 
 # Full local stack (devnet + gnomonitoring backend + Postgres), see
 # compose_dev_chain.yml at the repository root.
-DEV_COMPOSE := docker compose -f ../compose_dev_chain.yml --profile phase2
+# Both env files are needed: compose interpolates ${DOCKER_USER}/${GNO_IMAGE}
+# (gnoland-test/.env) and ${POSTGRES_PASSWORD} (root .env) before reading any
+# service env_file.
+DEV_COMPOSE := docker compose -f ../compose_dev_chain.yml --env-file ../.env --env-file .env
 
 .PHONY: help dev-up dev-down dev-logs up up-validator4 ensure-bootstrap down reinit regen-genesis full-reinit clean-db clean-all status logs \
         stop-val1 stop-val2 stop-val3 stop-val4 \
@@ -84,13 +87,14 @@ ensure-bootstrap:
 # fresh chain on every call. validator4 (phase2) is not started here; run
 # 'make scenario1' to onboard it.
 dev-up: ensure-bootstrap
+	@test -f ../.env || { echo "❌ ../.env missing - copy it from ../.env.example"; exit 1; }
 	@test -f ../backend/config_dev_chain.yaml || { \
 		echo "❌ ../backend/config_dev_chain.yaml missing - copy it from config_dev_chain.yaml.template"; exit 1; }
-	$(DEV_COMPOSE) down --remove-orphans
-	docker compose -f ../compose_dev_chain.yml up -d --build
+	$(DEV_COMPOSE) --profile phase2 down --remove-orphans
+	$(DEV_COMPOSE) up -d --build
 
 dev-down:
-	$(DEV_COMPOSE) down --remove-orphans
+	$(DEV_COMPOSE) --profile phase2 down --remove-orphans
 
 dev-logs:
 	docker logs -f gnomonitoring-backend

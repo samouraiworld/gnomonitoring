@@ -106,6 +106,7 @@ fresh keys). Requires a local clone of the
 ```bash
 cd gnoland-test
 make full-reinit     # once: build images, regenerate keys/genesis
+cp ../.env.example ../.env   # if not done yet (POSTGRES_PASSWORD)
 cp ../backend/config_dev_chain.yaml.template ../backend/config_dev_chain.yaml
 make dev-up          # devnet + backend + Postgres, always from block 0
 make scenario1       # onboard a 4th validator via a GovDAO proposal
@@ -117,13 +118,18 @@ start resets the chain to block 0 and purges the `dev` chain rows from the
 database (webhooks, alert contacts and Telegram subscriptions are kept).
 
 The same stack can be driven from the repository root. `up -d` resets the
-chain only when the stack is not running (never started, or after `down` /
-`stop`); against a running stack it wipes nothing. To force a fresh chain:
+chain only when no validator is running (never started, or after `down` /
+`stop`); if any validator still answers it wipes nothing. To force a fresh chain:
 
 ```bash
-docker compose -f compose_dev_chain.yml --profile phase2 down   # also stops validator4
-docker compose -f compose_dev_chain.yml up -d --build           # --build picks up Go changes
+# --profile phase2 also stops validator4; --build picks up Go changes
+docker compose -f compose_dev_chain.yml --env-file .env --env-file gnoland-test/.env --profile phase2 down
+docker compose -f compose_dev_chain.yml --env-file .env --env-file gnoland-test/.env up -d --build
 ```
+
+Both `--env-file` flags are required: compose resolves `DOCKER_USER` /
+`GNO_IMAGE` (generated into `gnoland-test/.env`) and `POSTGRES_PASSWORD` (root
+`.env`) before starting anything; `chain-reset` refuses to run without them.
 
 Stop the local production stack first (`docker compose -f
 docker-compose-prod.yml down`): both use the same Postgres container. Details

@@ -20,14 +20,31 @@ DEV_CHAIN="dev"
 cd /devnet
 
 # compose re-runs this one-shot service on every 'up', including against a
-# stack that is already running. Never wipe the state of live validators.
-if wget -q -T 2 -O /dev/null http://validator:26657/status 2>/dev/null; then
-  echo "ℹ️  devnet already running - skipping reset (use 'make dev-up' to restart from block 0)"
-  exit 0
-fi
+# stack that is already running. Never wipe the state of live validators: any
+# single node still answering means the chain is (partly) up — e.g. during the
+# validator-outage scenarios, where 'validator' itself may be the stopped one.
+for node in $NODES; do
+  if wget -q -T 2 -O /dev/null "http://$node:26657/status" 2>/dev/null; then
+    echo "ℹ️  $node is running - skipping reset (use 'make dev-up' to restart from block 0)"
+    exit 0
+  fi
+done
 
 if [ ! -f genesis.json ] || [ ! -f .env ]; then
   echo "❌ gnoland-test/genesis.json or .env missing - run 'make full-reinit' (bootstrap.sh) first" >&2
+  exit 1
+fi
+
+# DOCKER_USER / GNO_IMAGE here come from gnoland-test/.env (env_file), while
+# the validators' user/image were interpolated by compose from its --env-file
+# (COMPOSE_*). If compose was started without gnoland-test/.env it silently
+# fell back to the defaults: validators would run as a different uid than the
+# owner of their 0600 secrets, or on the wrong image. Refuse instead.
+if [ "${COMPOSE_DOCKER_USER:-}" != "$OWNER" ] || { [ -n "${GNO_IMAGE:-}" ] && [ "${COMPOSE_GNO_IMAGE:-}" != "$GNO_IMAGE" ]; }; then
+  echo "❌ compose resolved DOCKER_USER=${COMPOSE_DOCKER_USER:-?} GNO_IMAGE=${COMPOSE_GNO_IMAGE:-?}," >&2
+  echo "   but gnoland-test/.env has DOCKER_USER=$OWNER GNO_IMAGE=${GNO_IMAGE:-<unset>}." >&2
+  echo "   Pass both env files: docker compose -f compose_dev_chain.yml --env-file .env --env-file gnoland-test/.env ..." >&2
+  echo "   (or use 'make dev-up' from gnoland-test/)" >&2
   exit 1
 fi
 
