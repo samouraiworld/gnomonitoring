@@ -447,6 +447,17 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 		}
 		vpRows = append(vpRows, database.AddrVP{Addr: val.Address, VotingPower: vp})
 	}
+	// Refresh the in-memory quorum denominator used for late_for_quorum.
+	// Skipped when no VP could be parsed, keeping the previous snapshot rather
+	// than blanking it (which would null every late_for_quorum until the next
+	// successful refresh).
+	if len(vpRows) > 0 {
+		vpByAddr := make(map[string]int64, len(vpRows))
+		for _, r := range vpRows {
+			vpByAddr[r.Addr] = r.VotingPower
+		}
+		setValsetVotingPower(chainID, vpByAddr)
+	}
 	if err := database.UpsertAddrMonikerVPBatch(db, chainID, vpRows, joinHeight); err != nil {
 		log.Printf("[valoper][%s] failed to persist voting power batch: %v", chainID, err)
 	}
