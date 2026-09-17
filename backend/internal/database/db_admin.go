@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -30,6 +31,35 @@ func GetAdminConfigInt(db *gorm.DB, key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// GetAdminConfigFloat returns the float value for a given admin_config key.
+// Returns fallback if the key is missing or not a valid float.
+func GetAdminConfigFloat(db *gorm.DB, key string, fallback float64) float64 {
+	val, err := GetAdminConfig(db, key)
+	if err != nil {
+		return fallback
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
+	if err != nil {
+		return fallback
+	}
+	return f
+}
+
+// GetAdminConfigBool returns the boolean value for a given admin_config key.
+// Accepts anything strconv.ParseBool accepts ("true", "1", "false", "0", ...);
+// returns fallback if the key is missing or unparseable.
+func GetAdminConfigBool(db *gorm.DB, key string, fallback bool) bool {
+	val, err := GetAdminConfig(db, key)
+	if err != nil {
+		return fallback
+	}
+	b, err := strconv.ParseBool(strings.TrimSpace(val))
+	if err != nil {
+		return fallback
+	}
+	return b
 }
 
 // SetAdminConfig upserts a key/value pair in admin_config.

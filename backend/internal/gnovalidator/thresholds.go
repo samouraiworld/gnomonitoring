@@ -29,6 +29,13 @@ type Thresholds struct {
 	GapReconciliationIntervalSeconds int
 	GapReconciliationLookbackDays    int
 	RPCHealthCheckSeconds            int
+	LatencyAlertEnabled              bool
+	LatencyAlertCheckMinutes         int
+	LatencyAlertWindowMinutes        int
+	LatencyAlertMinLagMs             int
+	LatencyAlertPeerFactor           float64
+	LatencyAlertMinSamples           int
+	LatencyAlertResendHours          int
 }
 
 var (
@@ -49,6 +56,13 @@ var (
 		GapReconciliationIntervalSeconds: 3600,
 		GapReconciliationLookbackDays:    7,
 		RPCHealthCheckSeconds:            60,
+		LatencyAlertEnabled:              true,
+		LatencyAlertCheckMinutes:         5,
+		LatencyAlertWindowMinutes:        60,
+		LatencyAlertMinLagMs:             50,
+		LatencyAlertPeerFactor:           3,
+		LatencyAlertMinSamples:           300,
+		LatencyAlertResendHours:          24,
 	}
 	thresholdsMu sync.RWMutex
 )
@@ -58,7 +72,7 @@ var (
 func LoadThresholds(db *gorm.DB) {
 	thresholdsMu.Lock()
 	defer thresholdsMu.Unlock()
-	activeThresholds = Thresholds{
+	loaded := Thresholds{
 		WarningThreshold:                 database.GetAdminConfigInt(db, "warning_threshold", 5),
 		CriticalThreshold:                database.GetAdminConfigInt(db, "critical_threshold", 30),
 		AlertCriticalResendHours:         database.GetAdminConfigInt(db, "alert_critical_resend_hours", 24),
@@ -75,7 +89,15 @@ func LoadThresholds(db *gorm.DB) {
 		GapReconciliationIntervalSeconds: database.GetAdminConfigInt(db, "gap_reconciliation_interval_seconds", 3600),
 		GapReconciliationLookbackDays:    database.GetAdminConfigInt(db, "gap_reconciliation_lookback_days", 7),
 		RPCHealthCheckSeconds:            database.GetAdminConfigInt(db, "rpc_health_check_seconds", 60),
+		LatencyAlertEnabled:              database.GetAdminConfigBool(db, "latency_alert_enabled", true),
+		LatencyAlertCheckMinutes:         database.GetAdminConfigInt(db, "latency_alert_check_minutes", 5),
+		LatencyAlertWindowMinutes:        database.GetAdminConfigInt(db, "latency_alert_window_minutes", 60),
+		LatencyAlertMinLagMs:             database.GetAdminConfigInt(db, "latency_alert_min_lag_ms", 50),
+		LatencyAlertPeerFactor:           database.GetAdminConfigFloat(db, "latency_alert_peer_factor", 3),
+		LatencyAlertMinSamples:           database.GetAdminConfigInt(db, "latency_alert_min_samples", 300),
+		LatencyAlertResendHours:          database.GetAdminConfigInt(db, "latency_alert_resend_hours", 24),
 	}
+	activeThresholds = sanitizeLatencyThresholds(loaded)
 	log.Printf("[thresholds] loaded: warning=%d critical=%d resend_critical=%dh resend_warning=%dh stagnation_first=%ds stagnation_repeat=%dmin",
 		activeThresholds.WarningThreshold,
 		activeThresholds.CriticalThreshold,
@@ -142,4 +164,42 @@ func (t Thresholds) ResendHoursForLevel(level string) int {
 		return t.AlertCriticalResendHours
 	}
 	return t.AlertWarningResendHours
+}
+
+// sanitizeLatencyThresholds replaces any non-positive latency-alert value with
+// its default. A zero window or zero min-samples would make the alert fire on
+// no data at all, and a zero peer factor would make every validator trigger.
+func sanitizeLatencyThresholds(t Thresholds) Thresholds {
+	if t.LatencyAlertCheckMinutes <= 0 {
+		log.Printf("[thresholds] latency_alert_check_minutes <= 0, using default 5")
+		t.LatencyAlertCheckMinutes = 5
+	}
+	if t.LatencyAlertWindowMinutes <= 0 {
+		log.Printf("[thresholds] latency_alert_window_minutes <= 0, using default 60")
+		t.LatencyAlertWindowMinutes = 60
+	}
+	if t.LatencyAlertMinLagMs <= 0 {
+		log.Printf("[thresholds] latency_alert_min_lag_ms <= 0, using default 50")
+		t.LatencyAlertMinLagMs = 50
+	}
+	if t.LatencyAlertPeerFactor <= 0 {
+		log.Printf("[thresholds] latency_alert_peer_factor <= 0, using default 3")
+		t.LatencyAlertPeerFactor = 3
+	}
+	if t.LatencyAlertMinSamples <= 0 {
+		log.Printf("[thresholds] latency_alert_min_samples <= 0, using default 300")
+		t.LatencyAlertMinSamples = 300
+	}
+	if t.LatencyAlertResendHours <= 0 {
+		log.Printf("[thresholds] latency_alert_resend_hours <= 0, using default 24")
+		t.LatencyAlertResendHours = 24
+	}
+	return t
+}
+
+// LatencyAlertCheckInterval is how often WatchLatencyAlerts evaluates signing
+// latency. Read at the start of every cycle, so an admin edit takes effect on
+// the next one.
+func (t Thresholds) LatencyAlertCheckInterval() time.Duration {
+	return time.Duration(t.LatencyAlertCheckMinutes) * time.Minute
 }
