@@ -109,6 +109,11 @@ type DailyParticipation struct {
 	Participated   bool      `gorm:"column:participated;not null"`
 	TxContribution bool      `gorm:"column:tx_contribution;not null"`
 	Proposed       bool      `gorm:"column:proposed;not null;default:false"`
+	// Signing latency of this validator's precommit for the commit carried by
+	// this block (h-1). NULL when the validator did not sign it, and for rows
+	// written before latency tracking existed.
+	PrecommitLagMs *int64 `gorm:"column:precommit_lag_ms"`
+	LateForQuorum  *bool  `gorm:"column:late_for_quorum"`
 }
 
 type DailyParticipationAgrega struct {

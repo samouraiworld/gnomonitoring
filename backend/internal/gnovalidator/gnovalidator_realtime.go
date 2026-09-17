@@ -131,6 +131,10 @@ type Participation struct {
 	Timestamp      time.Time
 	TxContribution bool
 	Proposed       bool
+	// PrecommitLagMs and LateForQuorum are nil unless the validator signed the
+	// committed BlockID (see computePrecommitLatency).
+	PrecommitLagMs *int64
+	LateForQuorum  *bool
 }
 
 func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client) {
@@ -365,16 +369,17 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 			setChainSynced(chainID, true)
 			// log.Println("last block ", latest)
 
+			votingPower := getValsetVotingPower(chainID)
 			for h := currentHeight; h <= latest; h++ {
-				precommitAddrs, proposerAddr, hasTx, timeStp, ok := fetchBlockParticipation(client, h)
+				fb, ok := fetchBlockParticipation(client, h)
 				if !ok {
 					log.Printf("[monitor][%s] giving up on block %d after retries", chainID, h)
 					continue
 				}
 
-				participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, timeStp)
+				participating := fb.participation(votingPower)
 
-				if err := SaveParticipation(db, chainID, h, participating, GetMonikerMap(chainID), timeStp); err != nil {
+				if err := SaveParticipation(db, chainID, h, participating, GetMonikerMap(chainID), fb.Time); err != nil {
 					log.Printf("[monitor][%s] failed to save participation at height %d: %v", chainID, h, err)
 				}
 			}
@@ -758,16 +763,7 @@ func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participa
 			continue
 		}
 
-		rows = append(rows, dpRow{
-			ChainID:        chainID,
-			Date:           timeStp,
-			BlockHeight:    blockHeight,
-			Moniker:        moniker,
-			Addr:           valAddr,
-			Participated:   participated.Participated,
-			TxContribution: participated.TxContribution,
-			Proposed:       participated.Proposed,
-		})
+		rows = append(rows, newDPRow(chainID, blockHeight, timeStp, moniker, valAddr, participated))
 	}
 
 	// One multi-VALUES INSERT (chunked by flushBatch) instead of one Exec per
@@ -917,4 +913,3 @@ func SetRestoredNotified(chainID, addr string, notified bool) {
 	}
 	restoredNotified[chainID][addr] = notified
 }
-
