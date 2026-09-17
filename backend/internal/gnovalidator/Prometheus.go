@@ -52,6 +52,22 @@ var (
 		[]string{"chain", "validator_address", "moniker", "window"},
 	)
 
+	ValidatorPrecommitLagMs = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "gnoland_validator_precommit_lag_ms",
+			Help: "Precommit signing lag in milliseconds relative to the earliest precommit of the same commit, by window (1h, 24h, 7d) and quantile (0.5, 0.9). Derived from validator-local clocks: use for trends, not as an absolute network delay",
+		},
+		[]string{"chain", "validator_address", "moniker", "window", "quantile"},
+	)
+
+	ValidatorLateForQuorumRatio = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "gnoland_validator_late_for_quorum_ratio",
+			Help: "Fraction (0-1) of a validator's signed blocks whose precommit came after the one that completed the +2/3 quorum, by window (1h, 24h, 7d). Not missed blocks: the precommit is in the canonical commit",
+		},
+		[]string{"chain", "validator_address", "moniker", "window"},
+	)
+
 	ValidatorParticipation = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "gnoland_validator_participation_rate",
@@ -189,6 +205,8 @@ func Init() {
 		prometheus.MustRegister(ValidatorTxContribution)
 		prometheus.MustRegister(ValidatorMissingBlocksMonth)
 		prometheus.MustRegister(ValidatorFirstSeenUnix)
+		prometheus.MustRegister(ValidatorPrecommitLagMs)
+		prometheus.MustRegister(ValidatorLateForQuorumRatio)
 		// Phase 2: Chain metrics
 		prometheus.MustRegister(ChainActiveValidators)
 		prometheus.MustRegister(ChainAvgParticipationRate)
@@ -243,6 +261,8 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	MissedBlocks.DeletePartialMatch(chainLabel)
 	ConsecutiveMissedBlocks.DeletePartialMatch(chainLabel)
 	MissedBlocksWindow.DeletePartialMatch(chainLabel)
+	ValidatorPrecommitLagMs.DeletePartialMatch(chainLabel)
+	ValidatorLateForQuorumRatio.DeletePartialMatch(chainLabel)
 
 	// Looked up once and shared by every metric function below instead of each
 	// one re-querying daily_participation_agregas independently — they all run
@@ -324,6 +344,37 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 			MissedBlocksWindow.WithLabelValues(chainID, s.Addr, s.Moniker, "1h").Set(float64(s.Missed1h))
 			MissedBlocksWindow.WithLabelValues(chainID, s.Addr, s.Moniker, "24h").Set(float64(s.Missed24h))
 			MissedBlocksWindow.WithLabelValues(chainID, s.Addr, s.Moniker, "7d").Set(float64(s.Missed7d))
+		}
+	})
+
+	// Precommit signing latency (1h, 24h, 7d) — one scan for all windows.
+	// A window without samples emits no series rather than a misleading 0.
+	run(func() {
+		stats, err := database.GetPrecommitLatencyMultiWindow(db, chainID)
+		if err != nil {
+			log.Printf("[metrics][%s] PrecommitLatency error: %v", chainID, err)
+			return
+		}
+		for _, s := range stats {
+			windows := []struct {
+				name            string
+				p50, p90, ratio *float64
+			}{
+				{"1h", s.LagP50_1h, s.LagP90_1h, s.LateRatio1h},
+				{"24h", s.LagP50_24h, s.LagP90_24h, s.LateRatio24h},
+				{"7d", s.LagP50_7d, s.LagP90_7d, s.LateRatio7d},
+			}
+			for _, w := range windows {
+				if w.p50 != nil {
+					ValidatorPrecommitLagMs.WithLabelValues(chainID, s.Addr, s.Moniker, w.name, "0.5").Set(*w.p50)
+				}
+				if w.p90 != nil {
+					ValidatorPrecommitLagMs.WithLabelValues(chainID, s.Addr, s.Moniker, w.name, "0.9").Set(*w.p90)
+				}
+				if w.ratio != nil {
+					ValidatorLateForQuorumRatio.WithLabelValues(chainID, s.Addr, s.Moniker, w.name).Set(*w.ratio)
+				}
+			}
 		}
 	})
 
