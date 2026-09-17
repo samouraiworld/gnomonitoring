@@ -65,3 +65,38 @@ func TestGetLatencyAlertStates(t *testing.T) {
 	assert.NotContains(t, got, "g1c", "missed-block levels are not latency state")
 	assert.Len(t, got, 2)
 }
+
+func TestGetActiveAlertCount_LatencyDoesNotMaskWarning(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chainID = "lat-count-mask"
+	now := time.Now().UTC()
+
+	require.NoError(t, db.Create(&[]database.AlertLog{
+		{ChainID: chainID, Addr: "g1a", Moniker: "A", Level: "WARNING", SentAt: now.Add(-2 * time.Hour)},
+		{ChainID: chainID, Addr: "g1a", Moniker: "A", Level: "LATENCY", SentAt: now.Add(-1 * time.Hour)},
+	}).Error)
+
+	warn, err := database.GetActiveAlertCount(db, chainID, "WARNING")
+	require.NoError(t, err)
+	assert.Equal(t, 1, warn, "a later LATENCY row must not hide an unresolved WARNING")
+
+	latency, err := database.GetActiveLatencyAlertCount(db, chainID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, latency)
+}
+
+func TestGetActiveLatencyAlertCount_ResolvedNotCounted(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chainID = "lat-count-resolved"
+	now := time.Now().UTC()
+
+	require.NoError(t, db.Create(&[]database.AlertLog{
+		{ChainID: chainID, Addr: "g1a", Moniker: "A", Level: "LATENCY", SentAt: now.Add(-2 * time.Hour)},
+		{ChainID: chainID, Addr: "g1a", Moniker: "A", Level: "LATENCY_RESOLVED", SentAt: now.Add(-1 * time.Hour)},
+		{ChainID: chainID, Addr: "g1b", Moniker: "B", Level: "LATENCY", SentAt: now.Add(-30 * time.Minute)},
+	}).Error)
+
+	got, err := database.GetActiveLatencyAlertCount(db, chainID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, got)
+}

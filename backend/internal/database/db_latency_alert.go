@@ -77,3 +77,21 @@ func GetLatencyAlertStates(db *gorm.DB, chainID string) (map[string]LatencyAlert
 	}
 	return states, nil
 }
+
+// GetActiveLatencyAlertCount counts validators whose most recent latency row
+// is a LATENCY (i.e. an open latency alert). Scoped to chain_id.
+func GetActiveLatencyAlertCount(db *gorm.DB, chainID string) (int, error) {
+	var count int
+	query := `
+		WITH latest AS (
+			SELECT DISTINCT ON (addr) addr, level
+			FROM alert_logs
+			WHERE chain_id = ? AND level IN ('LATENCY', 'LATENCY_RESOLVED')
+			ORDER BY addr, sent_at DESC, id DESC
+		)
+		SELECT COUNT(*) FROM latest WHERE level = 'LATENCY'`
+	if err := db.Raw(query, chainID).Scan(&count).Error; err != nil {
+		return 0, fmt.Errorf("GetActiveLatencyAlertCount(%s): %w", chainID, err)
+	}
+	return count, nil
+}
