@@ -47,6 +47,7 @@ export default function AlertConfig() {
     { title: 'Stagnation Detection', keys: ['stagnation_first_alert_seconds', 'stagnation_repeat_minutes'] },
     { title: 'Monitoring Intervals', keys: ['rpc_error_cooldown_minutes', 'new_validator_scan_minutes', 'alert_check_interval_seconds'] },
     { title: 'Data Retention', keys: ['raw_retention_days', 'aggregator_period_minutes'] },
+    { title: 'Latency Alerts', keys: ['latency_alert_enabled', 'latency_alert_check_minutes', 'latency_alert_window_minutes', 'latency_alert_min_lag_ms', 'latency_alert_peer_factor', 'latency_alert_min_samples', 'latency_alert_resend_hours'] },
   ]
 
   if (loading) {

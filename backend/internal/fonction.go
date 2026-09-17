@@ -730,6 +730,49 @@ func SendResolveValidator(chainID, addr, moniker string, resumeHeight int64, db 
 	return nil
 }
 
+// SendLatencyValidator fans a latency notice out to the chain's webhooks and
+// to the Telegram subscribers of that validator. Unlike missed-block alerts it
+// never carries contact mentions: a lagging validator misses no block.
+func SendLatencyValidator(chainID, addr string, data AlertData, db *gorm.DB) error {
+	type Webhook struct {
+		UserID  string
+		URL     string
+		Type    string
+		ID      int
+		ChainID *string
+	}
+
+	var webhooks []Webhook
+	if err := db.Model(&database.WebhookValidator{}).
+		Where("chain_id = ? OR chain_id IS NULL", chainID).
+		Find(&webhooks).Error; err != nil {
+		return fmt.Errorf("failed to fetch webhooks: %w", err)
+	}
+
+	for _, wh := range webhooks {
+		switch wh.Type {
+		case "discord":
+			content, embed := RenderAlertDiscordEmbed(data)
+			if err := SendDiscordAlertEmbed(content, DiscordAllowedMentionsFor(data.Mentions), embed, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
+				continue
+			}
+		case "slack":
+			blocks := RenderAlertSlackBlocks(data)
+			if err := SendSlackBlocks(blocks, wh.URL); err != nil {
+				log.Printf("❌ Failed to send alert to %s (%s): %v", wh.URL, wh.Type, err)
+				continue
+			}
+		}
+	}
+
+	text := RenderAlertTelegramHTML(data)
+	if err := telegram.MsgTelegramAlert(text, addr, chainID, Config.TokenTelegramValidator, "validator", db); err != nil {
+		log.Printf("❌ MsgTelegramAlert: %v", err)
+	}
+	return nil
+}
+
 func SendInfoValidator(chainID string, data AlertData, db *gorm.DB) error {
 	type Webhook struct {
 		UserID  string

@@ -851,12 +851,16 @@ func GetCurrentChainHeight(db *gorm.DB, chainID string) (int64, error) {
 func GetActiveAlertCount(db *gorm.DB, chainID, level string) (int, error) {
 	var count int
 
-	// Optimized: Use CTE to find latest alert per validator
+	// Optimized: Use CTE to find latest alert per validator.
+	// The CTE is restricted to the missed-block levels on purpose: latency
+	// alerts live in the same table under LATENCY/LATENCY_RESOLVED, and without
+	// this filter a later LATENCY row would make an unresolved WARNING or
+	// CRITICAL disappear from this count (see GetActiveLatencyAlertCount).
 	query := `
 		WITH latest_alerts AS (
 			SELECT addr, MAX(sent_at) as last_sent
 			FROM alert_logs
-			WHERE chain_id = ?
+			WHERE chain_id = ? AND level IN ('WARNING', 'CRITICAL', 'RESOLVED')
 			GROUP BY addr
 		)
 		SELECT COUNT(*) as count

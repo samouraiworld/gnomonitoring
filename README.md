@@ -405,6 +405,17 @@ curl -L -X PUT '127.0.0.7:8989/webhooks/[govdao | validator]' \
   - WARNING if a validator missed 5 blocks.
   - CRITICAL if  a validator missed more of 30 blocks
 - Send Resolve Alert.
+- A validator signing late for the quorum (LATENCY):
+  - fires when its median precommit lag over `latency_alert_window_minutes`
+    (default 60) is at once >= `latency_alert_min_lag_ms` (default 50) **and**
+    >= `latency_alert_peer_factor` (default 3) times the median of its peers.
+    Needs `latency_alert_min_samples` (default 300) signed blocks in the window
+    and at least 2 comparable peers; resolved (LATENCY_RESOLVED) at 60% of both
+    thresholds.
+  - such a validator misses **no** block: the alert points at
+    `flush_throttle_timeout`, `peer_gossip_sleep_duration`, `timeout_commit`
+    or NTP drift, carries no contact mention and does not affect the health
+    score. Disable with `latency_alert_enabled=false` (no restart).
 
 ![Alert example](assets/alert.png)
 
