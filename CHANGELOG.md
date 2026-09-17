@@ -34,6 +34,23 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **Signing-latency alerts (`LATENCY` / `LATENCY_RESOLVED`)** — a validator
+  whose median precommit lag over the last hour is at once >=
+  `latency_alert_min_lag_ms` (default 50) and >= `latency_alert_peer_factor`
+  (default 3) times its peers' median now raises a `LATENCY` alert, resolved
+  with 0.6x hysteresis. Such a validator misses no block, so the alert carries
+  no contact mention, does not affect the health score, and is worded
+  distinctly ("No blocks missed. Check flush_throttle_timeout,
+  peer_gossip_sleep_duration, timeout_commit and NTP sync."). The comparison is
+  made on the lag rather than on the `late_for_quorum` ratio, which is biased by
+  voting power: a high-VP validator often completes the quorum itself and can
+  almost never be late, a low-VP one never can. Rows land in `alert_logs` under
+  the new levels and are counted as `gnoland_active_alerts{level="LATENCY"}`;
+  `GetActiveAlertCount` now restricts its latest-row lookup to the missed-block
+  levels, fixing a case where a newer row of any other level hid an unresolved
+  WARNING or CRITICAL from that count. Tunable from the panel's Alert
+  Configuration page; kill switch `latency_alert_enabled=false`, no restart.
+
 - **Precommit signing latency per validator** — every block already fetched
   now also records, per signing validator, `precommit_lag_ms` (precommit
   timestamp minus the earliest one of the same commit) and `late_for_quorum`
