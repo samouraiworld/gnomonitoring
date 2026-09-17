@@ -34,7 +34,7 @@ func TestGetPrecommitLatencyMultiWindow(t *testing.T) {
 
 	s := got[0]
 	assert.Equal(t, "g1aaa", s.Addr)
-	assert.Equal(t, "g1aaa", s.Moniker, "no addr_monikers row: moniker falls back to addr")
+	assert.Equal(t, "g1aaa", s.Moniker, "no stored moniker: the moniker label falls back to the address")
 
 	requireFloat := func(name string, p *float64, want float64) {
 		t.Helper()
