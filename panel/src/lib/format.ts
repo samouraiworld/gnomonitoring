@@ -60,6 +60,8 @@ export function levelBadgeClass(level: string): string {
     case 'RESOLVED': return 'badge-ok'
     case 'MUTED': return 'badge-muted'
     case 'INFO': return 'badge-info'
+    case 'LATENCY': return 'badge-warn'
+    case 'LATENCY_RESOLVED': return 'badge-ok'
     default: return 'badge-muted'
   }
 }

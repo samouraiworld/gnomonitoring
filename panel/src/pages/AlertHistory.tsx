@@ -102,6 +102,8 @@ export default function AlertHistory() {
             <option value="CRITICAL">Critical</option>
             <option value="RESOLVED">Resolved</option>
             <option value="MUTED">Muted</option>
+            <option value="LATENCY">Latency</option>
+            <option value="LATENCY_RESOLVED">Latency resolved</option>
           </select>
           <select className="form-input" value={limit} onChange={e => setLimit(Number(e.target.value))} style={{ width: 120 }}>
             <option value={50}>50</option>

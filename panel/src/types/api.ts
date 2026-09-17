@@ -51,7 +51,7 @@ export interface AlertLog {
   chain_id: string
   addr: string
   moniker: string
-  level: 'WARNING' | 'CRITICAL' | 'RESOLVED' | 'MUTED' | string
+  level: 'WARNING' | 'CRITICAL' | 'RESOLVED' | 'MUTED' | 'LATENCY' | 'LATENCY_RESOLVED' | string
   start_height: number
   end_height: number
   skipped: boolean
