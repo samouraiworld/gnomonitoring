@@ -109,6 +109,11 @@ type DailyParticipation struct {
 	Participated   bool      `gorm:"column:participated;not null"`
 	TxContribution bool      `gorm:"column:tx_contribution;not null"`
 	Proposed       bool      `gorm:"column:proposed;not null;default:false"`
+	// Signing latency of this validator's precommit for the commit carried by
+	// this block (h-1). NULL when the validator did not sign it, and for rows
+	// written before latency tracking existed.
+	PrecommitLagMs *int64 `gorm:"column:precommit_lag_ms"`
+	LateForQuorum  *bool  `gorm:"column:late_for_quorum"`
 }
 
 type DailyParticipationAgrega struct {
@@ -123,6 +128,14 @@ type DailyParticipationAgrega struct {
 	FirstBlockHeight    int64  `gorm:"column:first_block_height;not null"`
 	LastBlockHeight     int64  `gorm:"column:last_block_height;not null"`
 	ProposedCount       int    `gorm:"column:proposed_count;not null;default:0"`
+	// Signing latency rolled up from daily_participations before raw rows are
+	// pruned. LateForQuorumSamples is the denominator (rows with a known
+	// late_for_quorum). The percentiles are NULL when no lag was recorded
+	// that day, including every day before latency tracking existed.
+	LateForQuorumCount   int      `gorm:"column:late_for_quorum_count;not null;default:0"`
+	LateForQuorumSamples int      `gorm:"column:late_for_quorum_samples;not null;default:0"`
+	PrecommitLagP50Ms    *float64 `gorm:"column:precommit_lag_p50_ms"`
+	PrecommitLagP90Ms    *float64 `gorm:"column:precommit_lag_p90_ms"`
 }
 
 type AlertLog struct {

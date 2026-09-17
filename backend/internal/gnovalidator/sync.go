@@ -26,6 +26,24 @@ type dpRow struct {
 	Participated   bool
 	TxContribution bool
 	Proposed       bool
+	PrecommitLagMs *int64
+	LateForQuorum  *bool
+}
+
+// newDPRow builds the daily_participations row for one validator at one height.
+func newDPRow(chainID string, height int64, date time.Time, moniker, addr string, p Participation) dpRow {
+	return dpRow{
+		ChainID:        chainID,
+		Date:           date,
+		BlockHeight:    height,
+		Moniker:        moniker,
+		Addr:           addr,
+		Participated:   p.Participated,
+		TxContribution: p.TxContribution,
+		Proposed:       p.Proposed,
+		PrecommitLagMs: p.PrecommitLagMs,
+		LateForQuorum:  p.LateForQuorum,
+	}
 }
 
 type job struct{ H int64 }
@@ -82,9 +100,9 @@ func flushBatch(db *gorm.DB, rows []dpRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	const cols = 8 // chain_id, date, block_height, moniker, addr, participated, tx_contribution, proposed
-	const maxVars = 30_000 // Postgres supports up to 65535 bind parameters per statement; stay well below.
-	maxRows := maxVars / cols // = 3750 rows per INSERT
+	const cols = 10           // chain_id, date, block_height, moniker, addr, participated, tx_contribution, proposed, precommit_lag_ms, late_for_quorum
+	const maxVars = 30_000    // Postgres supports up to 65535 bind parameters per statement; stay well below.
+	maxRows := maxVars / cols // = 3000 rows per INSERT
 
 	for start := 0; start < len(rows); start += maxRows {
 		end := start + maxRows
@@ -104,15 +122,15 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 
 	q := `
       INSERT INTO daily_participations
-        (chain_id, date, block_height, moniker, addr, participated, tx_contribution, proposed)
+        (chain_id, date, block_height, moniker, addr, participated, tx_contribution, proposed, precommit_lag_ms, late_for_quorum)
       VALUES `
-	args := make([]any, 0, len(rows)*8)
+	args := make([]any, 0, len(rows)*10)
 	for i, r := range rows {
 		if i > 0 {
 			q += ","
 		}
-		q += "(?, ?, ?, ?, ?, ?, ?, ?)"
-		args = append(args, r.ChainID, r.Date, r.BlockHeight, r.Moniker, r.Addr, r.Participated, r.TxContribution, r.Proposed)
+		q += "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+		args = append(args, r.ChainID, r.Date, r.BlockHeight, r.Moniker, r.Addr, r.Participated, r.TxContribution, r.Proposed, r.PrecommitLagMs, r.LateForQuorum)
 	}
 	q += `
 	  ON CONFLICT(chain_id, block_height, addr) DO UPDATE SET
@@ -120,7 +138,9 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 	    moniker = excluded.moniker,
 	    participated = excluded.participated,
 	    tx_contribution = excluded.tx_contribution,
-	    proposed = excluded.proposed
+	    proposed = excluded.proposed,
+	    precommit_lag_ms = excluded.precommit_lag_ms,
+	    late_for_quorum = excluded.late_for_quorum
 	`
 
 	return db.Transaction(func(tx *gorm.DB) error {
@@ -138,6 +158,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 
 	firstActiveBlocks := GetFirstActiveBlockMap(chainID)
 	buf := make([]dpRow, 0, flushThreshold)
+	votingPower := getValsetVotingPower(chainID)
 
 	for start := from + 1; start <= to; start += chunk {
 		end := start + chunk - 1
@@ -147,12 +168,12 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 
 		// Sequential download
 		for h := start; h <= end; h++ {
-			precommitAddrs, proposerAddr, hasTx, timeStp, ok := fetchBlockParticipation(client, h)
+			fb, ok := fetchBlockParticipation(client, h)
 			if !ok {
 				log.Printf("[monitor][%s] backfill: giving up on block %d after retries", chainID, h)
 				continue
 			}
-			participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, timeStp)
+			participating := fb.participation(votingPower)
 			for valAddr, moniker := range monikerMap {
 				participated := participating[valAddr] // false if not found
 
@@ -170,16 +191,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 					}
 				}
 
-				buf = append(buf, dpRow{
-					ChainID:        chainID,
-					Date:           timeStp,
-					BlockHeight:    h,
-					Moniker:        moniker,
-					Addr:           valAddr,
-					Participated:   participated.Participated,
-					TxContribution: participated.TxContribution,
-					Proposed:       participated.Proposed,
-				})
+				buf = append(buf, newDPRow(chainID, h, fb.Time, moniker, valAddr, participated))
 				if len(buf) >= flushThreshold {
 					if err := flushBatch(db, buf); err != nil {
 						return err
@@ -238,6 +250,9 @@ func runBackfillWorkers(db *gorm.DB, client gnoclient.Client, chainID string, mo
 
 	jobs := make(chan job, 2048)
 	outs := make(chan out, 2048)
+	// Historical heights use the current valset snapshot; a valset change can
+	// therefore leave late_for_quorum unknown until the next refresh.
+	votingPower := getValsetVotingPower(chainID)
 
 	// workers RPC
 	var wg sync.WaitGroup
@@ -246,13 +261,13 @@ func runBackfillWorkers(db *gorm.DB, client gnoclient.Client, chainID string, mo
 		go func() {
 			defer wg.Done()
 			for j := range jobs {
-				precommitAddrs, proposerAddr, hasTx, tStr, ok := fetchBlockParticipation(client, j.H)
+				fb, ok := fetchBlockParticipation(client, j.H)
 				if !ok {
 					log.Printf("[monitor][%s] %s: giving up on block %d after retries", chainID, logPrefix, j.H)
 					outs <- out{Err: errBlockFetchFailed}
 					continue
 				}
-				participating := buildParticipation(precommitAddrs, proposerAddr, hasTx, tStr)
+				participating := fb.participation(votingPower)
 
 				rows := make([]dpRow, 0, len(monikerMap))
 				for addr, mon := range monikerMap {
@@ -260,16 +275,7 @@ func runBackfillWorkers(db *gorm.DB, client gnoclient.Client, chainID string, mo
 					if RecordActivationOrSkip(db, chainID, addr, j.H, p.Participated) {
 						continue
 					}
-					rows = append(rows, dpRow{
-						ChainID:        chainID,
-						Date:           tStr,
-						BlockHeight:    j.H,
-						Moniker:        mon,
-						Addr:           addr,
-						Participated:   p.Participated,
-						TxContribution: p.TxContribution,
-						Proposed:       p.Proposed,
-					})
+					rows = append(rows, newDPRow(chainID, j.H, fb.Time, mon, addr, p))
 				}
 				outs <- out{Rows: rows}
 			}

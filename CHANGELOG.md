@@ -34,6 +34,20 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **Precommit signing latency per validator** — every block already fetched
+  now also records, per signing validator, `precommit_lag_ms` (precommit
+  timestamp minus the earliest one of the same commit) and `late_for_quorum`
+  (signed after the precommit that brought voting power above 2/3), on
+  `daily_participations`, rolled up daily into `daily_participation_agregas`
+  (`late_for_quorum_count`, `late_for_quorum_samples`, `precommit_lag_p50_ms`,
+  `precommit_lag_p90_ms`). Exposed as `gnoland_validator_precommit_lag_ms`
+  and `gnoland_validator_late_for_quorum_ratio` (1h/24h/7d). No extra RPC
+  call. Explains "missed blocks" reported by tools reading a node's seen
+  commit while gnomonitoring shows full participation. Pre-existing rows stay
+  `NULL` (no backfill); metrics fill forward from deploy. Timestamps come from
+  validator-local clocks, and quorum uses the latest known voting powers.
+  The 7d window needs `raw_retention_days >= 7`.
+
 - **Alert contacts are mentioned on WARNING alerts too, and can target a
   Discord role** — `SendAllValidatorAlerts` used to attach contact mentions
   to CRITICAL alerts only; WARNING alerts now carry them as well (RESOLVED and

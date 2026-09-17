@@ -61,7 +61,9 @@ const aggregateDayQuery = `
 	INSERT INTO daily_participation_agregas
 	  (chain_id, addr, block_date, moniker,
 	   participated_count, missed_count, tx_contribution_count, proposed_count,
-	   total_blocks, first_block_height, last_block_height)
+	   total_blocks, first_block_height, last_block_height,
+	   late_for_quorum_count, late_for_quorum_samples,
+	   precommit_lag_p50_ms, precommit_lag_p90_ms)
 	SELECT
 	  chain_id,
 	  addr,
@@ -73,7 +75,11 @@ const aggregateDayQuery = `
 	  SUM(CASE WHEN proposed         THEN 1 ELSE 0 END)    AS proposed_count,
 	  COUNT(*)                                             AS total_blocks,
 	  MIN(block_height)                                    AS first_block_height,
-	  MAX(block_height)                                    AS last_block_height
+	  MAX(block_height)                                    AS last_block_height,
+	  SUM(CASE WHEN late_for_quorum  THEN 1 ELSE 0 END)    AS late_for_quorum_count,
+	  COUNT(late_for_quorum)                               AS late_for_quorum_samples,
+	  percentile_cont(0.5) WITHIN GROUP (ORDER BY precommit_lag_ms) AS precommit_lag_p50_ms,
+	  percentile_cont(0.9) WITHIN GROUP (ORDER BY precommit_lag_ms) AS precommit_lag_p90_ms
 	FROM daily_participations
 	WHERE chain_id = ? AND date::date = ?
 	GROUP BY chain_id, addr, date::date
@@ -85,7 +91,11 @@ const aggregateDayQuery = `
 	  proposed_count        = excluded.proposed_count,
 	  total_blocks          = excluded.total_blocks,
 	  first_block_height    = excluded.first_block_height,
-	  last_block_height     = excluded.last_block_height`
+	  last_block_height       = excluded.last_block_height,
+	  late_for_quorum_count   = excluded.late_for_quorum_count,
+	  late_for_quorum_samples = excluded.late_for_quorum_samples,
+	  precommit_lag_p50_ms    = excluded.precommit_lag_p50_ms,
+	  precommit_lag_p90_ms    = excluded.precommit_lag_p90_ms`
 
 // aggregateDay upserts one calendar day (format "2006-01-02") for chainID.
 func aggregateDay(db *gorm.DB, chainID, day string) (int64, error) {

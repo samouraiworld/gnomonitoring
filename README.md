@@ -773,6 +773,8 @@ Metrics are exposed at <http://localhost:8888/metrics>. All metrics include chai
 - `gnoland_validator_tx_contribution` — Transaction contribution (%) in current month
 - `gnoland_validator_missing_blocks_month` — Blocks missed in current month
 - `gnoland_validator_first_seen_unix` — Unix timestamp of first participation
+- `gnoland_validator_precommit_lag_ms{window,quantile}` — Precommit signing lag (ms) relative to the earliest precommit of the same commit; `window` = 1h/24h/7d, `quantile` = 0.5/0.9. Based on validator-local clocks: compare trends, not absolute values
+- `gnoland_validator_late_for_quorum_ratio{window}` — Fraction of signed blocks whose precommit came after the +2/3 quorum was reached. These precommits are in the canonical commit, so this is latency, not missed blocks (tools reading a node's seen commit report them as missed)
 
 **Chain Metrics** (chain-level aggregates):
 

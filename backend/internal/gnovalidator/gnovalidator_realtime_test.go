@@ -8,6 +8,7 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -127,4 +128,48 @@ func TestReplaceMonikerMap(t *testing.T) {
 	require.Equal(t, "New Validator", got["g1new"])
 	_, stillPresent := got["g1old"]
 	require.False(t, stillPresent, "g1old must be pruned after ReplaceMonikerMap, not accumulated")
+}
+
+func TestSaveParticipation_PersistsPrecommitLatency(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chainID = "latency-save-test"
+	blockTime := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	monikers := map[string]string{"g1signer": "Signer", "g1absent": "Absent"}
+
+	gnovalidator.SetFirstActiveBlock(chainID, "g1absent", 1)
+
+	lag := int64(42)
+	late := true
+	err := gnovalidator.SaveParticipation(db, chainID, 100, map[string]gnovalidator.Participation{
+		"g1signer": {Participated: true, Timestamp: blockTime, PrecommitLagMs: &lag, LateForQuorum: &late},
+	}, monikers, blockTime)
+	require.NoError(t, err)
+
+	var rows []database.DailyParticipation
+	require.NoError(t, db.Where("chain_id = ? AND block_height = ?", chainID, 100).Order("addr").Find(&rows).Error)
+	require.Len(t, rows, 2)
+
+	absent, signer := rows[0], rows[1]
+	require.Equal(t, "g1absent", absent.Addr)
+	assert.Nil(t, absent.PrecommitLagMs)
+	assert.Nil(t, absent.LateForQuorum)
+
+	require.NotNil(t, signer.PrecommitLagMs)
+	assert.Equal(t, int64(42), *signer.PrecommitLagMs)
+	require.NotNil(t, signer.LateForQuorum)
+	assert.True(t, *signer.LateForQuorum)
+
+	newLag := int64(7)
+	notLate := false
+	err = gnovalidator.SaveParticipation(db, chainID, 100, map[string]gnovalidator.Participation{
+		"g1signer": {Participated: true, Timestamp: blockTime, PrecommitLagMs: &newLag, LateForQuorum: &notLate},
+	}, monikers, blockTime)
+	require.NoError(t, err)
+
+	var updated database.DailyParticipation
+	require.NoError(t, db.Where("chain_id = ? AND block_height = ? AND addr = ?", chainID, 100, "g1signer").First(&updated).Error)
+	require.NotNil(t, updated.PrecommitLagMs)
+	assert.Equal(t, int64(7), *updated.PrecommitLagMs)
+	require.NotNil(t, updated.LateForQuorum)
+	assert.False(t, *updated.LateForQuorum)
 }

@@ -323,6 +323,7 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough tim
 
 	return results, nil
 }
+
 // aggregatedThrough is the chain's aggregation watermark — see
 // GetCurrentPeriodParticipationRate's doc comment.
 func UptimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough time.Time) ([]UptimeMetrics, error) {
@@ -527,6 +528,54 @@ func GetMissedBlocksMultiWindow(db *gorm.DB, chainID string) ([]MissedMultiWindo
 		GROUP BY dp.addr`
 	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in GetMissedBlocksMultiWindow: %w", err)
+	}
+	return results, nil
+}
+
+type PrecommitLatencyMultiWindow struct {
+	Addr         string   `gorm:"column:addr"`
+	Moniker      string   `gorm:"column:moniker"`
+	LagP50_1h    *float64 `gorm:"column:lag_p50_1h"`
+	LagP90_1h    *float64 `gorm:"column:lag_p90_1h"`
+	LagP50_24h   *float64 `gorm:"column:lag_p50_24h"`
+	LagP90_24h   *float64 `gorm:"column:lag_p90_24h"`
+	LagP50_7d    *float64 `gorm:"column:lag_p50_7d"`
+	LagP90_7d    *float64 `gorm:"column:lag_p90_7d"`
+	LateRatio1h  *float64 `gorm:"column:late_ratio_1h"`
+	LateRatio24h *float64 `gorm:"column:late_ratio_24h"`
+	LateRatio7d  *float64 `gorm:"column:late_ratio_7d"`
+}
+
+// GetPrecommitLatencyMultiWindow returns, per validator, the p50/p90 precommit
+// lag and the late-for-quorum ratio over the 1h, 24h and 7d windows in one scan
+// of the raw rows. Only signed precommits with a recorded lag are samples; the
+// ratio's denominator further excludes rows whose quorum was unknown. A nil
+// field means the window has no sample. The 7d window relies on
+// raw_retention_days >= 7: percentiles cannot be rebuilt from daily aggregates.
+func GetPrecommitLatencyMultiWindow(db *gorm.DB, chainID string) ([]PrecommitLatencyMultiWindow, error) {
+	var results []PrecommitLatencyMultiWindow
+	query := `
+		SELECT
+			dp.addr,
+			MAX(COALESCE(am.moniker, dp.addr)) AS moniker,
+			percentile_cont(0.5) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) FILTER (WHERE dp.date >= NOW() - INTERVAL '1 hour')   AS lag_p50_1h,
+			percentile_cont(0.9) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) FILTER (WHERE dp.date >= NOW() - INTERVAL '1 hour')   AS lag_p90_1h,
+			percentile_cont(0.5) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) FILTER (WHERE dp.date >= NOW() - INTERVAL '24 hours') AS lag_p50_24h,
+			percentile_cont(0.9) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) FILTER (WHERE dp.date >= NOW() - INTERVAL '24 hours') AS lag_p90_24h,
+			percentile_cont(0.5) WITHIN GROUP (ORDER BY dp.precommit_lag_ms)                                                        AS lag_p50_7d,
+			percentile_cont(0.9) WITHIN GROUP (ORDER BY dp.precommit_lag_ms)                                                        AS lag_p90_7d,
+			(COUNT(*) FILTER (WHERE dp.late_for_quorum AND dp.date >= NOW() - INTERVAL '1 hour'))::float8
+				/ NULLIF(COUNT(dp.late_for_quorum) FILTER (WHERE dp.date >= NOW() - INTERVAL '1 hour'), 0)   AS late_ratio_1h,
+			(COUNT(*) FILTER (WHERE dp.late_for_quorum AND dp.date >= NOW() - INTERVAL '24 hours'))::float8
+				/ NULLIF(COUNT(dp.late_for_quorum) FILTER (WHERE dp.date >= NOW() - INTERVAL '24 hours'), 0) AS late_ratio_24h,
+			(COUNT(*) FILTER (WHERE dp.late_for_quorum))::float8
+				/ NULLIF(COUNT(dp.late_for_quorum), 0)                                                     AS late_ratio_7d
+		FROM daily_participations dp
+		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		WHERE dp.chain_id = ? AND dp.date >= NOW() - INTERVAL '7 days' AND dp.precommit_lag_ms IS NOT NULL
+		GROUP BY dp.addr`
+	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
+		return nil, fmt.Errorf("error in GetPrecommitLatencyMultiWindow: %w", err)
 	}
 	return results, nil
 }

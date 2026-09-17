@@ -173,7 +173,7 @@ func TestUpdatePrometheusMetricsFromDB_NewValidatorMetrics(t *testing.T) {
 	// This ensures uptime last 500 blocks = 300/550 = 54.5%
 	for i := 1; i <= 550; i++ {
 		blockTime := monthStart.AddDate(0, 0, i/30) // Spread across month
-		participated := i <= 300                      // First 300 blocks participated
+		participated := i <= 300                    // First 300 blocks participated
 
 		participationData = append(participationData, database.DailyParticipation{
 			ChainID:        testChain,
@@ -497,4 +497,24 @@ func TestUpdatePrometheusMetricsFromDB_AllMetricsChainIsolation(t *testing.T) {
 
 	assert.Equal(t, float64(2), test3Height, "test3 height should be 2")
 	assert.Equal(t, float64(101), gnolandHeight, "gnoland1 height should be 101")
+}
+
+func TestUpdatePrometheusMetricsFromDB_PrecommitLatency(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	gnovalidator.Init()
+	const chainID = "latency-prom-test"
+	now := time.Now().UTC()
+	i64 := func(v int64) *int64 { return &v }
+	b := func(v bool) *bool { return &v }
+
+	require.NoError(t, db.Create(&[]database.DailyParticipation{
+		{ChainID: chainID, Addr: "g1lat", Moniker: "Lat", BlockHeight: 1, Date: now.Add(-10 * time.Minute), Participated: true, PrecommitLagMs: i64(10), LateForQuorum: b(false)},
+		{ChainID: chainID, Addr: "g1lat", Moniker: "Lat", BlockHeight: 2, Date: now.Add(-9 * time.Minute), Participated: true, PrecommitLagMs: i64(30), LateForQuorum: b(true)},
+	}).Error)
+
+	require.NoError(t, gnovalidator.UpdatePrometheusMetricsFromDB(db, chainID))
+
+	assert.InDelta(t, 20.0, testutil.ToFloat64(gnovalidator.ValidatorPrecommitLagMs.WithLabelValues(chainID, "g1lat", "g1lat", "1h", "0.5")), 0.001)
+	assert.InDelta(t, 28.0, testutil.ToFloat64(gnovalidator.ValidatorPrecommitLagMs.WithLabelValues(chainID, "g1lat", "g1lat", "7d", "0.9")), 0.001)
+	assert.InDelta(t, 0.5, testutil.ToFloat64(gnovalidator.ValidatorLateForQuorumRatio.WithLabelValues(chainID, "g1lat", "g1lat", "24h")), 0.001)
 }
