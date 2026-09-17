@@ -133,8 +133,8 @@ func TestAggregateChain_MultipleDays(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 
 	base := time.Now().UTC()
-	day1 := base.AddDate(0, 0, -10).Truncate(24*time.Hour).Add(12 * time.Hour)
-	day2 := base.AddDate(0, 0, -9).Truncate(24*time.Hour).Add(12 * time.Hour)
+	day1 := base.AddDate(0, 0, -10).Truncate(24 * time.Hour).Add(12 * time.Hour)
+	day2 := base.AddDate(0, 0, -9).Truncate(24 * time.Hour).Add(12 * time.Hour)
 
 	seedRaw(t, db, []database.DailyParticipation{
 		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 400, Date: day1, Participated: true, Moniker: "Alice"},
@@ -287,4 +287,41 @@ func TestPruneRawData(t *testing.T) {
 		testChain, recent,
 	).Scan(&remaining).Error)
 	require.Equal(t, int64(1), remaining, "recent row should be kept")
+}
+
+func TestAggregateChain_PrecommitLatency(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+
+	past := time.Now().UTC().AddDate(0, 0, -3)
+	day := time.Date(past.Year(), past.Month(), past.Day(), 12, 0, 0, 0, time.UTC)
+	i64 := func(v int64) *int64 { return &v }
+	b := func(v bool) *bool { return &v }
+
+	seedRaw(t, db, []database.DailyParticipation{
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 200, Date: day, Participated: true, PrecommitLagMs: i64(10), LateForQuorum: b(false)},
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 201, Date: day, Participated: true, PrecommitLagMs: i64(20), LateForQuorum: b(false)},
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 202, Date: day, Participated: true, PrecommitLagMs: i64(30), LateForQuorum: b(true)},
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 203, Date: day, Participated: true, PrecommitLagMs: i64(40), LateForQuorum: b(true)},
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 204, Date: day, Participated: false},
+		{ChainID: testChain, Addr: "g1bbb", BlockHeight: 200, Date: day, Participated: true},
+	})
+
+	require.NoError(t, gnovalidator.AggregateChain(db, testChain))
+
+	var rows []database.DailyParticipationAgrega
+	require.NoError(t, db.Where("chain_id = ?", testChain).Order("addr").Find(&rows).Error)
+	require.Len(t, rows, 2)
+
+	aaa, bbb := rows[0], rows[1]
+	require.Equal(t, 2, aaa.LateForQuorumCount)
+	require.Equal(t, 4, aaa.LateForQuorumSamples)
+	require.NotNil(t, aaa.PrecommitLagP50Ms)
+	require.InDelta(t, 25.0, *aaa.PrecommitLagP50Ms, 0.001)
+	require.NotNil(t, aaa.PrecommitLagP90Ms)
+	require.InDelta(t, 37.0, *aaa.PrecommitLagP90Ms, 0.001)
+
+	require.Equal(t, 0, bbb.LateForQuorumCount)
+	require.Equal(t, 0, bbb.LateForQuorumSamples)
+	require.Nil(t, bbb.PrecommitLagP50Ms)
+	require.Nil(t, bbb.PrecommitLagP90Ms)
 }
