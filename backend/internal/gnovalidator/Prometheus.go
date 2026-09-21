@@ -505,6 +505,19 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 			}
 			AlertsTotal.WithLabelValues(chainID, level).Set(float64(totalCount))
 		}
+
+		// Latency alerts are counted on their own levels: "active" here means
+		// the validator's latest LATENCY/LATENCY_RESOLVED row is a LATENCY.
+		if latencyActive, err := database.GetActiveLatencyAlertCount(db, chainID); err != nil {
+			log.Printf("[metrics][%s] ActiveAlerts[LATENCY] error: %v", chainID, err)
+		} else {
+			ActiveAlerts.WithLabelValues(chainID, "LATENCY").Set(float64(latencyActive))
+		}
+		if latencyTotal, err := database.GetTotalAlertCount(db, chainID, "LATENCY"); err != nil {
+			log.Printf("[metrics][%s] TotalAlerts[LATENCY] error: %v", chainID, err)
+		} else {
+			AlertsTotal.WithLabelValues(chainID, "LATENCY").Set(float64(latencyTotal))
+		}
 	})
 
 	// Phase 4: RPC-enriched metrics (voting power, peer count, mempool, valset size)

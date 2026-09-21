@@ -44,6 +44,9 @@ export function formatThresholdLabel(key: string): string {
 
 /** Get the unit suffix for a threshold key */
 export function getThresholdUnit(key: string): string {
+  // Specific keys first: the generic suffix rules below do not cover them.
+  if (key === 'latency_alert_min_lag_ms') return 'ms'
+  if (key === 'latency_alert_peer_factor') return 'x peers'
   if (key.includes('minutes')) return 'min'
   if (key.includes('seconds')) return 'sec'
   if (key.includes('hours')) return 'h'
@@ -60,6 +63,8 @@ export function levelBadgeClass(level: string): string {
     case 'RESOLVED': return 'badge-ok'
     case 'MUTED': return 'badge-muted'
     case 'INFO': return 'badge-info'
+    case 'LATENCY': return 'badge-warn'
+    case 'LATENCY_RESOLVED': return 'badge-ok'
     default: return 'badge-muted'
   }
 }

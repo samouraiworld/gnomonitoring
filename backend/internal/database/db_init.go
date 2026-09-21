@@ -559,6 +559,13 @@ func SeedAdminConfig(db *gorm.DB) error {
 		"aggregator_period_minutes":           "60",
 		"gap_reconciliation_interval_seconds": "3600",
 		"gap_reconciliation_lookback_days":    "7",
+		"latency_alert_enabled":               "true",
+		"latency_alert_check_minutes":         "5",
+		"latency_alert_window_minutes":        "60",
+		"latency_alert_min_lag_ms":            "50",
+		"latency_alert_peer_factor":           "3",
+		"latency_alert_min_samples":           "300",
+		"latency_alert_resend_hours":          "24",
 	}
 	for key, value := range defaults {
 		row := AdminConfig{Key: key, Value: value}

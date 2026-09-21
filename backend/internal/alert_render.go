@@ -15,6 +15,9 @@ const (
 	AlertWarning  AlertLevel = "WARNING"
 	AlertResolved AlertLevel = "RESOLVED"
 	AlertInfo     AlertLevel = "INFO"
+	// AlertLatency marks a signing-latency alert: the validator signs late for
+	// the quorum but misses no block, so it is deliberately not a WARNING.
+	AlertLatency AlertLevel = "LATENCY"
 )
 
 // AlertField is one labeled fact shown in an alert (e.g. "addr" -> "g1...").
@@ -56,6 +59,7 @@ const (
 	alertColorWarning  = 0xF39C12
 	alertColorResolved = 0x2ECC71
 	alertColorInfo     = 0x3498DB
+	alertColorLatency  = 0x9B59B6
 )
 
 func alertColor(level AlertLevel) int {
@@ -66,6 +70,8 @@ func alertColor(level AlertLevel) int {
 		return alertColorWarning
 	case AlertResolved:
 		return alertColorResolved
+	case AlertLatency:
+		return alertColorLatency
 	default:
 		return alertColorInfo
 	}
