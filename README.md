@@ -488,6 +488,8 @@ The Latest Incidents metric retrieves the most recent critical or warning events
 curl -X GET '127.0.0.1:8989/latest_incidents?period=all_time'
 ```
 
+Without other parameters this is the chain's 10 most recent incidents.
+
 Response:
 
 ```json
@@ -495,6 +497,22 @@ Response:
 {"moniker":"all","addr":"all","level":"CRITICAL","startHeight":78840,"endHeight":78840,"msg":"🚨 CRITICAL : Blockchain stuck at height 78840 since 18 Oct 25 16:29 UTC (121h33m45s ago)","sentAt":"2025-10-23T15:03:10.282235678-03:00"},
 {"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","level":"WARNING","startHeight":78834,"endHeight":78838,"msg":"","sentAt":"2025-10-22T13:28:53.018836743-03:00"},
 ```
+
+For one validator's own history, add `addr`, and optionally `limit` (1–100):
+
+```bash
+curl -X GET '127.0.0.1:8989/latest_incidents?period=all_time&addr=g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2&limit=50'
+```
+
+Response:
+
+```json
+[{"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","level":"CRITICAL","startHeight":78811,"endHeight":78840,"msg":"","sentAt":"2025-10-20T14:40:45.452216011-03:00"},
+{"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","level":"WARNING","startHeight":78834,"endHeight":78838,"msg":"","sentAt":"2025-10-22T13:28:53.018836743-03:00"}]
+```
+
+The chain-wide pseudo-addresses `all` (chain stagnation) and `rpc` (RPC outage)
+are rejected with `400`: they appear in the unfiltered list only.
 
 ##### Uptime Metrics
 
