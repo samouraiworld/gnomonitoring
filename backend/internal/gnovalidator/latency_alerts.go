@@ -170,10 +170,12 @@ func runLatencyAlertCycle(db *gorm.DB, chainID string, t Thresholds) {
 		}
 	}
 
-	// An open alert for a validator that left the valset (or stopped producing
-	// samples entirely) would otherwise stay active forever, since it is no
-	// longer evaluated. Close it in the log without notifying anyone: there is
-	// nothing for an operator to act on.
+	// An open alert for a validator that left the valset would otherwise stay
+	// active forever, since it is no longer evaluated. Close it in the log
+	// without notifying anyone: there is nothing for an operator to act on.
+	// A validator still in the valset is never closed here, even with no
+	// samples at all in the window: an absence of samples does not prove the
+	// latency recovered, so the alert stays open until an evaluation resolves it.
 	for addr, st := range states {
 		if st.Level != "LATENCY" {
 			continue
