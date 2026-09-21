@@ -88,7 +88,11 @@ Entries are ordered newest-first within each section.
   client asking about one validator (a validator profile page) saw few or none
   of its incidents as soon as another validator had been noisy. `addr` accepts
   lowercase letters and digits only (at most 64), and an out-of-range `limit` is
-  rejected with `400` rather than silently clamped. Backed by
+  rejected with `400` rather than silently clamped. The chain-wide
+  pseudo-addresses `all` (chain stagnation) and `rpc` (RPC outage) are refused
+  as well — their messages embed raw client errors and endpoint names, and this
+  endpoint is unauthenticated — and so is either parameter present but empty, so
+  that `addr=` never answers with the chain-wide list. Backed by
   `database.GetAlertLogFiltered`; `GetAlertLog` keeps its signature and
   delegates to it.
 

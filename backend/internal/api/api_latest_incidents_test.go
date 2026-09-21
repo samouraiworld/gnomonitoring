@@ -16,9 +16,13 @@ import (
 )
 
 // /latest_incidents gains two optional query parameters:
-//   - addr:  only this validator's incidents (lowercase bech32 characters only)
+//   - addr:  only this validator's incidents (lowercase letters and digits
+//     only, at most 64; the chain-wide pseudo-addresses `all` and `rpc` are
+//     refused)
 //   - limit: 1..100 rows (default unchanged: 10)
-// Without them the endpoint behaves exactly as before.
+//
+// Without them the endpoint behaves exactly as before. Either parameter
+// present but empty is a client error, never a fallback to the default.
 
 func withIncidentChain(t *testing.T) {
 	t.Helper()
@@ -105,4 +109,35 @@ func TestGetlastincident_RejectsMalformedAddr(t *testing.T) {
 		rec, _ := getIncidents(t, db, "period=all_time&chain=test12&addr="+addr)
 		assert.Equal(t, http.StatusBadRequest, rec.Code, "addr=%s must be rejected", addr)
 	}
+}
+
+func TestGetlastincident_RejectsReservedAddr(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	withIncidentChain(t)
+	seedIncidents(t, db, "all", 3, 0)
+	seedIncidents(t, db, "rpc", 3, 0)
+
+	// `all` and `rpc` rows carry chain stagnation and RPC outage messages, which
+	// embed raw client errors and endpoint names. They must not be reachable
+	// through a per-validator query on this unauthenticated endpoint.
+	for _, addr := range []string{"all", "rpc"} {
+		rec, _ := getIncidents(t, db, "period=all_time&chain=test12&addr="+addr)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "addr=%s is reserved and must be rejected", addr)
+	}
+}
+
+func TestGetlastincident_RejectsEmptyParams(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	withIncidentChain(t)
+	seedIncidents(t, db, "g1target", 12, 100)
+	seedIncidents(t, db, "g1noisy", 15, 1000)
+
+	// `addr=` must not fall back to the chain-wide list: a client building the
+	// URL before the address is loaded would render other validators' incidents
+	// as this validator's history.
+	rec, _ := getIncidents(t, db, "period=all_time&chain=test12&addr=")
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "an empty addr must be rejected, not treated as absent")
+
+	rec, _ = getIncidents(t, db, "period=all_time&chain=test12&limit=")
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "an empty limit must be rejected, not treated as absent")
 }
