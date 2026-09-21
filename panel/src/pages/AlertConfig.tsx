@@ -4,6 +4,14 @@ import { useToast } from '../hooks/useToast'
 import { formatThresholdLabel, getThresholdUnit } from '../lib/format'
 import type { ApiStatus } from '../types/api'
 
+// Keys stored as "true"/"false" and read server-side with strconv.ParseBool.
+// A number input cannot represent them, so they are rendered as a select.
+const BOOLEAN_KEYS = new Set(['latency_alert_enabled'])
+
+function isBooleanKey(key: string, value: string): boolean {
+  return BOOLEAN_KEYS.has(key) || value === 'true' || value === 'false'
+}
+
 export default function AlertConfig() {
   const [thresholds, setThresholds] = useState<Record<string, string>>({})
   const [original, setOriginal] = useState<Record<string, string>>({})
@@ -86,16 +94,33 @@ export default function AlertConfig() {
                     <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>({getThresholdUnit(key)})</span>
                   )}
                 </label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min={0}
-                  value={thresholds[key] || ''}
-                  onChange={e => setThresholds(prev => ({ ...prev, [key]: e.target.value }))}
-                  style={{
-                    borderColor: thresholds[key] !== original[key] ? 'var(--accent-primary)' : undefined,
-                  }}
-                />
+                {isBooleanKey(key, thresholds[key]) ? (
+                  <select
+                    className="form-input"
+                    value={thresholds[key]}
+                    onChange={e => setThresholds(prev => ({ ...prev, [key]: e.target.value }))}
+                    style={{
+                      borderColor: thresholds[key] !== original[key] ? 'var(--accent-primary)' : undefined,
+                    }}
+                  >
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                  </select>
+                ) : (
+                  <input
+                    className="form-input"
+                    type="number"
+                    min={0}
+                    // Some thresholds are floats (latency_alert_peer_factor); without
+                    // step="any" the browser defaults to step=1 and rejects decimals.
+                    step="any"
+                    value={thresholds[key] || ''}
+                    onChange={e => setThresholds(prev => ({ ...prev, [key]: e.target.value }))}
+                    style={{
+                      borderColor: thresholds[key] !== original[key] ? 'var(--accent-primary)' : undefined,
+                    }}
+                  />
+                )}
               </div>
             ))}
           </div>
