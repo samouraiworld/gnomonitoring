@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"math"
 	"net"
 	"net/http"
@@ -24,6 +25,10 @@ const (
 	// burst earlier than the limiter itself would have.
 	minRateLimitIdleTTL      = 3 * time.Minute
 	rateLimitCleanupInterval = time.Minute
+	// maxRateLimitVisitors caps the per-IP map. Once full, IPs without an
+	// entry share a single overflow bucket until cleanup frees room, so a
+	// flood of distinct addresses cannot grow memory without bound.
+	maxRateLimitVisitors = 100_000
 )
 
 // ipRateLimiter is a per-client-IP token bucket for the public API routes.
@@ -32,6 +37,14 @@ const (
 type ipRateLimiter struct {
 	mu       sync.Mutex
 	visitors map[string]*visitor
+	overflow *visitor
+	// maxVisitors is maxRateLimitVisitors outside tests.
+	maxVisitors int
+
+	// Logged once each: a missing proxy setup otherwise only shows up as
+	// unrelated users sharing one budget.
+	warnMissingHeader sync.Once
+	warnPrivatePeer   sync.Once
 
 	limit         rate.Limit
 	burst         int
@@ -50,7 +63,8 @@ type visitor struct {
 // real client IP set by a trusted reverse proxy; empty means r.RemoteAddr is
 // used as is.
 func newIPRateLimiter(perSecond float64, burst int, trustedHeader string) *ipRateLimiter {
-	if perSecond <= 0 {
+	// NaN and +Inf would silently disable the limit.
+	if perSecond <= 0 || math.IsNaN(perSecond) || math.IsInf(perSecond, 0) {
 		perSecond = defaultRateLimitPerSecond
 	}
 	if burst <= 0 {
@@ -62,6 +76,8 @@ func newIPRateLimiter(perSecond float64, burst int, trustedHeader string) *ipRat
 	}
 	return &ipRateLimiter{
 		visitors:      make(map[string]*visitor),
+		overflow:      &visitor{limiter: rate.NewLimiter(rate.Limit(perSecond), burst)},
+		maxVisitors:   maxRateLimitVisitors,
 		limit:         rate.Limit(perSecond),
 		burst:         burst,
 		trustedHeader: strings.TrimSpace(trustedHeader),
@@ -80,10 +96,11 @@ func (l *ipRateLimiter) middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if wait, ok := l.allow(clientIP(r, l.trustedHeader)); !ok {
+		if wait, ok := l.allow(l.key(r)); !ok {
 			// CORS headers must be on the 429 too, otherwise the browser hides
 			// the status from the calling page behind a generic CORS failure.
 			EnableCORS(w, r)
+			w.Header().Set("Access-Control-Expose-Headers", "Retry-After")
 			secs := int(math.Ceil(wait.Seconds()))
 			if secs < 1 {
 				secs = 1
@@ -104,20 +121,45 @@ func (l *ipRateLimiter) allow(key string) (time.Duration, bool) {
 	l.mu.Lock()
 	v, ok := l.visitors[key]
 	if !ok {
-		v = &visitor{limiter: rate.NewLimiter(l.limit, l.burst)}
-		l.visitors[key] = v
+		if len(l.visitors) >= l.maxVisitors {
+			v = l.overflow
+		} else {
+			v = &visitor{limiter: rate.NewLimiter(l.limit, l.burst)}
+			l.visitors[key] = v
+		}
 	}
 	v.lastSeen = now
 	l.mu.Unlock()
 
-	res := v.limiter.ReserveN(now, 1)
-	if delay := res.DelayFrom(now); delay > 0 {
-		// Give the token back: a rejected request must not push the next
-		// allowed one further into the future.
-		res.CancelAt(now)
-		return delay, false
+	// AllowN only takes a token when one is available, so concurrent rejected
+	// requests never leave the bucket in debt (unlike Reserve + Cancel, whose
+	// cancellation is best effort once later reservations exist).
+	if v.limiter.AllowN(now, 1) {
+		return 0, true
 	}
-	return 0, true
+	missing := 1 - v.limiter.TokensAt(now)
+	return time.Duration(missing / float64(l.limit) * float64(time.Second)), false
+}
+
+// key returns the rate-limit key for r, logging once when the proxy setup
+// looks wrong.
+func (l *ipRateLimiter) key(r *http.Request) string {
+	if l.trustedHeader != "" {
+		if r.Header.Get(l.trustedHeader) == "" {
+			l.warnMissingHeader.Do(func() {
+				log.Printf("[ratelimit] warning: trusted_proxy_header %q missing on a request from %s; "+
+					"falling back to the peer address, so such clients share one budget. Check the reverse proxy config.",
+					l.trustedHeader, r.RemoteAddr)
+			})
+		}
+	} else if ip := net.ParseIP(peerHost(r)); ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
+		l.warnPrivatePeer.Do(func() {
+			log.Printf("[ratelimit] warning: request from private address %s with trusted_proxy_header unset; "+
+				"if the API sits behind a reverse proxy, every client shares one budget. Set trusted_proxy_header.",
+				r.RemoteAddr)
+		})
+	}
+	return clientIP(r, l.trustedHeader)
 }
 
 // cleanup evicts the limiters of IPs idle for longer than idleTTL so the map
@@ -168,12 +210,18 @@ func clientIP(r *http.Request, trustedHeader string) string {
 			}
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
+	host := peerHost(r)
 	if ip := net.ParseIP(host); ip != nil {
 		return normalizeIP(ip)
+	}
+	return host
+}
+
+// peerHost returns the host part of r.RemoteAddr, the TCP peer address.
+func peerHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
 	}
 	return host
 }
