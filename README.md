@@ -427,6 +427,39 @@ curl -L -X PUT '127.0.0.7:8989/webhooks/[govdao | validator]' \
 
 #### 📝 Expose Metrics from API REST
 
+##### Rate limiting
+
+The public (unauthenticated) routes — `/block_height`, `/latest_incidents`,
+`/Participation`, `/uptime`, `/operation_time`, `/first_seen`, `/tx_contrib`,
+`/missing_block`, `/info`, `/addr_moniker`, `/api/reports/validators` and
+`/api/chain/<chainID>/health` — are rate-limited per client IP with a token
+bucket. Authenticated routes, the admin API, CORS preflight (`OPTIONS`)
+requests and the Prometheus `/metrics` port are not limited.
+
+A client over its budget gets `429 Too Many Requests` with a `Retry-After`
+header (seconds). CORS headers are still set on the 429 so browsers expose it.
+
+```yaml
+rate_limit_per_second: 10     # sustained requests per second per IP (default 10)
+rate_limit_burst: 40          # bucket size (default 40)
+trusted_proxy_header: ""      # e.g. "X-Real-IP" behind a reverse proxy
+```
+
+These keys are read at startup; restart the backend after changing them.
+
+Behind a reverse proxy, every request reaches the API from the proxy's
+address, so all clients would share one budget. Have the proxy set the real
+client IP and name that header in `trusted_proxy_header`. With nginx:
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+```
+
+For `X-Forwarded-For`, the last value (the one appended by the proxy) is used.
+Only set `trusted_proxy_header` when the API port is reachable through the
+proxy alone (`docker-compose-prod.yml` binds it to `127.0.0.1`); otherwise a
+client can forge the header and bypass the limit.
+
 The disponible period for metrics:
 
 - current_week
