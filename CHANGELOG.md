@@ -82,6 +82,20 @@ Entries are ordered newest-first within each section.
   resend dedup is per level), and a flapping validator can ping every
   `alert_warning_resend_hours` (default 6h).
 
+- **`/latest_incidents` can return one validator's incident history** — new
+  optional `addr` and `limit` (1–100) query parameters. Without them the
+  endpoint is unchanged: the chain's 10 most recent incidents. That cap is why a
+  client asking about one validator (a validator profile page) saw few or none
+  of its incidents as soon as another validator had been noisy. `addr` accepts
+  lowercase letters and digits only (at most 64), and an out-of-range `limit` is
+  rejected with `400` rather than silently clamped. The chain-wide
+  pseudo-addresses `all` (chain stagnation) and `rpc` (RPC outage) are refused
+  as well — their messages embed raw client errors and endpoint names, and this
+  endpoint is unauthenticated — and so is either parameter present but empty, so
+  that `addr=` never answers with the chain-wide list. Backed by
+  `database.GetAlertLogFiltered`; `GetAlertLog` keeps its signature and
+  delegates to it.
+
 - **Keycloak authentication, behind an `auth_provider` config switch** — the API
   can now be protected by the self-hosted `gno-world` Keycloak realm instead of
   Clerk, as Phase 1 of the org-wide migration off Clerk. `auth_provider:

@@ -870,12 +870,71 @@ func Getlastincident(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		return
 	}
 
-	incident, err := database.GetAlertLog(db, chainID, period)
+	q, err := parseAlertLogQuery(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	incident, err := database.GetAlertLogFiltered(db, chainID, period, q)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(incident)
+}
+
+// parseAlertLogQuery reads the optional `addr` and `limit` parameters of
+// /latest_incidents. Absent parameters keep the endpoint's original behaviour.
+// A parameter that is present but empty is rejected rather than treated as
+// absent: `addr=` would otherwise answer a request about one validator with
+// the chain-wide list. An out-of-range limit is rejected rather than clamped,
+// so a client never silently receives fewer rows than it asked for.
+func parseAlertLogQuery(v url.Values) (database.AlertLogQuery, error) {
+	var q database.AlertLogQuery
+	if v.Has("addr") {
+		addr := v.Get("addr")
+		if !isAlertLogAddr(addr) {
+			return q, fmt.Errorf("invalid addr: lowercase letters and digits only, at most 64")
+		}
+		if isReservedAlertLogAddr(addr) {
+			return q, fmt.Errorf("invalid addr: %q is reserved for chain-wide alerts", addr)
+		}
+		q.Addr = addr
+	}
+	if v.Has("limit") {
+		n, err := strconv.Atoi(v.Get("limit"))
+		if err != nil || n < 1 || n > database.MaxAlertLogLimit {
+			return q, fmt.Errorf("limit must be an integer between 1 and %d", database.MaxAlertLogLimit)
+		}
+		q.Limit = n
+	}
+	return q, nil
+}
+
+// isAlertLogAddr accepts lowercase letters and digits only, at most 64. This is
+// wider than the bech32 character set and is not an address validator — the
+// query is parameterised either way — it only stops input that cannot be an
+// address from reaching the database.
+func isAlertLogAddr(s string) bool {
+	if len(s) == 0 || len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// isReservedAlertLogAddr reports the pseudo-addresses `alert_logs` uses for
+// chain-wide rows: `all` (chain stagnation) and `rpc` (RPC outage/recovery).
+// Their messages embed raw client errors and endpoint names, so a
+// per-validator query must not be able to page through them. Every
+// validator-scoped query in db_score.go excludes them for the same reason.
+func isReservedAlertLogAddr(s string) bool {
+	return s == "all" || s == "rpc"
 }
 
 // ============================ Participation Rate ========================
