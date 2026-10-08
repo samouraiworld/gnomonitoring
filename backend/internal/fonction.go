@@ -135,6 +135,18 @@ type config struct {
 	DefaultChain           string                  `yaml:"default_chain"`
 	Database               DatabaseConfig          `yaml:"database"`
 
+	// TrustedProxyHeader names the header a trusted reverse proxy sets to the
+	// real client IP (e.g. "X-Real-IP"), used by the public API rate limiter.
+	// Empty (default) means r.RemoteAddr is used. Only set it when the API
+	// port is reachable through that proxy alone, otherwise clients can forge
+	// the header to bypass the limit.
+	TrustedProxyHeader string `yaml:"trusted_proxy_header"`
+	// RateLimitPerSecond and RateLimitBurst size the per-IP token bucket on
+	// the public API routes. Values <= 0 fall back to the defaults in
+	// internal/api/ratelimit.go. Read once at startup.
+	RateLimitPerSecond float64 `yaml:"rate_limit_per_second"`
+	RateLimitBurst     int     `yaml:"rate_limit_burst"`
+
 	// Parsed at load time from AllowOrigin (comma-separated).
 	AllowedOrigins []string `yaml:"-"`
 }

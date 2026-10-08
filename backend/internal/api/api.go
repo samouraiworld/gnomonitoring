@@ -1486,7 +1486,18 @@ func StartWebhookAPI(db *gorm.DB) {
 	}
 
 	// ====================== Dashboard =================
-	mux.HandleFunc("/block_height", func(w http.ResponseWriter, r *http.Request) {
+	// Unauthenticated routes, rate-limited per client IP: several of them run
+	// heavy aggregates on the Postgres instance the alerting loop shares.
+	// Authenticated and admin routes above are deliberately not limited.
+	limiter := newIPRateLimiter(internal.Config.RateLimitPerSecond, internal.Config.RateLimitBurst, internal.Config.TrustedProxyHeader)
+	limiter.startCleanup(rateLimitCleanupInterval)
+	log.Printf("Public API rate limit: %.2f req/s, burst %d per IP (trusted proxy header: %q)",
+		float64(limiter.limit), limiter.burst, limiter.trustedHeader)
+	public := func(pattern string, handler http.HandlerFunc) {
+		mux.Handle(pattern, limiter.middleware(handler))
+	}
+
+	public("/block_height", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -1500,7 +1511,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	mux.HandleFunc("/latest_incidents", func(w http.ResponseWriter, r *http.Request) {
+	public("/latest_incidents", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -1514,7 +1525,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	mux.HandleFunc("/Participation", func(w http.ResponseWriter, r *http.Request) {
+	public("/Participation", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -1528,7 +1539,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	mux.HandleFunc("/uptime", func(w http.ResponseWriter, r *http.Request) {
+	public("/uptime", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -1542,7 +1553,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	mux.HandleFunc("/operation_time", func(w http.ResponseWriter, r *http.Request) {
+	public("/operation_time", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -1557,7 +1568,7 @@ func StartWebhookAPI(db *gorm.DB) {
 
 	})
 
-	mux.HandleFunc("/first_seen", func(w http.ResponseWriter, r *http.Request) {
+	public("/first_seen", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -1572,7 +1583,7 @@ func StartWebhookAPI(db *gorm.DB) {
 
 	})
 
-	mux.HandleFunc("/tx_contrib", func(w http.ResponseWriter, r *http.Request) {
+	public("/tx_contrib", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -1586,7 +1597,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	mux.HandleFunc("/missing_block", func(w http.ResponseWriter, r *http.Request) {
+	public("/missing_block", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -1601,7 +1612,7 @@ func StartWebhookAPI(db *gorm.DB) {
 
 	})
 
-	mux.HandleFunc("/api/reports/validators", func(w http.ResponseWriter, r *http.Request) {
+	public("/api/reports/validators", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			GetValidatorReportHandler(w, r, db)
@@ -1613,7 +1624,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 	})
 
-	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+	public("/info", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 
 		case http.MethodGet:
@@ -1627,7 +1638,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		}
 
 	})
-	mux.HandleFunc("/addr_moniker", func(w http.ResponseWriter, r *http.Request) {
+	public("/addr_moniker", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			GetAddrMonikerHandler(w, r, db)
@@ -1640,7 +1651,7 @@ func StartWebhookAPI(db *gorm.DB) {
 	})
 
 	// /api/chain/<chainID>/health
-	mux.HandleFunc("/api/chain/", func(w http.ResponseWriter, r *http.Request) {
+	public("/api/chain/", func(w http.ResponseWriter, r *http.Request) {
 		// Expected path: /api/chain/<chainID>/health
 		// Strip the prefix "/api/chain/" to get "<chainID>/health"
 		rest := strings.TrimPrefix(r.URL.Path, "/api/chain/")
