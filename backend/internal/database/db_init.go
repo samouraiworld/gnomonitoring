@@ -484,7 +484,7 @@ func InitDB(dsn string) (*gorm.DB, error) {
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	err = db.AutoMigrate(
-		&User{}, &AlertContact{}, &WebhookValidator{},
+		&AccountErasure{}, &User{}, &AlertContact{}, &WebhookValidator{},
 		&WebhookGovDAO{}, &HourReport{},
 		&DailyParticipation{}, &DailyParticipationAgrega{}, &AlertLog{}, &AddrMoniker{}, &Govdao{}, &Telegram{}, &TelegramHourReport{}, &TelegramValidatorSub{},
 		&AdminConfig{},

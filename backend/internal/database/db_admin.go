@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -144,19 +145,37 @@ func GetAllWebhooksAdmin(db *gorm.DB) ([]WebhookAdmin, error) {
 
 // DeleteWebhookAdmin deletes a webhook by kind and id without user scope check.
 func DeleteWebhookAdmin(db *gorm.DB, kind string, id int) error {
+	var model any
 	switch kind {
 	case "govdao":
-		return db.Delete(&WebhookGovDAO{}, id).Error
+		model = &WebhookGovDAO{}
 	case "validator":
-		return db.Delete(&WebhookValidator{}, id).Error
+		model = &WebhookValidator{}
 	default:
 		return fmt.Errorf("unknown webhook kind: %q", kind)
 	}
+	var row struct{ UserID string }
+	if err := db.Model(model).Select("user_id").Where("id = ?", id).Take(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	return withActiveAccountWrite(db, row.UserID, func(tx *gorm.DB) error { return tx.Where("id = ? AND user_id = ?", id, row.UserID).Delete(model).Error })
 }
 
 // ResetGovDAOLastCheckedID resets last_checked_id to -1 for a GovDAO webhook.
 func ResetGovDAOLastCheckedID(db *gorm.DB, id int) error {
-	return db.Model(&WebhookGovDAO{}).Where("id = ?", id).Update("last_checked_id", -1).Error
+	var row WebhookGovDAO
+	if err := db.Select("user_id").Where("id = ?", id).Take(&row).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	return withActiveAccountWrite(db, row.UserID, func(tx *gorm.DB) error {
+		return tx.Model(&WebhookGovDAO{}).Where("id = ? AND user_id = ?", id, row.UserID).Update("last_checked_id", -1).Error
+	})
 }
 
 // ── alert_logs ───────────────────────────────────────────────────────────────
@@ -316,13 +335,16 @@ func GetAllHourReportsAdmin(db *gorm.DB) ([]HourReportAdmin, error) {
 
 // UpdateHourReportAdmin updates a web user's hour_report.
 func UpdateHourReportAdmin(db *gorm.DB, userID string, hour, minute int, timezone string) error {
-	return db.Model(&HourReport{}).
-		Where("user_id = ?", userID).
-		Updates(map[string]interface{}{
-			"daily_report_hour":   hour,
-			"daily_report_minute": minute,
-			"timezone":            timezone,
-		}).Error
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		return tx.Model(&HourReport{}).
+			Where("user_id = ?", userID).
+			Updates(map[string]interface{}{
+				"daily_report_hour":   hour,
+				"daily_report_minute": minute,
+				"timezone":            timezone,
+			}).Error
+
+	})
 }
 
 // ── chain data purge ──────────────────────────────────────────────────────────
