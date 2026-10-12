@@ -59,14 +59,20 @@ export default function Reports() {
 
   const fetchThresholds = () => {
     api.get<Record<string, string>>('/admin/config/thresholds')
-      .then(data => {
-        setThresholds(data)
-        setReportUrl(data.report_url ?? '')
-      })
+      .then(setThresholds)
       .catch(() => {})
   }
 
-  useEffect(() => { fetchThresholds() }, [])
+  useEffect(() => {
+    api.get<Record<string, string>>('/admin/config/thresholds')
+      .then(data => {
+        setThresholds(data)
+        // Seed the field once: later refetches (e.g. after the per-chain
+        // toggle) must not overwrite an unsaved edit.
+        setReportUrl(data.report_url ?? '')
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (!chain) return
@@ -101,15 +107,17 @@ export default function Reports() {
     const value = reportUrl.trim()
     // The backend sends this value verbatim inside Discord/Slack/Telegram
     // messages, so only accept absolute http(s) URLs (or empty, to disable).
-    if (value !== '' && !/^https?:\/\/\S+$/.test(value)) {
-      toast.error('Report URL must start with http:// or https://')
+    // Mirrors validateReportURL in the backend, which has the final say.
+    if (value !== '' && !/^https?:\/\/[^\s<>"'`&|]+$/.test(value)) {
+      toast.error('Report URL must be an http(s) URL without spaces or < > " \' ` & |')
       return
     }
     setSavingReportUrl(true)
     try {
       await api.put<ApiStatus>('/admin/config/thresholds', { report_url: value })
       toast.success(value ? 'Report URL updated' : 'Report URL cleared')
-      fetchThresholds()
+      setReportUrl(value)
+      setThresholds(prev => ({ ...prev, report_url: value }))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {

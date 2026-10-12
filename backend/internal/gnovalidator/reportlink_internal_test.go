@@ -17,6 +17,12 @@ func TestReportLinkLine(t *testing.T) {
 
 	database.SetAdminConfig(db, "validator_report_enabled.test12", "true")
 
+	// The legacy report_base_url key is no longer read.
+	database.SetAdminConfig(db, "report_base_url", "https://memba.example")
+	if got := reportLinkLine(db, "test12"); got != "" {
+		t.Fatalf("legacy report_base_url should be ignored, got %q", got)
+	}
+
 	// A URL without placeholder is used verbatim.
 	database.SetAdminConfig(db, "report_url", "https://memba.example/os/validators")
 	got := reportLinkLine(db, "test12")

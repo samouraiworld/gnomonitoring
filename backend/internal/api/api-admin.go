@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -480,12 +482,43 @@ func handlePutThresholds(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "no keys provided", http.StatusBadRequest)
 		return
 	}
+	if v, ok := pairs["report_url"]; ok {
+		v = strings.TrimSpace(v)
+		if err := validateReportURL(v); err != nil {
+			http.Error(w, "report_url: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		pairs["report_url"] = v
+	}
 	if err := database.SetAdminConfigBatch(db, pairs); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	gnovalidator.RefreshThresholds(db)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// reportURLForbiddenChars are characters that carry markup meaning in at
+// least one notification channel: Telegram messages use HTML parse mode,
+// Slack treats <url|text> as a link, and quotes or whitespace would end the
+// URL early. report_url is inserted verbatim into those messages.
+const reportURLForbiddenChars = "<>\"'`&| \t\r\n"
+
+// validateReportURL accepts an empty value (link disabled) or an absolute
+// http(s) URL that cannot break the formatting of the messages it is
+// inserted into. A {chain} placeholder is allowed anywhere.
+func validateReportURL(v string) error {
+	if v == "" {
+		return nil
+	}
+	if strings.ContainsAny(v, reportURLForbiddenChars) {
+		return errors.New("must not contain spaces or any of < > \" ' ` & |")
+	}
+	u, err := url.Parse(strings.ReplaceAll(v, "{chain}", "chain"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return errors.New("must be an absolute http:// or https:// URL")
+	}
+	return nil
 }
 
 // ── 2.4 Alert management ─────────────────────────────────────────────────────

@@ -20,8 +20,11 @@ Entries are ordered newest-first within each section.
   `<report_base_url>/reports/<chain>`) is replaced by `report_url`, used
   verbatim with an optional `{chain}` placeholder, so the link can target a
   page such as `https://memba.club/os/validators`. It is now editable from the
-  panel Reports page. An existing `report_base_url` value is no longer read:
-  the link stays off until `report_url` is set.
+  panel Reports page. `PUT /admin/config/thresholds` rejects a `report_url`
+  that is not an absolute http(s) URL or contains spaces or any of
+  `` < > " ' ` & | ``, since the value is inserted verbatim into Telegram (HTML),
+  Slack and Discord messages. An existing `report_base_url` value is no
+  longer read: the link stays off until `report_url` is set.
 
 - **The root `docker-compose.yml` is now `docker-compose-prod.yml`, and the
   local devnet has its own `compose_dev_chain.yml`** — the root compose
