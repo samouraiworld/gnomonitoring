@@ -12,6 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.6.0
 	github.com/machinebox/graphql v0.2.2
 	github.com/stretchr/testify v1.10.0
+	golang.org/x/time v0.12.0
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/postgres v1.6.0
 )

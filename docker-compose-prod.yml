@@ -60,7 +60,10 @@ services:
       - ./backend/config_docker.yaml:/app/config.yaml
     ports:
       - 8880:8888 #metrics
-      - 8989:8989 #backend
+      # Bound to loopback: the API is only reachable through the host nginx,
+      # which sets X-Real-IP. Publishing it on all interfaces would let a
+      # client forge that header and bypass the per-IP rate limit.
+      - "127.0.0.1:8989:8989" #backend
     command: [ "./server", "--disable-report" ]
 
   frontend:

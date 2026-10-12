@@ -2,6 +2,15 @@ backend_port: "8989"
 metrics_port: 8888
 dev_mode: false
 allow_origin: "http://localhost:3000"  # Comma-separated for multiple origins, e.g. "https://gnolove.world, https://memba.samourai.app"
+# Public API rate limit (per client IP). Unauthenticated routes only; values
+# <= 0 or absent use the defaults (10 req/s, burst 40). Read at startup.
+rate_limit_per_second: 10
+rate_limit_burst: 40
+# Header carrying the real client IP, set by a trusted reverse proxy
+# (e.g. "X-Real-IP"). Leave empty to use the TCP peer address. Only set it
+# when the API port is reachable through that proxy alone, otherwise clients
+# can forge the header to bypass the rate limit.
+trusted_proxy_header: ""
 
 # ---------------------------------------------------------------------------
 # Authentication
