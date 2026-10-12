@@ -9,6 +9,20 @@ Entries are ordered newest-first within each section.
 
 ### Changed
 
+- **GovDAO "Interact & Vote" links now point to memba.club** — new-proposal
+  notifications on Discord, Slack and Telegram link to
+  `https://memba.club/os/dao/govdao/proposals/<id>` instead of the retired
+  `memba.samourai.app` path. The URL is built in one place,
+  `telegram.MembaProposalURL`.
+
+- **The daily-summary validator report link is a full URL, `report_url`** —
+  the admin_config key `report_base_url` (the link was always
+  `<report_base_url>/reports/<chain>`) is replaced by `report_url`, used
+  verbatim with an optional `{chain}` placeholder, so the link can target a
+  page such as `https://memba.club/os/validators`. It is now editable from the
+  panel Reports page. An existing `report_base_url` value is no longer read:
+  the link stays off until `report_url` is set.
+
 - **The root `docker-compose.yml` is now `docker-compose-prod.yml`, and the
   local devnet has its own `compose_dev_chain.yml`** — the root compose
   declared the external `gnoland-test_default` devnet network, and

@@ -48,7 +48,8 @@ token_telegram_govdao: ""
 # Validator Health Report
 # The endpoint GET /api/reports/validators?chain=X is always available.
 # Per-chain daily-summary link inclusion is toggled via admin_config key validator_report_enabled.<chainID> (true/false).
-# The base URL for summary links is set via admin_config key report_base_url (default: memba base URL).
+# The summary link itself is set via admin_config key report_url: a full URL, where an optional {chain}
+# placeholder is replaced by the chain ID (e.g. https://memba.club/os/validators). Empty disables the link.
 # Neither are YAML keys — both are configured live in the admin panel Reports page without restart.
 # See docs/validator-report-api.md and CLAUDE.md "Validator Health Report" for details.
 
