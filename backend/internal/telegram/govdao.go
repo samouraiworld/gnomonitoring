@@ -235,9 +235,17 @@ func SendReportGovdaoTelegram(chainID string, id int, title, urlgnoweb, urltx, b
 	return nil
 
 }
+
+// MembaProposalURL returns the Memba page where users can read and vote on a
+// GovDAO proposal. It is the single source for this link across Discord,
+// Slack and Telegram notifications.
+func MembaProposalURL(id int) string {
+	return fmt.Sprintf("https://memba.club/os/dao/govdao/proposals/%d", id)
+}
+
 func FormatTelegramMsg(chainID string, id int, title, proposalURL, txURL string) string {
 	esc := html.EscapeString
-	voteURL := fmt.Sprintf("https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d", id)
+	voteURL := MembaProposalURL(id)
 
 	return fmt.Sprintf(
 

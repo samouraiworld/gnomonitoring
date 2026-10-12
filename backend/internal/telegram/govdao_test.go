@@ -60,3 +60,12 @@ func TestFormatStatusProposal_EscapesTitleAndUrl(t *testing.T) {
 	assert.Contains(t, msg, "&lt;script&gt;", "title must be HTML-escaped")
 	assert.Contains(t, msg, "https://example.com?a=1&amp;b=2", "url must be HTML-escaped")
 }
+
+// TestFormatTelegramMsg_LinksToMembaProposal verifies that the new-proposal
+// message points voters to the proposal's page on Memba.
+func TestFormatTelegramMsg_LinksToMembaProposal(t *testing.T) {
+	msg := FormatTelegramMsg("betanet", 11, "Title", "https://gno.land/r/gov/dao:11", "https://gnoscan.io/tx")
+
+	assert.Equal(t, "https://memba.club/os/dao/govdao/proposals/11", MembaProposalURL(11))
+	assert.Contains(t, msg, `href="https://memba.club/os/dao/govdao/proposals/11"`)
+}
