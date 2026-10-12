@@ -860,9 +860,9 @@ func SendReportGovdao(chainID string, id int, title, urlgnoweb, urltx, typew str
 			"🗳️ ** [%s] New Proposal N° %d: %s ** -  \n"+
 			"🔗source: %s \n"+
 			"🗒️Tx: %s \n"+
-			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d \n"+
+			"🖐️ Interact & Vote: %s \n"+
 			" ** Make sure you're using the appropriate network on Memba **",
-			chainID, id, title, urlgnoweb, urltx, id)
+			chainID, id, title, urlgnoweb, urltx, telegram.MembaProposalURL(id))
 		log.Println(msg)
 		sendErr := SendDiscordAlert(msg, urlwebhook)
 		if sendErr != nil {
@@ -875,9 +875,9 @@ func SendReportGovdao(chainID string, id int, title, urlgnoweb, urltx, typew str
 			"🗳️ * [%s] New Proposal N° %d: %s * -  \n"+
 			"🔗source: %s \n"+
 			"🗒️Tx: %s \n"+
-			"🖐️ Interact & Vote: https://memba.samourai.app/dao/gno.land~r~gov~dao/proposal/%d \n"+
+			"🖐️ Interact & Vote: %s \n"+
 			"* Make sure you're using the appropriate network on Memba *",
-			chainID, id, title, urlgnoweb, urltx, id)
+			chainID, id, title, urlgnoweb, urltx, telegram.MembaProposalURL(id))
 
 		sendErr := SendSlackAlert(msg, urlwebhook)
 		if sendErr != nil {

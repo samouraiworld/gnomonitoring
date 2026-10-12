@@ -46,6 +46,8 @@ export default function Reports() {
   const [loading, setLoading] = useState(true)
   const [thresholds, setThresholds] = useState<Record<string, string>>({})
   const [toggling, setToggling] = useState(false)
+  const [reportUrl, setReportUrl] = useState('')
+  const [savingReportUrl, setSavingReportUrl] = useState(false)
   const toast = useToast()
 
   useEffect(() => {
@@ -61,7 +63,16 @@ export default function Reports() {
       .catch(() => {})
   }
 
-  useEffect(() => { fetchThresholds() }, [])
+  useEffect(() => {
+    api.get<Record<string, string>>('/admin/config/thresholds')
+      .then(data => {
+        setThresholds(data)
+        // Seed the field once: later refetches (e.g. after the per-chain
+        // toggle) must not overwrite an unsaved edit.
+        setReportUrl(data.report_url ?? '')
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (!chain) return
@@ -86,6 +97,31 @@ export default function Reports() {
       toast.error(err.message)
     } finally {
       setToggling(false)
+    }
+  }
+
+  const savedReportUrl = thresholds.report_url ?? ''
+  const reportUrlChanged = reportUrl.trim() !== savedReportUrl
+
+  const handleSaveReportUrl = async () => {
+    const value = reportUrl.trim()
+    // The backend sends this value verbatim inside Discord/Slack/Telegram
+    // messages, so only accept absolute http(s) URLs (or empty, to disable).
+    // Mirrors validateReportURL in the backend, which has the final say.
+    if (value !== '' && !/^https?:\/\/[^\s<>"'`&|]+$/.test(value)) {
+      toast.error('Report URL must be an http(s) URL without spaces or < > " \' ` & |')
+      return
+    }
+    setSavingReportUrl(true)
+    try {
+      await api.put<ApiStatus>('/admin/config/thresholds', { report_url: value })
+      toast.success(value ? 'Report URL updated' : 'Report URL cleared')
+      setReportUrl(value)
+      setThresholds(prev => ({ ...prev, report_url: value }))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSavingReportUrl(false)
     }
   }
 
@@ -220,6 +256,30 @@ export default function Reports() {
       </div>
 
       <ScoreLegend thresholds={thresholds} />
+
+      {/* Daily summary link */}
+      <div className="card" style={{ marginBottom: 20, padding: 16 }}>
+        <div className="flex-gap" style={{ flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+          <label htmlFor="report-url" style={{ fontWeight: 600 }}>Report URL</label>
+          <input
+            id="report-url"
+            className="form-input"
+            type="url"
+            placeholder="https://memba.club/os/validators"
+            value={reportUrl}
+            onChange={e => setReportUrl(e.target.value)}
+            style={{ minWidth: 280, flex: 1 }}
+          />
+          <button className="btn btn-primary" onClick={handleSaveReportUrl} disabled={!reportUrlChanged || savingReportUrl}>
+            {savingReportUrl ? <span className="spinner" /> : null} Save
+          </button>
+        </div>
+        <p className="page-subtitle" style={{ marginTop: 8 }}>
+          Link added to daily summaries when reports are enabled for the chain. Use <code>{'{chain}'}</code> to insert the chain ID.
+          {reportUrl.trim() && <> For {chain || '<chain>'}: <code>{reportUrl.trim().replaceAll('{chain}', chain || '<chain>')}</code></>}
+          {!reportUrl.trim() && ' Leave empty to disable the link.'}
+        </p>
+      </div>
 
       {/* Filters */}
       <div className="card" style={{ marginBottom: 20, padding: 16 }}>

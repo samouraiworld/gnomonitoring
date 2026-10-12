@@ -42,21 +42,23 @@ func ReportYesterdayUTC(now time.Time) string {
 }
 
 // reportLinkURL returns the daily-report URL for a chain when the per-chain
-// report toggle is on and a base URL is configured, else "".
+// report toggle is on and a report URL is configured, else "". The admin_config
+// key report_url holds the full link; an optional {chain} placeholder is
+// replaced by the chain ID.
 func reportLinkURL(db *gorm.DB, chainID string) string {
 	enabled, err := database.GetAdminConfig(db, "validator_report_enabled."+chainID)
 	if err != nil || strings.ToLower(strings.TrimSpace(enabled)) != "true" {
 		return ""
 	}
-	base, err := database.GetAdminConfig(db, "report_base_url")
+	tmpl, err := database.GetAdminConfig(db, "report_url")
 	if err != nil {
 		return ""
 	}
-	base = strings.TrimRight(strings.TrimSpace(base), "/")
-	if base == "" {
+	tmpl = strings.TrimSpace(tmpl)
+	if tmpl == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/reports/%s", base, chainID)
+	return strings.ReplaceAll(tmpl, "{chain}", chainID)
 }
 
 // reportLinkLine returns the daily-report link line (as a standalone
