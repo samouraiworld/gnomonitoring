@@ -427,6 +427,39 @@ curl -L -X PUT '127.0.0.7:8989/webhooks/[govdao | validator]' \
 
 #### 📝 Expose Metrics from API REST
 
+##### Rate limiting
+
+The public (unauthenticated) routes — `/block_height`, `/latest_incidents`,
+`/Participation`, `/uptime`, `/operation_time`, `/first_seen`, `/tx_contrib`,
+`/missing_block`, `/info`, `/addr_moniker`, `/api/reports/validators` and
+`/api/chain/<chainID>/health` — are rate-limited per client IP with a token
+bucket. Authenticated routes, the admin API, CORS preflight (`OPTIONS`)
+requests and the Prometheus `/metrics` port are not limited.
+
+A client over its budget gets `429 Too Many Requests` with a `Retry-After`
+header (seconds). CORS headers are still set on the 429 so browsers expose it.
+
+```yaml
+rate_limit_per_second: 10     # sustained requests per second per IP (default 10)
+rate_limit_burst: 40          # bucket size (default 40)
+trusted_proxy_header: ""      # e.g. "X-Real-IP" behind a reverse proxy
+```
+
+These keys are read at startup; restart the backend after changing them.
+
+Behind a reverse proxy, every request reaches the API from the proxy's
+address, so all clients would share one budget. Have the proxy set the real
+client IP and name that header in `trusted_proxy_header`. With nginx:
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+```
+
+For `X-Forwarded-For`, the last value (the one appended by the proxy) is used.
+Only set `trusted_proxy_header` when the API port is reachable through the
+proxy alone (`docker-compose-prod.yml` binds it to `127.0.0.1`); otherwise a
+client can forge the header and bypass the limit.
+
 The disponible period for metrics:
 
 - current_week
@@ -488,6 +521,8 @@ The Latest Incidents metric retrieves the most recent critical or warning events
 curl -X GET '127.0.0.1:8989/latest_incidents?period=all_time'
 ```
 
+Without other parameters this is the chain's 10 most recent incidents.
+
 Response:
 
 ```json
@@ -495,6 +530,22 @@ Response:
 {"moniker":"all","addr":"all","level":"CRITICAL","startHeight":78840,"endHeight":78840,"msg":"🚨 CRITICAL : Blockchain stuck at height 78840 since 18 Oct 25 16:29 UTC (121h33m45s ago)","sentAt":"2025-10-23T15:03:10.282235678-03:00"},
 {"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","level":"WARNING","startHeight":78834,"endHeight":78838,"msg":"","sentAt":"2025-10-22T13:28:53.018836743-03:00"},
 ```
+
+For one validator's own history, add `addr`, and optionally `limit` (1–100):
+
+```bash
+curl -X GET '127.0.0.1:8989/latest_incidents?period=all_time&addr=g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2&limit=50'
+```
+
+Response:
+
+```json
+[{"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","level":"CRITICAL","startHeight":78811,"endHeight":78840,"msg":"","sentAt":"2025-10-20T14:40:45.452216011-03:00"},
+{"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","level":"WARNING","startHeight":78834,"endHeight":78838,"msg":"","sentAt":"2025-10-22T13:28:53.018836743-03:00"}]
+```
+
+The chain-wide pseudo-addresses `all` (chain stagnation) and `rpc` (RPC outage)
+are rejected with `400`: they appear in the unfiltered list only.
 
 ##### Uptime Metrics
 

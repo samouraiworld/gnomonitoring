@@ -90,10 +90,12 @@ curl http://localhost:8989/block_height
 
 #### Get Latest Incidents
 ```bash
-GET /latest_incidents
+GET /latest_incidents?period=[current_week|current_month|current_year|all_time][&addr=<validator address>][&limit=<1-100>]
 ```
+Without `addr` and `limit`, returns the chain's 10 most recent incidents. `addr` returns only that validator's incidents; `limit` returns up to 100 rows. An `addr` containing anything other than lowercase letters and digits, or longer than 64 characters, is rejected with `400`; so are the chain-wide pseudo-addresses `all` and `rpc`, and an out-of-range `limit`. Either parameter present but empty is rejected too. An unknown address returns an empty list.
 ```bash
-curl http://localhost:8989/latest_incidents
+curl "http://localhost:8989/latest_incidents?period=current_month"
+curl "http://localhost:8989/latest_incidents?period=all_time&addr=g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2&limit=50"
 ```
 
 #### Get Validator Participation
