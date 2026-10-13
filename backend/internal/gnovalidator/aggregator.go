@@ -58,10 +58,12 @@ func runAggregation(db *gorm.DB) {
 // — ON CONFLICT DO UPDATE overwrites it with the freshly recomputed totals,
 // which is exactly what re-aggregating a day is supposed to do.
 //
-// The day is selected with a half-open UTC range [dayStart, dayEnd) on the raw
-// timestamptz column instead of "date::date = day", so the planner can use the
-// (chain_id, date, ...) index rather than casting every row of the chain, and
-// the result no longer depends on the session TimeZone.
+// The day is selected with a half-open range on the raw timestamptz column,
+// [day 00:00, next day 00:00) in the session TimeZone, instead of
+// "date::date = day". Both select the same rows in any session TimeZone, but
+// the range lets the planner use the (chain_id, date, ...) index rather than
+// casting every row of the chain. block_date is the day itself, which is what
+// date::date rendered for every row of that day.
 const aggregateDayQuery = `
 	INSERT INTO daily_participation_agregas
 	  (chain_id, addr, block_date, moniker,
@@ -86,7 +88,9 @@ const aggregateDayQuery = `
 	  percentile_cont(0.5) WITHIN GROUP (ORDER BY precommit_lag_ms) AS precommit_lag_p50_ms,
 	  percentile_cont(0.9) WITHIN GROUP (ORDER BY precommit_lag_ms) AS precommit_lag_p90_ms
 	FROM daily_participations
-	WHERE chain_id = ? AND date >= ? AND date < ?
+	WHERE chain_id = ?
+	  AND date >= CAST(? AS date)::timestamptz
+	  AND date < (CAST(? AS date) + 1)::timestamptz
 	GROUP BY chain_id, addr
 	ON CONFLICT(chain_id, addr, block_date) DO UPDATE SET
 	  moniker               = excluded.moniker,
@@ -102,14 +106,9 @@ const aggregateDayQuery = `
 	  precommit_lag_p50_ms    = excluded.precommit_lag_p50_ms,
 	  precommit_lag_p90_ms    = excluded.precommit_lag_p90_ms`
 
-// aggregateDay upserts one UTC calendar day (format "2006-01-02") for chainID.
+// aggregateDay upserts one calendar day (format "2006-01-02") for chainID.
 func aggregateDay(db *gorm.DB, chainID, day string) (int64, error) {
-	dayStart, err := time.Parse("2006-01-02", day)
-	if err != nil {
-		return 0, fmt.Errorf("aggregate day %q: %w", day, err)
-	}
-	dayEnd := dayStart.AddDate(0, 0, 1)
-	result := db.Exec(aggregateDayQuery, day, chainID, dayStart, dayEnd)
+	result := db.Exec(aggregateDayQuery, day, chainID, day, day)
 	if result.Error != nil {
 		return 0, fmt.Errorf("aggregate day %s: %w", day, result.Error)
 	}
@@ -136,24 +135,19 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 		return err
 	}
 
-	// Bound the scan to [day after the watermark, today 00:00 UTC) with plain
-	// timestamp comparisons so it is an index range scan, not a cast of every
-	// row of the chain. "Today" comes from the database clock, as CURRENT_DATE
-	// did before, but always in UTC whatever the session TimeZone.
-	watermark, err := time.Parse("2006-01-02", lastDate)
-	if err != nil {
-		return fmt.Errorf("parse aggregation watermark %q: %w", lastDate, err)
-	}
-	from := watermark.AddDate(0, 0, 1)
-
+	// Same days as "date::date > watermark AND date::date < CURRENT_DATE", in
+	// any session TimeZone, but written as bounds on the raw timestamptz column
+	// so the scan is an index range over the days after the watermark instead
+	// of a cast of every row of the chain.
 	var dayStarts []time.Time
 	if err := db.Raw(
-		`SELECT DISTINCT (date AT TIME ZONE 'UTC')::date AS d
+		`SELECT DISTINCT date::date AS d
 		 FROM daily_participations
-		 WHERE chain_id = ? AND date >= ?
-		   AND date < (((now() AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC')
+		 WHERE chain_id = ?
+		   AND date >= (CAST(? AS date) + 1)::timestamptz
+		   AND date < CURRENT_DATE::timestamptz
 		 ORDER BY d ASC`,
-		chainID, from,
+		chainID, lastDate,
 	).Scan(&dayStarts).Error; err != nil {
 		return err
 	}

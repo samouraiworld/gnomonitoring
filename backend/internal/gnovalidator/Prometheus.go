@@ -583,12 +583,12 @@ func StartMetricsUpdater(db *gorm.DB) {
 		// restart; later cycles run on the metrics phase of the shared
 		// 5-minute plan (see jobclock), away from the latency and valset jobs.
 		log.Printf("[metrics] started, chains: %v, cycle every %v at +%v",
-			internal.EnabledChains, jobclock.Cycle, jobclock.MetricsOffset())
+			internal.EnabledChainsSnapshot(), jobclock.Cycle, jobclock.MetricsOffset())
 
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), metricsTimeout)
 
-			for _, chainID := range internal.EnabledChains {
+			for _, chainID := range internal.EnabledChainsSnapshot() {
 				func(cid string) {
 					defer func() {
 						if r := recover(); r != nil {

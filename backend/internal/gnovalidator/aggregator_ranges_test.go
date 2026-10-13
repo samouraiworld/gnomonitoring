@@ -82,23 +82,35 @@ func boundaryRows() []database.DailyParticipation {
 	}
 }
 
-// TestAggregateChain_MatchesLegacyDayCasts proves the range-based predicates
-// aggregate the same days and produce the same rows as the old date::date casts,
-// with rows sitting exactly on UTC day boundaries.
-func TestAggregateChain_MatchesLegacyDayCasts(t *testing.T) {
-	db := testoutils.NewTestDB(t)
-	require.NoError(t, db.Exec(`DELETE FROM daily_participations`).Error)
-	require.NoError(t, db.Create(boundaryRows()).Error)
-
+// legacyAggregate runs the legacy queries over every unaggregated day, or only
+// the first maxDays of them when maxDays > 0, and returns the days it saw.
+func legacyAggregate(t *testing.T, db *gorm.DB, maxDays int) []string {
+	t.Helper()
 	var days []string
 	require.NoError(t, db.Raw(legacyDaysQuery, testChain, "0001-01-01").Scan(&days).Error)
-	require.Len(t, days, 4, "legacy oracle should see 4 complete days")
+	if maxDays > 0 && len(days) > maxDays {
+		days = days[:maxDays]
+	}
 	for _, d := range days {
 		require.NoError(t, db.Exec(legacyAggregateDayQuery, testChain, d).Error)
 	}
+	return days
+}
+
+// requireMatchesLegacy seeds rows on and around day boundaries and requires
+// AggregateChain to produce exactly the rows the legacy queries produce, both
+// from scratch and when continuing from a watermark the legacy code wrote.
+func requireMatchesLegacy(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Exec(`DELETE FROM daily_participations`).Error)
+	require.NoError(t, db.Create(boundaryRows()).Error)
+
+	days := legacyAggregate(t, db, 0)
+	require.GreaterOrEqual(t, len(days), 2, "legacy oracle should see several complete days")
 	want := agregaSnapshot(t, db, testChain)
 	require.NotEmpty(t, want)
 
+	// From scratch.
 	require.NoError(t, db.Exec(`DELETE FROM daily_participation_agregas`).Error)
 	require.NoError(t, gnovalidator.AggregateChain(db, testChain))
 	require.Equal(t, want, agregaSnapshot(t, db, testChain))
@@ -107,34 +119,38 @@ func TestAggregateChain_MatchesLegacyDayCasts(t *testing.T) {
 	// A second run starts from the watermark (yesterday) and must not touch today.
 	require.NoError(t, gnovalidator.AggregateChain(db, testChain))
 	require.Equal(t, want, agregaSnapshot(t, db, testChain))
+
+	// Upgrade continuity: the legacy code aggregated the first day, the new
+	// code takes over from that watermark.
+	require.NoError(t, db.Exec(`DELETE FROM daily_participation_agregas`).Error)
+	legacyAggregate(t, db, 1)
+	require.NoError(t, gnovalidator.AggregateChain(db, testChain))
+	require.Equal(t, want, agregaSnapshot(t, db, testChain))
 }
 
-// TestAggregateChain_UTCDaysIndependentOfSessionTimeZone pins the aggregator to
-// UTC calendar days even when the session TimeZone is not UTC. InitDB forces
-// TimeZone=UTC, so production semantics are unchanged; this guards against a
-// DSN that overrides it.
-func TestAggregateChain_UTCDaysIndependentOfSessionTimeZone(t *testing.T) {
+// TestAggregateChain_MatchesLegacyDayCasts proves the range-based predicates
+// aggregate the same days and produce the same rows as the old date::date
+// casts, with rows sitting exactly on UTC day boundaries, under the UTC
+// session InitDB sets.
+func TestAggregateChain_MatchesLegacyDayCasts(t *testing.T) {
 	db := testoutils.NewTestDB(t)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)                                                // keep the SET on the one connection every query uses
-	require.NoError(t, db.Exec(`SET TIME ZONE 'Pacific/Kiritimati'`).Error) // UTC+14
+	requireMatchesLegacy(t, db)
+	require.Len(t, agregaSnapshot(t, db, testChain), 5, "4 complete days, two validators on one of them")
+}
 
-	today := utcMidnight(time.Now())
-	yesterday := today.AddDate(0, 0, -1)
-	base := today.AddDate(0, 0, -3)
-	seedRaw(t, db, []database.DailyParticipation{
-		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 1, Date: base.Add(23 * time.Hour), Participated: true},
-		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 2, Date: yesterday.Add(11 * time.Hour), Participated: true},
-		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 3, Date: today.Add(time.Minute), Participated: true},
-	})
-
-	require.NoError(t, gnovalidator.AggregateChain(db, testChain))
-
-	got := agregaSnapshot(t, db, testChain)
-	require.Len(t, got, 2)
-	require.Equal(t, base.Format("2006-01-02"), got[0].BlockDate)
-	require.Equal(t, int64(1), got[0].FirstBlockHeight)
-	require.Equal(t, yesterday.Format("2006-01-02"), got[1].BlockDate)
-	require.Equal(t, int64(2), got[1].FirstBlockHeight)
+// TestAggregateChain_MatchesLegacyUnderSessionTimeZones repeats the comparison
+// with a session TimeZone that a DSN can still set explicitly (InitDB only adds
+// TimeZone=UTC when none is given): days are then local to that zone, exactly
+// as the date::date casts bucketed them.
+func TestAggregateChain_MatchesLegacyUnderSessionTimeZones(t *testing.T) {
+	for _, zone := range []string{"Pacific/Kiritimati", "America/Sao_Paulo", "Europe/Paris"} {
+		t.Run(zone, func(t *testing.T) {
+			db := testoutils.NewTestDB(t)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			sqlDB.SetMaxOpenConns(1) // keep the SET on the one connection every query uses
+			require.NoError(t, db.Exec(`SET TIME ZONE '`+zone+`'`).Error)
+			requireMatchesLegacy(t, db)
+		})
+	}
 }

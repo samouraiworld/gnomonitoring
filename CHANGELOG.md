@@ -20,12 +20,12 @@ Entries are ordered newest-first within each section.
   or removed at runtime. The plan assumes the default 5-minute periods. Each loop logs its period and offset at start, and the
   metrics update logs its duration. The first metrics cycle still runs at boot.
   One metrics update now runs at most 4 database queries at once instead of
-  ~13. The hourly aggregator selects days with half-open UTC timestamp ranges
+  ~13. The hourly aggregator selects days with half-open timestamp ranges
   instead of `date::date` casts, so it uses the `(chain_id, date, addr)` index
   instead of scanning the chain, and its day scan is bounded to the days after
-  the aggregation watermark. "Today" still comes from the database clock, now
-  always in UTC. Aggregated rows are unchanged under the UTC session that
-  `InitDB` sets. No schema, index or
+  the aggregation watermark. The ranges are built in the session TimeZone, so
+  the aggregator selects the same days and writes the same rows as before,
+  whatever TimeZone the DSN sets. No schema, index or
   configuration change.
 
 - **GovDAO "Interact & Vote" links now point to memba.club** — new-proposal
