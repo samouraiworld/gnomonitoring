@@ -559,14 +559,17 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 			if up.Message == nil || up.Message.Chat.ID == 0 {
 				continue
 			}
-			// For save Chat ID into db (fire-and-forget, idempotent upsert)
+			// Register the chat (idempotent upsert) before dispatching its
+			// command. Registering in a goroutine raced a first /setchain:
+			// its UPDATE could run before the INSERT, match no row, and leave
+			// the chat stored on the default chain, which the chain-scoped
+			// broadcasts read.
 			chatIDToInsert := up.Message.Chat.ID
+			insert, err := database.InsertChatID(db, chatIDToInsert, typeChatid, defaultChain)
+			if err != nil {
+				log.Printf("⚠️ InsertChatID failed for chat_id=%d: %v", chatIDToInsert, err)
+			}
 			go func() {
-				insert, err := database.InsertChatID(db, chatIDToInsert, typeChatid, defaultChain)
-				if err != nil {
-					log.Printf("⚠️ InsertChatID failed for chat_id=%d: %v", chatIDToInsert, err)
-					return
-				}
 				if insert && typeChatid == "govdao" && defaultChain != "" {
 					// A new chat starts on the default chain: send it that
 					// chain's latest proposal, not the latest one of any chain.
