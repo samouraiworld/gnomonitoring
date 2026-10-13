@@ -9,6 +9,22 @@ Entries are ordered newest-first within each section.
 
 ### Changed
 
+- **Periodic background jobs run on fixed, separate phases to flatten
+  Postgres CPU spikes** — the 5-minute jobs used to start at boot and sleep
+  after each run, so they fired together and drifted together. They now run on
+  wall-clock slots of a shared 5-minute cycle (package `jobclock`): GovDAO
+  status watcher at +0s, valset refresh at +20s (+10s per chain), Prometheus
+  metrics at +60s, latency alert check at +180s (+30s per chain). Missed-block
+  alert checks are spread evenly across `alert_check_interval_seconds`, one
+  slot per chain. Each loop logs its period and offset at start, and the
+  metrics update logs its duration. The first metrics cycle still runs at boot.
+  One metrics update now runs at most 4 database queries at once instead of
+  ~13. The hourly aggregator selects days with half-open UTC timestamp ranges
+  instead of `date::date` casts, so it uses the `(chain_id, date, addr)` index
+  instead of scanning the chain, and its day scan is bounded to the days after
+  the aggregation watermark. Aggregated rows are unchanged. No schema, index or
+  configuration change.
+
 - **GovDAO "Interact & Vote" links now point to memba.club** — new-proposal
   notifications on Discord, Slack and Telegram link to
   `https://memba.club/os/dao/govdao/proposals/<id>` instead of the retired

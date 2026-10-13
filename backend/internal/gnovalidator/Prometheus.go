@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/jobclock"
 	"gorm.io/gorm"
 )
 
@@ -247,6 +248,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	db = db.WithContext(ctx)
 
 	log.Printf("[metrics][%s] updating", chainID)
+	started := time.Now()
 
 	// Blocker 1 fix: Delete stale per-validator metrics for this chain before
 	// re-populating. If a validator disappeared since the last cycle, its old
@@ -279,21 +281,13 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 	// Phases 1-4 run concurrently. Each unit reads db/chainID and writes to its
 	// own Prometheus vector (GaugeVec is safe for concurrent use), so there is no
 	// shared mutable Go state between units. The DeletePartialMatch calls above
-	// already ran synchronously. A WaitGroup bounds the fan-out; StartMetricsUpdater
-	// processes chains sequentially, keeping peak connections within the pool.
+	// already ran synchronously. At most metricsQueryConcurrency units query the
+	// database at once, so one update no longer opens ~13 heavy scans together;
+	// StartMetricsUpdater processes chains sequentially.
 	var wg sync.WaitGroup
-	run := func(fn func()) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("[metrics][%s] metric goroutine panic recovered: %v", chainID, r)
-				}
-			}()
-			fn()
-		}()
-	}
+	run := limitedRunner(&wg, metricsQueryConcurrency, func(r any) {
+		log.Printf("[metrics][%s] metric goroutine panic recovered: %v", chainID, r)
+	})
 
 	// Phase 1: Base validator metrics (non-critical errors logged, execution continues)
 
@@ -542,14 +536,39 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 
 	wg.Wait()
 
-	log.Printf("[metrics][%s] update complete", chainID)
+	log.Printf("[metrics][%s] update complete in %v", chainID, time.Since(started).Round(time.Millisecond))
 	return nil
 }
 
+// metricsQueryConcurrency caps the metric units of one chain update that query
+// the database at the same time.
+const metricsQueryConcurrency = 4
+
+// limitedRunner returns a function that runs fn in a goroutine tracked by wg,
+// with at most limit of them running fn at once. A panic in fn is recovered and
+// handed to onPanic.
+func limitedRunner(wg *sync.WaitGroup, limit int, onPanic func(any)) func(fn func()) {
+	sem := make(chan struct{}, limit)
+	return func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					onPanic(r)
+				}
+			}()
+			fn()
+		}()
+	}
+}
+
 // metricsTimeout is the maximum duration allowed for a full metrics update cycle
-// (all chains combined). With SetMaxOpenConns(1) all chains are serialised on a
-// single connection, so a per-chain timeout would cause later chains to time out
-// while waiting in the pool queue. A single global timeout is simpler and correct.
+// (all chains combined). Chains are processed one after another, so a per-chain
+// timeout would let a slow chain push the later ones past their own deadline;
+// a single global timeout is simpler and correct.
 const metricsTimeout = 10 * time.Minute
 
 func StartMetricsUpdater(db *gorm.DB) {
@@ -560,7 +579,11 @@ func StartMetricsUpdater(db *gorm.DB) {
 			}
 		}()
 
-		log.Printf("[metrics] started, chains: %v", internal.EnabledChains)
+		// The first cycle runs right away so the gauges are populated after a
+		// restart; later cycles run on the metrics phase of the shared
+		// 5-minute plan (see jobclock), away from the latency and valset jobs.
+		log.Printf("[metrics] started, chains: %v, cycle every %v at +%v",
+			internal.EnabledChains, jobclock.Cycle, jobclock.MetricsOffset())
 
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), metricsTimeout)
@@ -589,7 +612,7 @@ func StartMetricsUpdater(db *gorm.DB) {
 			}
 
 			cancel()
-			time.Sleep(5 * time.Minute)
+			time.Sleep(jobclock.UntilNext(time.Now(), jobclock.Cycle, jobclock.MetricsOffset()))
 		}
 	}()
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/machinebox/graphql"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/jobclock"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/rpcpool"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/telegram"
 	"gorm.io/gorm"
@@ -685,12 +686,10 @@ func CheckProposalStatus(db *gorm.DB) {
 }
 
 func StartProposalWatcher(db *gorm.DB) {
-	ticker := time.NewTicker(5 * time.Minute)
-
-	defer ticker.Stop()
-
+	// Runs on the GovDAO phase of the shared 5-minute plan (see jobclock).
+	log.Printf("[govdao] proposal status checks every %v at +%v", jobclock.Cycle, jobclock.GovDAOOffset())
 	for {
-		<-ticker.C
+		time.Sleep(jobclock.UntilNext(time.Now(), jobclock.Cycle, jobclock.GovDAOOffset()))
 		log.Printf("[govdao] checking proposal statuses")
 		CheckProposalStatus(db)
 	}
