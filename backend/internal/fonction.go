@@ -842,7 +842,7 @@ func MultiSendReportGovdao(chainID string, id int, title, urlgnoweb, urltx strin
 	}
 	// build msg for telegram and send to all chatids
 	msg := telegram.FormatTelegramMsg(chainID, id, title, urlgnoweb, urltx)
-	err := telegram.MsgTelegram(msg, Config.TokenTelegramGovdao, "govdao", db)
+	err := telegram.MsgTelegramGovdao(msg, chainID, Config.TokenTelegramGovdao, Config.DefaultChain, EnabledChains, db)
 	if err != nil {
 		log.Printf("error send govdao telegram  %s", err)
 	}

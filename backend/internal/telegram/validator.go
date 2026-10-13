@@ -210,7 +210,7 @@ func setCached(key string, data any, ttl time.Duration) {
 	metricsCache[key] = cacheEntry{data: data, expiresAt: time.Now().Add(ttl)}
 }
 
-// BuildTelegramHandlers retourne la map de handlers.
+// BuildTelegramHandlers returns the validator bot's command handlers.
 // defaultChainID is used as fallback when a chat has no per-chat chain
 // override. enabledChains is the list of valid chain IDs (used by /chain and
 // /setchain).
@@ -354,9 +354,10 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 		},
 
 		"/help": func(chatID int64, _ string) {
-
-			msg := formatHelp()
-			_ = SendMessageTelegram(token, chatID, msg)
+			_ = SendMessageTelegram(token, chatID, formatHelp())
+		},
+		"/start": func(chatID int64, _ string) {
+			_ = SendMessageTelegram(token, chatID, formatHelp())
 		},
 
 		"/cmd": func(chatID int64, _ string) {
@@ -657,7 +658,7 @@ func reportActivate(db *gorm.DB, chatID int64, chainID, isActivate string) (stri
 		return fmt.Sprintf("🚫 The daily report has been disabled (chain: <code>%s</code>).", html.EscapeString(chainID)), nil
 
 	default:
-		return "⚠️ Invalid argument. Use `/report activate=true` or `/report activate=false`.", nil
+		return "⚠️ Invalid argument. Use <code>/report activate=true</code> or <code>/report activate=false</code>.", nil
 	}
 }
 // reportSchedule updates the daily report schedule (hour, minute, timezone) for a chat.
@@ -730,13 +731,7 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, chainID, args stri
 			return
 		}
 
-		var b strings.Builder
-		b.WriteString(fmt.Sprintf("🧾 <b>Your subscriptions</b> (chain: <code>%s</code>)\n", html.EscapeString(chainID)))
-		for _, s := range subs {
-
-			b.WriteString(fmt.Sprintf("• %s \n (%s)\n<b>%s</b>\n", s.Moniker, s.Addr, s.Status))
-		}
-		_ = SendMessageTelegram(token, chatID, b.String())
+		_ = SendMessageTelegramChunked(token, chatID, formatSubscriptionList(chainID, subs))
 		return
 
 	case "on":
@@ -768,17 +763,16 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, chainID, args stri
 			_ = SendMessageTelegram(token, chatID, "No valid validators found.")
 			return
 		}
-		var ok, fail int
+		var done []string
+		fail := 0
 		for _, m := range moniker {
 			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, chainID, m.Addr, m.Moniker, "subscribe"); err != nil {
 				fail++
 			} else {
-				_ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Enabled alerts for <b>%s</b> validators.", m.Moniker))
-				ok++
+				done = append(done, m.Moniker)
 			}
 		}
-		// _ = SendMessageTelegram(token, chatID, fmt.Sprintf("✅ Unsubscribed: %d | ❌ Failed: %d", ok, fail))
-
+		_ = SendMessageTelegramChunked(token, chatID, formatSubscriptionChange("✅ Enabled", done, fail))
 		return
 
 	case "off":
@@ -809,20 +803,53 @@ func handleSubscribe(token string, db *gorm.DB, chatID int64, chainID, args stri
 			_ = SendMessageTelegram(token, chatID, "No valid validators found.")
 			return
 		}
-		var ok, fail int
+		var done []string
+		fail := 0
 		for _, m := range moniker {
 			if err := database.UpdateTelegramValidatorSubStatus(db, chatID, chainID, m.Addr, m.Moniker, "unsubscribe"); err != nil {
 				fail++
 			} else {
-				_ = SendMessageTelegram(token, chatID, fmt.Sprintf("🛑 Disabled alerts for <b>%s</b> validators.", m.Moniker))
-				ok++
+				done = append(done, m.Moniker)
 			}
 		}
+		_ = SendMessageTelegramChunked(token, chatID, formatSubscriptionChange("🛑 Disabled", done, fail))
 
 	default:
 		_ = SendMessageTelegram(token, chatID, subscribeUsage())
 		return
 	}
+}
+
+// formatSubscriptionList renders the /subscribe list reply. Monikers are
+// operator-chosen, so they are HTML-escaped. The reply can exceed Telegram's
+// 4096-char limit after "/subscribe on all": send it with
+// SendMessageTelegramChunked, which splits it on line boundaries.
+func formatSubscriptionList(chainID string, subs []database.ValidatorStatus) string {
+	esc := html.EscapeString
+	if len(subs) == 0 {
+		return fmt.Sprintf("🧾 No subscriptions (chain: <code>%s</code>).", esc(chainID))
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("🧾 <b>Your subscriptions</b> (chain: <code>%s</code>)\n", esc(chainID)))
+	for _, s := range subs {
+		b.WriteString(fmt.Sprintf("• %s\n  (%s) — <b>%s</b>\n", esc(s.Moniker), esc(s.Addr), esc(s.Status)))
+	}
+	return b.String()
+}
+
+// formatSubscriptionChange renders one summary reply for "/subscribe on|off"
+// with explicit validators, instead of one message per validator. verb is a
+// fixed string such as "✅ Enabled".
+func formatSubscriptionChange(verb string, monikers []string, failed int) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s alerts for <b>%d</b> validator(s).", verb, len(monikers)))
+	for _, m := range monikers {
+		b.WriteString("\n• " + html.EscapeString(m))
+	}
+	if failed > 0 {
+		b.WriteString(fmt.Sprintf("\n❌ Failed: <b>%d</b>", failed))
+	}
+	return b.String()
 }
 
 func subscribeUsage() string {
@@ -848,9 +875,14 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB, defaultChainID stri
 			return
 		}
 
-		_, page, limit, period, filter, sortOrder, action, ok := parseCallbackData(data)
+		_, msgChainID, page, limit, period, filter, sortOrder, action, ok := parseCallbackData(data)
 		if !ok {
 			return
+		}
+		// Page the chain the message was built for, not the chain the chat
+		// is on now. An unknown or disabled chain falls back to the active one.
+		if msgChainID != "" && validateChainID(msgChainID, enabledChainsSnapshot) {
+			chainID = msgChainID
 		}
 		if action == "search" {
 			setSearchState(chatID, SearchState{
@@ -863,7 +895,7 @@ func BuildTelegramCallbackHandler(token string, db *gorm.DB, defaultChainID stri
 				SortOrder: sortOrder,
 				ExpiresAt: time.Now().Add(searchTTL),
 			})
-			_ = SendMessageTelegram(token, chatID, "🔎 Tapez un moniker ou une adresse (ou /cancel).")
+			_ = SendMessageTelegram(token, chatID, "🔎 Type a moniker or an address (or /cancel).")
 			return
 		}
 
@@ -902,7 +934,7 @@ func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string,
 		if err != nil {
 			return "", nil, err
 		}
-		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
+		return msg, buildPaginationMarkup(cmdKey, chainID, pageOut, totalPages, limit, period, filter, sortOrder), nil
 
 	case "rate":
 		if period == "" {
@@ -912,21 +944,21 @@ func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string,
 		if err != nil {
 			return "", nil, err
 		}
-		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
+		return msg, buildPaginationMarkup(cmdKey, chainID, pageOut, totalPages, limit, period, filter, sortOrder), nil
 
 	case "uptime":
 		msg, pageOut, totalPages, err := formatUptime(db, chainID, page, limit, filter, sortOrder)
 		if err != nil {
 			return "", nil, err
 		}
-		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, "", filter, sortOrder), nil
+		return msg, buildPaginationMarkup(cmdKey, chainID, pageOut, totalPages, limit, "", filter, sortOrder), nil
 
 	case "operation_time":
 		msg, pageOut, totalPages, err := formatOperationTime(db, chainID, page, limit, filter)
 		if err != nil {
 			return "", nil, err
 		}
-		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, "", filter, sortOrder), nil
+		return msg, buildPaginationMarkup(cmdKey, chainID, pageOut, totalPages, limit, "", filter, sortOrder), nil
 
 	case "tx_contrib":
 		if period == "" {
@@ -936,7 +968,7 @@ func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string,
 		if err != nil {
 			return "", nil, err
 		}
-		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
+		return msg, buildPaginationMarkup(cmdKey, chainID, pageOut, totalPages, limit, period, filter, sortOrder), nil
 
 	case "missing":
 		if period == "" {
@@ -946,24 +978,24 @@ func buildPaginatedResponse(db *gorm.DB, chainID, cmdKey, period, filter string,
 		if err != nil {
 			return "", nil, err
 		}
-		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, period, filter, sortOrder), nil
+		return msg, buildPaginationMarkup(cmdKey, chainID, pageOut, totalPages, limit, period, filter, sortOrder), nil
 
 	case "health":
 		msg, pageOut, totalPages, err := formatChainHealthPage(db, chainID, page, limit, filter)
 		if err != nil {
 			return "", nil, err
 		}
-		return msg, buildPaginationMarkup(cmdKey, pageOut, totalPages, limit, "", filter, sortOrder), nil
+		return msg, buildPaginationMarkup(cmdKey, chainID, pageOut, totalPages, limit, "", filter, sortOrder), nil
 
 	default:
 		return "", nil, fmt.Errorf("unknown command key: %s", cmdKey)
 	}
 }
 
-func buildPaginationMarkup(cmdKey string, page, totalPages, limit int, period, filter, sortOrder string) *InlineKeyboardMarkup {
+func buildPaginationMarkup(cmdKey, chainID string, page, totalPages, limit int, period, filter, sortOrder string) *InlineKeyboardMarkup {
 	if totalPages <= 1 {
 		if supportsSearch(cmdKey) || supportsPercentSort(cmdKey) {
-			return buildSecondaryButtons(cmdKey, page, totalPages, limit, period, filter, sortOrder)
+			return buildSecondaryButtons(cmdKey, chainID, page, totalPages, limit, period, filter, sortOrder)
 		}
 		return nil
 	}
@@ -972,19 +1004,19 @@ func buildPaginationMarkup(cmdKey string, page, totalPages, limit int, period, f
 	if page > 1 {
 		row = append(row, InlineKeyboardButton{
 			Text:         "⬅️ Prev",
-			CallbackData: encodeCallbackData(cmdKey, page-1, limit, period, filter, sortOrder, ""),
+			CallbackData: encodeCallbackData(cmdKey, chainID, page-1, limit, period, filter, sortOrder, ""),
 		})
 	}
 	if page < totalPages {
 		row = append(row, InlineKeyboardButton{
 			Text:         "➡️ Next",
-			CallbackData: encodeCallbackData(cmdKey, page+1, limit, period, filter, sortOrder, ""),
+			CallbackData: encodeCallbackData(cmdKey, chainID, page+1, limit, period, filter, sortOrder, ""),
 		})
 	}
 	if len(row) > 0 {
 		rows = append(rows, row)
 	}
-	if secondary := buildSecondaryButtons(cmdKey, page, totalPages, limit, period, filter, sortOrder); secondary != nil {
+	if secondary := buildSecondaryButtons(cmdKey, chainID, page, totalPages, limit, period, filter, sortOrder); secondary != nil {
 		rows = append(rows, secondary.InlineKeyboard...)
 	}
 	if len(rows) == 0 {
@@ -993,19 +1025,23 @@ func buildPaginationMarkup(cmdKey string, page, totalPages, limit int, period, f
 	return &InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
-func parseCallbackData(data string) (cmdKey string, page, limit int, period, filter, sortOrder, action string, ok bool) {
+// parseCallbackData decodes callback data built by encodeCallbackData.
+// chainID is the chain the message was built for, or "" for callback data
+// from before the chain was carried (the caller then uses the active chain).
+func parseCallbackData(data string) (cmdKey, chainID string, page, limit int, period, filter, sortOrder, action string, ok bool) {
 	params := parseCallbackParams(data)
 	cmdKey = codeToCmd(params["c"])
 	if cmdKey == "" {
-		return "", 1, limitDefault, "", "", sortDefault, "", false
+		return "", "", 1, limitDefault, "", "", sortDefault, "", false
 	}
+	chainID = params["n"]
 	page = parseIntWithDefault(params["p"], 1, "page")
 	limit = parseIntWithDefault(params["l"], defaultLimitFor(cmdKey), "limit")
 	period = decodePeriod(params["r"])
 	filter = params["f"]
 	sortOrder = decodeSort(params["s"])
 	action = decodeAction(params["a"])
-	return cmdKey, page, limit, period, filter, sortOrder, action, true
+	return cmdKey, chainID, page, limit, period, filter, sortOrder, action, true
 }
 
 func parseCallbackParams(data string) map[string]string {
@@ -1019,7 +1055,18 @@ func parseCallbackParams(data string) map[string]string {
 	return out
 }
 
-func encodeCallbackData(cmdKey string, page, limit int, period, filter, sortOrder, action string) string {
+// callbackDataMaxLen is Telegram's limit on an inline button's callback_data.
+const callbackDataMaxLen = 64
+
+// callbackChainMaxLen bounds the chain ID carried in callback data; a longer
+// ID is left out and the click falls back to the chat's active chain.
+const callbackChainMaxLen = 16
+
+// encodeCallbackData builds a pagination button's callback data. It carries
+// chainID so that paging an old message keeps showing the chain the message
+// was built for, even after the chat switched chains with /setchain. The
+// filter is truncated last so the result always fits callbackDataMaxLen.
+func encodeCallbackData(cmdKey, chainID string, page, limit int, period, filter, sortOrder, action string) string {
 	cmdCode := cmdToCode(cmdKey)
 	if cmdCode == "" {
 		cmdCode = cmdKey
@@ -1045,8 +1092,13 @@ func encodeCallbackData(cmdKey string, page, limit int, period, filter, sortOrde
 		b.WriteString("&a=")
 		b.WriteString(a)
 	}
+	if isCallbackSafeChainID(chainID) {
+		b.WriteString("&n=")
+		b.WriteString(chainID)
+	}
 	if filter != "" {
-		f := sanitizeCallbackValue(filter, 20)
+		budget := min(20, callbackDataMaxLen-b.Len()-len("&f="))
+		f := truncateBytes(sanitizeCallbackValue(filter, budget), budget)
 		if f != "" {
 			b.WriteString("&f=")
 			b.WriteString(f)
@@ -1055,19 +1107,53 @@ func encodeCallbackData(cmdKey string, page, limit int, period, filter, sortOrde
 	return b.String()
 }
 
-func buildSecondaryButtons(cmdKey string, page, totalPages, limit int, period, filter, sortOrder string) *InlineKeyboardMarkup {
+// isCallbackSafeChainID reports whether chainID can be carried verbatim in
+// callback data: short, and free of the "&" and "=" separators.
+func isCallbackSafeChainID(chainID string) bool {
+	if chainID == "" || len(chainID) > callbackChainMaxLen {
+		return false
+	}
+	for _, r := range chainID {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// truncateBytes cuts s to at most maxBytes bytes without splitting a rune.
+func truncateBytes(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	cut := 0
+	for i := range s {
+		if i > maxBytes {
+			break
+		}
+		cut = i
+	}
+	return s[:cut]
+}
+
+func buildSecondaryButtons(cmdKey, chainID string, page, totalPages, limit int, period, filter, sortOrder string) *InlineKeyboardMarkup {
 	var row []InlineKeyboardButton
 	if supportsPercentSort(cmdKey) {
 		nextSort := toggleSort(sortOrder)
 		row = append(row, InlineKeyboardButton{
 			Text:         "↕️ Sort %",
-			CallbackData: encodeCallbackData(cmdKey, 1, limit, period, filter, nextSort, ""),
+			CallbackData: encodeCallbackData(cmdKey, chainID, 1, limit, period, filter, nextSort, ""),
 		})
 	}
 	if supportsSearch(cmdKey) {
 		row = append(row, InlineKeyboardButton{
 			Text:         "🔎 Search",
-			CallbackData: encodeCallbackData(cmdKey, page, limit, period, filter, sortOrder, "search"),
+			CallbackData: encodeCallbackData(cmdKey, chainID, page, limit, period, filter, sortOrder, "search"),
 		})
 	}
 	if len(row) == 0 {
@@ -1323,7 +1409,7 @@ func HandleSearchInput(token string, db *gorm.DB, botType string, chatID int64, 
 		return true
 	}
 	if strings.EqualFold(t, "/cancel") {
-		_ = SendMessageTelegram(token, chatID, "❌ Search annulée.")
+		_ = SendMessageTelegram(token, chatID, "❌ Search cancelled.")
 		return true
 	}
 	if strings.HasPrefix(t, "/") {
@@ -1683,7 +1769,16 @@ func handleCmdMenuCallback(
 		}
 		result, markup := executeCmdMenuAction(token, db, chatID, chainID, state)
 		deleteCmdState(chatID)
-		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, result, markup)
+		// An edit cannot exceed Telegram's size limit either: edit the menu
+		// message with the first chunk and send the rest as new messages.
+		chunks := splitTelegramChunks(result)
+		if len(chunks) == 0 {
+			return
+		}
+		_ = EditMessageTelegramWithMarkup(token, chatID, messageID, chunks[0], markup)
+		for _, chunk := range chunks[1:] {
+			_ = SendMessageTelegram(token, chatID, chunk)
+		}
 		return
 	}
 
@@ -2070,15 +2165,7 @@ func executeCmdMenuAction(token string, db *gorm.DB, chatID int64, chainID strin
 			if err != nil {
 				return "⚠️ Unable to fetch subscriptions.", nil
 			}
-			if len(subs) == 0 {
-				return fmt.Sprintf("🧾 No subscriptions (chain: <code>%s</code>).", html.EscapeString(state.ChainID)), nil
-			}
-			var b strings.Builder
-			b.WriteString(fmt.Sprintf("🧾 <b>Your subscriptions</b> (chain: <code>%s</code>)\n", html.EscapeString(state.ChainID)))
-			for _, s := range subs {
-				b.WriteString(fmt.Sprintf("• %s\n  (%s) — <b>%s</b>\n", s.Moniker, s.Addr, s.Status))
-			}
-			return b.String(), nil
+			return formatSubscriptionList(state.ChainID, subs), nil
 
 		case "on":
 			if len(state.SelectedAddrs) == 0 {

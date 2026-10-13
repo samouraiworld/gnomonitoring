@@ -3,6 +3,7 @@ package govdao
 import (
 	"testing"
 
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -111,4 +112,23 @@ func TestIsTerminalProposalStatus(t *testing.T) {
 	assert.False(t, isTerminalProposalStatus("IN PROGRESS"))
 	assert.False(t, isTerminalProposalStatus("UNKNOWN"))
 	assert.False(t, isTerminalProposalStatus(""))
+}
+
+// A proposal title or URL containing "&" or "<" must be HTML-escaped in the
+// Telegram status notice: Telegram's HTML parse mode rejects the whole message
+// otherwise, and the notice is lost for every chat.
+func TestFormatProposalStatusTelegramEscapesTitleAndURL(t *testing.T) {
+	p := database.Govdao{
+		Id:      7,
+		ChainID: "test12",
+		Title:   "Fund R&D <urgent>",
+		Url:     "https://gno.land/r/gov/dao:7?a=1&b=2",
+	}
+
+	msg := formatProposalStatusTelegram(p, StatusAccepted)
+
+	assert.Contains(t, msg, "Fund R&amp;D &lt;urgent&gt;")
+	assert.Contains(t, msg, `href="https://gno.land/r/gov/dao:7?a=1&amp;b=2"`)
+	assert.NotContains(t, msg, "<urgent>")
+	assert.Contains(t, msg, "✅ Proposal Nº 7")
 }
