@@ -47,11 +47,30 @@ func minuteOf(offset time.Duration) int {
 	return int((offset % Cycle) / time.Minute)
 }
 
-// TestPhasePlan_HeavyJobsDoNotShareAMinute checks the plan for up to four
-// chains: the metrics burst and every chain's latency check never land in the
-// minute of the GovDAO watcher or of the valset refresh, nor in each other's.
+// TestPhasePlan_HeavyJobsDoNotShareAMinute checks the plan for one to eight
+// chains: no two chains share an offset, and neither the metrics burst nor any
+// chain's latency check lands in the minute of the GovDAO watcher or of the
+// valset refresh, nor in each other's.
 func TestPhasePlan_HeavyJobsDoNotShareAMinute(t *testing.T) {
-	chains := []string{"a", "b", "c", "d"}
+	for n := 1; n <= 8; n++ {
+		chains := make([]string, n)
+		for i := range chains {
+			chains[i] = string(rune('a' + i))
+		}
+		checkPhasePlan(t, chains)
+	}
+}
+
+func checkPhasePlan(t *testing.T, chains []string) {
+	t.Helper()
+	valset := map[time.Duration]bool{}
+	latency := map[time.Duration]bool{}
+	for _, c := range chains {
+		v, l := ValsetOffset(c, chains), LatencyOffset(c, chains)
+		require.False(t, valset[v], "two chains share the valset offset %v", v)
+		require.False(t, latency[l], "two chains share the latency offset %v", l)
+		valset[v], latency[l] = true, true
+	}
 	light := map[int]bool{minuteOf(GovDAOOffset()): true}
 	for _, c := range chains {
 		light[minuteOf(ValsetOffset(c, chains))] = true

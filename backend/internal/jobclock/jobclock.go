@@ -10,12 +10,18 @@
 //
 // The 5-minute plan:
 //
-//	minute 0      GovDAO proposal watcher (+0s), valset refresh (+20s, +10s per chain)
+//	minute 0      GovDAO proposal watcher (+0s), valset refresh (chains spread over +20s..+60s)
 //	minutes 1-2   Prometheus metrics updater (+60s, chains run one after another)
-//	minutes 3-4   latency alert check (+180s, +30s per chain, up to four chains)
+//	minutes 3-4   latency alert check (chains spread over +180s..+300s)
 //
 // Missed-block alert checks (every alert_check_interval_seconds) are spread
 // evenly across their own interval, one slot per chain.
+//
+// The plan assumes the default 5-minute periods. With an admin-configured
+// period that is not 5 minutes, a job keeps its offset modulo its own period
+// but may then share a minute with another job. Offsets depend on the chain's
+// position among the enabled chains, so callers recompute them every cycle
+// to follow chains added or removed at runtime.
 package jobclock
 
 import "time"
@@ -25,15 +31,15 @@ import "time"
 const Cycle = 5 * time.Minute
 
 const (
-	govDAOPhase        = 0
-	valsetPhase        = 20 * time.Second
-	valsetChainStride  = 10 * time.Second
-	metricsPhase       = 60 * time.Second
-	latencyPhase       = 180 * time.Second
-	latencyChainStride = 30 * time.Second
-	latencyChainSlots  = 4 // latencyPhase + slots*stride stays inside the cycle
-	alertPhase         = 5 * time.Second
-	valsetChainSlots   = 4 // valsetPhase + slots*stride stays inside minute 0
+	govDAOPhase   = 0
+	valsetPhase   = 20 * time.Second
+	valsetWindow  = 40 * time.Second // valset refreshes stay inside minute 0
+	metricsPhase  = 60 * time.Second
+	latencyPhase  = 180 * time.Second
+	latencyWindow = 120 * time.Second // latency checks stay inside minutes 3-4
+	// alertPhase is not a multiple of 5s, so with the usual intervals and
+	// chain counts the alert checks avoid the round seconds the other jobs use.
+	alertPhase = 7 * time.Second
 )
 
 // UntilNext returns how long to wait from now until the next instant strictly
@@ -74,25 +80,28 @@ func MetricsOffset() time.Duration { return metricsPhase }
 
 // ValsetOffset is the phase of a chain's valset refresh (InitMonikerMap).
 func ValsetOffset(chainID string, chains []string) time.Duration {
-	return valsetPhase + time.Duration(ChainIndex(chainID, chains)%valsetChainSlots)*valsetChainStride
+	return valsetPhase + spread(chainID, chains, valsetWindow)
 }
 
 // LatencyOffset is the phase of a chain's latency alert check.
 func LatencyOffset(chainID string, chains []string) time.Duration {
-	return latencyPhase + time.Duration(ChainIndex(chainID, chains)%latencyChainSlots)*latencyChainStride
+	return latencyPhase + spread(chainID, chains, latencyWindow)
 }
 
-// AlertOffset is the phase of a chain's missed-block alert check inside its
-// own interval: the chains share the interval evenly, starting at +5s so the
-// checks do not coincide with the slot boundaries the other jobs use.
-func AlertOffset(chainID string, chains []string, interval time.Duration) time.Duration {
-	if interval <= 0 {
-		return 0
-	}
+// spread gives each chain an even share of window, by its position in chains.
+func spread(chainID string, chains []string, window time.Duration) time.Duration {
 	n := len(chains)
 	if n < 1 {
 		n = 1
 	}
-	idx := ChainIndex(chainID, chains)
-	return (alertPhase + time.Duration(idx)*interval/time.Duration(n)) % interval
+	return time.Duration(ChainIndex(chainID, chains)) * window / time.Duration(n)
+}
+
+// AlertOffset is the phase of a chain's missed-block alert check inside its
+// own interval: the chains share the interval evenly, starting at alertPhase.
+func AlertOffset(chainID string, chains []string, interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return 0
+	}
+	return (alertPhase + spread(chainID, chains, interval)) % interval
 }

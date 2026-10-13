@@ -138,25 +138,22 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 
 	// Bound the scan to [day after the watermark, today 00:00 UTC) with plain
 	// timestamp comparisons so it is an index range scan, not a cast of every
-	// row of the chain.
+	// row of the chain. "Today" comes from the database clock, as CURRENT_DATE
+	// did before, but always in UTC whatever the session TimeZone.
 	watermark, err := time.Parse("2006-01-02", lastDate)
 	if err != nil {
 		return fmt.Errorf("parse aggregation watermark %q: %w", lastDate, err)
 	}
 	from := watermark.AddDate(0, 0, 1)
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	if !from.Before(today) {
-		return nil
-	}
 
 	var dayStarts []time.Time
 	if err := db.Raw(
 		`SELECT DISTINCT (date AT TIME ZONE 'UTC')::date AS d
 		 FROM daily_participations
-		 WHERE chain_id = ? AND date >= ? AND date < ?
+		 WHERE chain_id = ? AND date >= ?
+		   AND date < (((now() AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC')
 		 ORDER BY d ASC`,
-		chainID, from, today,
+		chainID, from,
 	).Scan(&dayStarts).Error; err != nil {
 		return err
 	}

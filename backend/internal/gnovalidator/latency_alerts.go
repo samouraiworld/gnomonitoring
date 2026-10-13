@@ -203,9 +203,10 @@ func WatchLatencyAlerts(ctx context.Context, db *gorm.DB, chainID string) {
 			}
 		}()
 		// Wall-clock phase shared with the other periodic jobs (see jobclock),
-		// so this check never runs in the metrics or valset refresh minute.
-		offset := jobclock.LatencyOffset(chainID, internal.EnabledChains)
-		log.Printf("[latency][%s] checks every %v at +%v", chainID, GetThresholds().LatencyAlertCheckInterval(), offset)
+		// so this check does not run in the metrics or valset refresh minute.
+		// Recomputed every cycle to follow chains added or removed at runtime.
+		log.Printf("[latency][%s] checks every %v at +%v", chainID, GetThresholds().LatencyAlertCheckInterval(),
+			jobclock.LatencyOffset(chainID, internal.EnabledChainsSnapshot()))
 		for {
 			t := GetThresholds()
 			if isChainSynced(chainID) {
@@ -215,7 +216,8 @@ func WatchLatencyAlerts(ctx context.Context, db *gorm.DB, chainID string) {
 			case <-ctx.Done():
 				log.Printf("[latency][%s] WatchLatencyAlerts stopped", chainID)
 				return
-			case <-time.After(jobclock.UntilNext(time.Now(), t.LatencyAlertCheckInterval(), offset)):
+			case <-time.After(jobclock.UntilNext(time.Now(), t.LatencyAlertCheckInterval(),
+				jobclock.LatencyOffset(chainID, internal.EnabledChainsSnapshot()))):
 			}
 		}
 	}()

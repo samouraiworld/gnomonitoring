@@ -395,15 +395,16 @@ func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client
 		if refreshInterval <= 0 {
 			refreshInterval = jobclock.Cycle
 		}
-		offset := jobclock.ValsetOffset(chainID, internal.EnabledChains)
-		log.Printf("[monitor][%s] valset refresh every %v at +%v", chainID, refreshInterval, offset)
+		log.Printf("[monitor][%s] valset refresh every %v at +%v", chainID, refreshInterval,
+			jobclock.ValsetOffset(chainID, internal.EnabledChainsSnapshot()))
 
 		for {
 			select {
 			case <-ctx.Done():
 				log.Printf("[monitor][%s] WatchNewValidators stopped", chainID)
 				return
-			case <-time.After(jobclock.UntilNext(time.Now(), refreshInterval, offset)):
+			case <-time.After(jobclock.UntilNext(time.Now(), refreshInterval,
+				jobclock.ValsetOffset(chainID, internal.EnabledChainsSnapshot()))):
 				oldMap := GetMonikerMap(chainID)
 				prevSigningToOperator := getSigningToOperator(chainID)
 
@@ -547,10 +548,12 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 			}
 		}()
 		// Each chain checks on its own slot of the interval, so the per-chain
-		// loops do not hit the database in lockstep.
-		offset := jobclock.AlertOffset(chainID, internal.EnabledChains, checkInterval)
-		log.Printf("[validator][%s] alert checks every %v at +%v", chainID, checkInterval, offset)
+		// loops do not hit the database in lockstep. The slot is recomputed
+		// every cycle to follow chains added or removed at runtime.
+		log.Printf("[validator][%s] alert checks every %v at +%v", chainID, checkInterval,
+			jobclock.AlertOffset(chainID, internal.EnabledChainsSnapshot(), checkInterval))
 		nextCheck := func() <-chan time.Time {
+			offset := jobclock.AlertOffset(chainID, internal.EnabledChainsSnapshot(), checkInterval)
 			return time.After(jobclock.UntilNext(time.Now(), checkInterval, offset))
 		}
 		for {
