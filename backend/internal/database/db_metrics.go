@@ -70,49 +70,23 @@ func GetAlertLog(db *gorm.DB, chainID, period string) ([]AlertSummary, error) {
 func GetAlertLogFiltered(db *gorm.DB, chainID, period string, q AlertLogQuery) ([]AlertSummary, error) {
 	var alerts []AlertSummary
 
-	var start, end time.Time
-	now := time.Now()
-
+	// all_time has no sent_at bound: the old MIN/MAX(sent_at) pre-query only
+	// produced bounds that excluded nothing. The other periods share
+	// periodBounds with the validator report (UTC, half-open [start, end)).
+	var timeFilter string
+	var timeArgs []any
 	switch period {
-	case "current_week":
-		today := time.Now()
-		weekday := int(today.Weekday())
-		if weekday == 0 {
-			weekday = 7 // Sunday => 7
+	case "current_week", "current_month", "current_year":
+		start, end, err := periodBounds(period, time.Now())
+		if err != nil {
+			return nil, err
 		}
-		start = today.AddDate(0, 0, -weekday+1) // Return to last Monday
-		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
-		end = start.AddDate(0, 0, 7)
-	case "current_month":
-		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		end = start.AddDate(0, 1, 0)
-
-	case "current_year":
-		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
-		end = start.AddDate(1, 0, 0)
-
+		timeFilter = ` AND al.sent_at >= ? AND al.sent_at < ?`
+		timeArgs = []any{start, end}
 	case "all_time":
-		// Scan the timestamptz bounds directly into time.Time. The Postgres
-		// driver returns native timestamps, so no string layout parsing is
-		// needed (and string parsing would break on RFC3339 output).
-		var minT, maxT sql.NullTime
-		if err := db.Raw(`
-				SELECT
-					MIN(sent_at),
-					MAX(sent_at)
-				FROM alert_logs
-				WHERE chain_id = ?
-				`, chainID).Row().Scan(&minT, &maxT); err != nil {
-			return nil, fmt.Errorf("error scanning alert log bounds: %w", err)
-		}
-
-		if !minT.Valid || !maxT.Valid {
-			// No alert_logs rows for this chain: return an empty result.
-			return alerts, nil
-		}
-		start = minT.Time
-		end = maxT.Time.AddDate(1, 0, 0)
-
+		// Keep the row set the old BETWEEN bounds returned, which never
+		// matched a NULL sent_at.
+		timeFilter = ` AND al.sent_at IS NOT NULL`
 	default:
 		return nil, fmt.Errorf("invalid period: %s", period)
 	}
@@ -136,14 +110,19 @@ func GetAlertLogFiltered(db *gorm.DB, chainID, period string, q AlertLogQuery) (
 		       al.level, al.addr, al.start_height, al.end_height, al.msg, al.sent_at
 		FROM alert_logs al
 		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
-		WHERE al.chain_id = ? AND al.sent_at BETWEEN ? AND ?`
-	args := []any{chainID, start, end}
+		WHERE al.chain_id = ?` + timeFilter
+	args := append([]any{chainID}, timeArgs...)
 	if q.Addr != "" {
 		query += ` AND al.addr = ?`
 		args = append(args, q.Addr)
 	}
+	// end_height is not unique (a RESOLVED row repeats the heights of the alert
+	// it closes, RPC rows all have end_height 0), so break ties on sent_at, then
+	// on every remaining projected column. DISTINCT forbids ordering on al.id,
+	// and the projection identifies a DISTINCT row, so the order is total.
 	query += `
-		ORDER BY al.end_height DESC
+		ORDER BY al.end_height DESC, al.sent_at DESC, al.addr, al.level,
+		         al.start_height DESC, al.msg, moniker
 		LIMIT ?`
 	args = append(args, limit)
 
@@ -663,26 +642,20 @@ func GetFirstActiveBlocksMap(db *gorm.DB, chainID string) (map[string]int64, err
 // getPeriodParams returns parameterized date boundaries for a given period.
 // Returns date strings suitable for use as GORM query parameters (not for fmt.Sprintf).
 func getPeriodParams(period string) (startStr, endStr string, err error) {
+	return getPeriodParamsAt(period, time.Now())
+}
+
+// getPeriodParamsAt is getPeriodParams evaluated at now.
+func getPeriodParamsAt(period string, now time.Time) (startStr, endStr string, err error) {
 	var start, end time.Time
-	now := time.Now()
 
 	switch period {
-	case "current_week":
-		weekday := int(now.Weekday())
-		if weekday == 0 {
-			weekday = 7 // Sunday => 7
+	case "current_week", "current_month", "current_year":
+		// Same UTC bounds as the validator report.
+		start, end, err = periodBounds(period, now)
+		if err != nil {
+			return "", "", err
 		}
-		start = now.AddDate(0, 0, -weekday+1) // Return to last Monday
-		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.Local)
-		end = start.AddDate(0, 0, 7)
-
-	case "current_month":
-		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-		end = start.AddDate(0, 1, 0)
-
-	case "current_year":
-		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
-		end = start.AddDate(1, 0, 0)
 
 	case "all_time":
 		// Use extreme bounds to cover all data

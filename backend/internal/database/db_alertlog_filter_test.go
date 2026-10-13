@@ -78,3 +78,125 @@ func TestGetAlertLogFiltered_ZeroValueQueryKeepsTheDefault(t *testing.T) {
 	assert.Len(t, unfiltered, 10, "GetAlertLog, and so /latest_incidents without new params, is unchanged")
 	assert.Equal(t, filtered, unfiltered)
 }
+
+// Rows sharing an end_height are the common case for a per-validator history: a
+// RESOLVED row repeats the heights of the alert it closes, and every RPC row has
+// end_height 0. Ordering on end_height alone left their relative order undefined,
+// so LIMIT could keep an older row and drop a newer one (#137).
+func TestGetAlertLogFiltered_EndHeightTiesKeepNewestRows(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain = "chain-filter-ties"
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+
+	// Insert the newest rows first so that physical order disagrees with sent_at.
+	for i := 11; i >= 0; i-- {
+		level := "WARNING"
+		if i%2 == 1 {
+			level = "RESOLVED"
+		}
+		require.NoError(t, database.InsertAlertlog(db, chain, "g1tied", "mon", level, 495, 500, true, base.Add(time.Duration(i)*time.Minute), ""))
+	}
+	// A row with a higher end_height still comes first: end_height stays the primary key.
+	require.NoError(t, database.InsertAlertlog(db, chain, "g1tied", "mon", "CRITICAL", 495, 501, true, base, ""))
+
+	q := database.AlertLogQuery{Addr: "g1tied", Limit: 5}
+	alerts, err := database.GetAlertLogFiltered(db, chain, "all_time", q)
+	require.NoError(t, err)
+	require.Len(t, alerts, 5)
+	assert.EqualValues(t, 501, alerts[0].EndHeight)
+	for i, a := range alerts[1:] {
+		want := base.Add(time.Duration(11-i) * time.Minute)
+		assert.True(t, a.SentAt.Equal(want), "row %d: sentAt %v, want %v (newest tied rows, newest first)", i+1, a.SentAt, want)
+	}
+
+	again, err := database.GetAlertLogFiltered(db, chain, "all_time", q)
+	require.NoError(t, err)
+	assert.Equal(t, alerts, again, "two identical requests return the same rows in the same order")
+}
+
+// Period bounds are UTC and half-open (#139): a row sent exactly at the first
+// instant of the next period belongs to that period only, and the week starts on
+// Monday 00:00 UTC whatever the process's local timezone is.
+// skipNearUTCMidnight skips a test that compares its own clock read with the one
+// taken inside the function under test: every period boundary is a UTC
+// midnight, so the two reads can only disagree when the test runs across one.
+func skipNearUTCMidnight(t *testing.T, now time.Time) {
+	t.Helper()
+	sinceMidnight := now.Sub(now.Truncate(24 * time.Hour))
+	if sinceMidnight < time.Minute || sinceMidnight > 24*time.Hour-time.Minute {
+		t.Skip("too close to a UTC midnight, where a period boundary may fall")
+	}
+}
+
+func TestGetAlertLogFiltered_PeriodBoundsAreUTCAndHalfOpen(t *testing.T) {
+	prevLocal := time.Local
+	time.Local = time.FixedZone("UTC-5", -5*3600)
+	t.Cleanup(func() { time.Local = prevLocal })
+
+	now := time.Now().UTC()
+	skipNearUTCMidnight(t, now)
+
+	db := testoutils.NewTestDB(t)
+	const chain = "chain-filter-bounds"
+
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	nextMonth := monthStart.AddDate(0, 1, 0)
+	weekday := int(now.Weekday())
+	if weekday == 0 {
+		weekday = 7
+	}
+	weekStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -weekday+1)
+
+	insert := func(addr string, sent time.Time) {
+		require.NoError(t, database.InsertAlertlog(db, chain, addr, "mon", "WARNING", 1, 2, true, sent, ""))
+	}
+	insert("g1monthstart", monthStart)
+	insert("g1nextmonth", nextMonth)
+	insert("g1weekstart", weekStart)
+	insert("g1beforeweek", weekStart.Add(-time.Second))
+	insert("g1nextweek", weekStart.AddDate(0, 0, 7))
+
+	addrs := func(period string) []string {
+		alerts, err := database.GetAlertLogFiltered(db, chain, period, database.AlertLogQuery{Limit: 50})
+		require.NoError(t, err)
+		out := make([]string, 0, len(alerts))
+		for _, a := range alerts {
+			out = append(out, a.Addr)
+		}
+		return out
+	}
+
+	month := addrs("current_month")
+	assert.Contains(t, month, "g1monthstart")
+	assert.NotContains(t, month, "g1nextmonth", "the first instant of next month is not in current_month")
+
+	week := addrs("current_week")
+	assert.Contains(t, week, "g1weekstart", "the week starts on Monday 00:00 UTC, not local midnight")
+	assert.NotContains(t, week, "g1beforeweek")
+	assert.NotContains(t, week, "g1nextweek", "the first instant of next week is not in current_week")
+
+	assert.Len(t, addrs("all_time"), 5)
+}
+
+// /latest_incidents encodes the slice as is, and an empty result has always
+// answered JSON null, both on a chain with no alert log (the removed MIN/MAX
+// pre-query returned early) and for a filter matching nothing. Keep it.
+func TestGetAlertLogFiltered_AllTimeEmptyResultIsNil(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	alerts, err := database.GetAlertLogFiltered(db, "chain-filter-empty", "all_time", database.AlertLogQuery{})
+	require.NoError(t, err)
+	assert.Nil(t, alerts, "empty chain")
+
+	seedAlerts(t, db, "chain-filter-empty", "g1other", 1, 100)
+	alerts, err = database.GetAlertLogFiltered(db, "chain-filter-empty", "all_time", database.AlertLogQuery{Addr: "g1unknown"})
+	require.NoError(t, err)
+	assert.Nil(t, alerts, "non-empty chain, no matching row")
+}
+
+func TestGetAlertLogFiltered_RejectsUnknownPeriod(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	for _, period := range []string{"last_24h", "bogus", ""} {
+		_, err := database.GetAlertLogFiltered(db, "chain-filter-period", period, database.AlertLogQuery{})
+		assert.Error(t, err, "period %q", period)
+	}
+}

@@ -152,6 +152,21 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **`/latest_incidents` returns a deterministic row order and UTC period
+  bounds** — rows that share an `endHeight` (a `RESOLVED` row and the alert it
+  closes, every `rpc` row at height 0) are now ordered by `sentAt`, newest
+  first, so `LIMIT` no longer drops a newer row for an older one and two
+  identical requests return the same order (#137). `current_week` starts on
+  Monday 00:00 UTC instead of the process's local midnight, as in the
+  validator report and for the Prometheus period metrics, and a row sent at
+  the exact first instant of the next period is no longer counted in both
+  (#139). The production image has no timezone set and already ran in UTC, so
+  only deployments on a non-UTC host see a different week. `all_time` no
+  longer runs a chain-wide `MIN/MAX(sent_at)` query first (#140). The README
+  now states that the endpoint returns the whole alert log, including
+  `RESOLVED` and `LATENCY` rows and the `all`/`rpc` system rows (#138); those rows are
+  still returned, and the response shape is unchanged.
+
 - **`LoadConfig` accumulated duplicate chain IDs when called twice in one
   process** — it appended to the package-level `EnabledChains` without
   resetting it first, so a second call produced duplicates and could leave

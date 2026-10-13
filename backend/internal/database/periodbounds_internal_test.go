@@ -203,3 +203,28 @@ func TestPeriodElapsedDays(t *testing.T) {
 		}
 	})
 }
+
+// getPeriodParams feeds the Prometheus period metrics. Its week must start on the
+// same UTC Monday as periodBounds, whatever the process's local timezone (#139).
+func TestGetPeriodParams_UsesUTCPeriods(t *testing.T) {
+	// Monday 2026-10-12 00:30 UTC is still Sunday 21:30 in UTC-3, where the old
+	// local-time code picked the week starting Monday 2026-10-05.
+	prevLocal := time.Local
+	time.Local = time.FixedZone("UTC-3", -3*3600)
+	t.Cleanup(func() { time.Local = prevLocal })
+	now := time.Date(2026, 10, 12, 0, 30, 0, 0, time.UTC).In(time.Local)
+
+	for period, want := range map[string][2]string{
+		"current_week":  {"2026-10-12", "2026-10-19"},
+		"current_month": {"2026-10-01", "2026-11-01"},
+		"current_year":  {"2026-01-01", "2027-01-01"},
+	} {
+		startStr, endStr, err := getPeriodParamsAt(period, now)
+		if err != nil {
+			t.Fatalf("%s: %v", period, err)
+		}
+		if startStr != want[0] || endStr != want[1] {
+			t.Errorf("%s: got [%s, %s), want [%s, %s)", period, startStr, endStr, want[0], want[1])
+		}
+	}
+}
