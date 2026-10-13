@@ -642,8 +642,12 @@ func GetFirstActiveBlocksMap(db *gorm.DB, chainID string) (map[string]int64, err
 // getPeriodParams returns parameterized date boundaries for a given period.
 // Returns date strings suitable for use as GORM query parameters (not for fmt.Sprintf).
 func getPeriodParams(period string) (startStr, endStr string, err error) {
+	return getPeriodParamsAt(period, time.Now())
+}
+
+// getPeriodParamsAt is getPeriodParams evaluated at now.
+func getPeriodParamsAt(period string, now time.Time) (startStr, endStr string, err error) {
 	var start, end time.Time
-	now := time.Now()
 
 	switch period {
 	case "current_week", "current_month", "current_year":

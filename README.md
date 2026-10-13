@@ -518,6 +518,7 @@ Response:
 The Latest Incidents metric returns rows of the chain's alert log within a specific time period. The log holds every alert the monitor sent, not only validator incidents:
 
 - `WARNING` and `CRITICAL` rows for a validator's missed blocks;
+- `LATENCY` and `LATENCY_RESOLVED` rows for a validator's precommit lag;
 - `RESOLVED` rows, sent when the validator, the chain or the RPC connection recovers;
 - chain-wide rows whose `addr` is `all` (chain stagnation) or `rpc` (RPC outage).
 
@@ -537,7 +538,7 @@ Response:
 {"moniker":"onbloc-val-02","addr":"g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2","level":"WARNING","startHeight":78834,"endHeight":78838,"msg":"","sentAt":"2025-10-22T13:28:53.018836743-03:00"},
 ```
 
-For one validator's own history (its `WARNING`, `CRITICAL` and `RESOLVED` rows), add `addr`, and optionally `limit` (1–100):
+For one validator's own history (its `WARNING`, `CRITICAL`, `RESOLVED`, `LATENCY` and `LATENCY_RESOLVED` rows), add `addr`, and optionally `limit` (1–100):
 
 ```bash
 curl -X GET '127.0.0.1:8989/latest_incidents?period=all_time&addr=g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2&limit=50'

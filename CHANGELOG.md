@@ -164,7 +164,7 @@ Entries are ordered newest-first within each section.
   only deployments on a non-UTC host see a different week. `all_time` no
   longer runs a chain-wide `MIN/MAX(sent_at)` query first (#140). The README
   now states that the endpoint returns the whole alert log, including
-  `RESOLVED` rows and the `all`/`rpc` system rows (#138); those rows are
+  `RESOLVED` and `LATENCY` rows and the `all`/`rpc` system rows (#138); those rows are
   still returned, and the response shape is unchanged.
 
 - **`LoadConfig` accumulated duplicate chain IDs when called twice in one
