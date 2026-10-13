@@ -211,12 +211,17 @@ func TestGetPeriodParams_MatchesPeriodBoundsInUTC(t *testing.T) {
 	time.Local = time.FixedZone("UTC+14", 14*3600)
 	t.Cleanup(func() { time.Local = prevLocal })
 
+	now := time.Now().UTC()
+	if d := now.Sub(now.Truncate(24 * time.Hour)); d < time.Minute || d > 24*time.Hour-time.Minute {
+		t.Skip("too close to a UTC midnight, where a period boundary may fall")
+	}
+
 	for _, period := range []string{"current_week", "current_month", "current_year"} {
 		startStr, endStr, err := getPeriodParams(period)
 		if err != nil {
 			t.Fatalf("%s: %v", period, err)
 		}
-		start, end, err := periodBounds(period, time.Now())
+		start, end, err := periodBounds(period, now)
 		if err != nil {
 			t.Fatalf("%s: %v", period, err)
 		}

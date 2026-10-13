@@ -515,19 +515,19 @@ Response:
 
 ##### Lastest incidents
 
-The Latest Incidents metric returns the most recent rows of the chain's alert log within a specific time period. The log holds every alert the monitor sent, not only validator incidents:
+The Latest Incidents metric returns rows of the chain's alert log within a specific time period. The log holds every alert the monitor sent, not only validator incidents:
 
 - `WARNING` and `CRITICAL` rows for a validator's missed blocks;
 - `RESOLVED` rows, sent when the validator, the chain or the RPC connection recovers;
 - chain-wide rows whose `addr` is `all` (chain stagnation) or `rpc` (RPC outage).
 
-Rows are sorted by `endHeight` (descending), then by `sentAt` (newest first). RPC rows have `endHeight` 0, so they come last. `current_week` starts on Monday 00:00 UTC; `current_month` and `current_year` also start at 00:00 UTC. Each period includes its start and excludes its end.
+Rows are sorted by `endHeight` (descending), then by `sentAt` (newest first), and the limit applies to that order: an older row at a higher `endHeight` comes before a newer row at a lower one. RPC rows have `endHeight` 0, so they come last. `current_week` starts on Monday 00:00 UTC; `current_month` and `current_year` also start at 00:00 UTC. Each period includes its start and excludes its end.
 
 ```bash
 curl -X GET '127.0.0.1:8989/latest_incidents?period=all_time'
 ```
 
-Without other parameters this returns the chain's 10 most recent alert log rows.
+Without other parameters this returns the chain's 10 alert log rows with the highest `endHeight`.
 
 Response:
 

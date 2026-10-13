@@ -117,14 +117,27 @@ func TestGetAlertLogFiltered_EndHeightTiesKeepNewestRows(t *testing.T) {
 // Period bounds are UTC and half-open (#139): a row sent exactly at the first
 // instant of the next period belongs to that period only, and the week starts on
 // Monday 00:00 UTC whatever the process's local timezone is.
+// skipNearUTCMidnight skips a test that compares its own clock read with the one
+// taken inside the function under test: every period boundary is a UTC
+// midnight, so the two reads can only disagree when the test runs across one.
+func skipNearUTCMidnight(t *testing.T, now time.Time) {
+	t.Helper()
+	sinceMidnight := now.Sub(now.Truncate(24 * time.Hour))
+	if sinceMidnight < time.Minute || sinceMidnight > 24*time.Hour-time.Minute {
+		t.Skip("too close to a UTC midnight, where a period boundary may fall")
+	}
+}
+
 func TestGetAlertLogFiltered_PeriodBoundsAreUTCAndHalfOpen(t *testing.T) {
 	prevLocal := time.Local
 	time.Local = time.FixedZone("UTC-5", -5*3600)
 	t.Cleanup(func() { time.Local = prevLocal })
 
+	now := time.Now().UTC()
+	skipNearUTCMidnight(t, now)
+
 	db := testoutils.NewTestDB(t)
 	const chain = "chain-filter-bounds"
-	now := time.Now().UTC()
 
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	nextMonth := monthStart.AddDate(0, 1, 0)
@@ -165,11 +178,19 @@ func TestGetAlertLogFiltered_PeriodBoundsAreUTCAndHalfOpen(t *testing.T) {
 	assert.Len(t, addrs("all_time"), 5)
 }
 
-func TestGetAlertLogFiltered_AllTimeOnEmptyChain(t *testing.T) {
+// /latest_incidents encodes the slice as is, and an empty result has always
+// answered JSON null, both on a chain with no alert log (the removed MIN/MAX
+// pre-query returned early) and for a filter matching nothing. Keep it.
+func TestGetAlertLogFiltered_AllTimeEmptyResultIsNil(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	alerts, err := database.GetAlertLogFiltered(db, "chain-filter-empty", "all_time", database.AlertLogQuery{})
 	require.NoError(t, err)
-	assert.Empty(t, alerts)
+	assert.Nil(t, alerts, "empty chain")
+
+	seedAlerts(t, db, "chain-filter-empty", "g1other", 1, 100)
+	alerts, err = database.GetAlertLogFiltered(db, "chain-filter-empty", "all_time", database.AlertLogQuery{Addr: "g1unknown"})
+	require.NoError(t, err)
+	assert.Nil(t, alerts, "non-empty chain, no matching row")
 }
 
 func TestGetAlertLogFiltered_RejectsUnknownPeriod(t *testing.T) {
