@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"strconv"
 	"strings"
@@ -112,9 +113,9 @@ func GetMessageTitle(height int, graphqlEndpoint string) error {
 		return err
 	}
 
-	// Log la réponse brute
+	// Log the raw response
 
-	// // Parcours les transactions et décode le content_raw
+	// // Walk the transactions and decode content_raw
 	// for _, block := range respData.GetBlocks {
 	// 	for _, tx := range block.Txs {
 	// 		// DecodeContentRaw(tx.ContentRaw)
@@ -594,8 +595,6 @@ var terminalStatusDisplay = map[string]struct {
 // sendProposalStatusNotification announces that p reached the terminal status
 // status, on Discord/Slack and on Telegram.
 func sendProposalStatusNotification(db *gorm.DB, p database.Govdao, status string) {
-	display := terminalStatusDisplay[status]
-
 	msg := fmt.Sprintf("--- \n 🗳️"+
 		"Proposal N° %d: %s  -  \n"+
 		" 🔗source: %s \n "+
@@ -605,20 +604,29 @@ func sendProposalStatusNotification(db *gorm.DB, p database.Govdao, status strin
 		log.Printf("[govdao] SendInfoGovdao error: %v", err)
 	}
 
-	msgT := fmt.Sprintf(
+	msgT := formatProposalStatusTelegram(p, status)
+	if err := telegram.MsgTelegramGovdao(msgT, p.ChainID, internal.Config.TokenTelegramGovdao, internal.Config.DefaultChain, internal.EnabledChains, db); err != nil {
+		log.Printf("[govdao] MsgTelegramGovdao error: %v", err)
+	}
+}
+
+// formatProposalStatusTelegram renders the Telegram (HTML parse mode) notice
+// for p reaching status. Every interpolated value is HTML-escaped: a title
+// with "&" or "<" would otherwise make Telegram reject the whole message.
+func formatProposalStatusTelegram(p database.Govdao, status string) string {
+	display := terminalStatusDisplay[status]
+	esc := html.EscapeString
+	return fmt.Sprintf(
 		"🗳️ [%s] <b>%s Proposal Nº %d</b>: %s\n"+
 			"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
 			"<b>%s</b>\n",
-		p.ChainID,
+		esc(p.ChainID),
 		display.emoji,
 		p.Id,
-		p.Title,
-		p.Url,
-		status,
+		esc(p.Title),
+		esc(p.Url),
+		esc(status),
 	)
-	if err := telegram.MsgTelegram(msgT, internal.Config.TokenTelegramGovdao, "govdao", db); err != nil {
-		log.Printf("[govdao] MsgTelegram error: %v", err)
-	}
 }
 
 // storeProposalStatus persists a proposal's status. govdaos is keyed on

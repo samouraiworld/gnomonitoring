@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -71,18 +72,19 @@ type InlineKeyboardMarkup struct {
 	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
 }
 
-// SendMessageTelegramChunked splits text at newline boundaries and sends
-// multiple messages if the content exceeds Telegram's 4096-char limit.
-func SendMessageTelegramChunked(botToken string, chatID int64, text string) error {
-	const maxLen = 4000 // leave headroom for HTML encoding overhead
-	lines := strings.Split(text, "\n")
+// telegramChunkLen is the size SendMessageTelegramChunked splits at, below
+// Telegram's 4096-char limit to leave headroom for HTML encoding overhead.
+const telegramChunkLen = 4000
+
+// splitTelegramChunks splits text at newline boundaries into chunks of at
+// most telegramChunkLen bytes (a single longer line stays one chunk).
+func splitTelegramChunks(text string) []string {
+	var chunks []string
 	var chunk strings.Builder
-	for _, line := range lines {
+	for _, line := range strings.Split(text, "\n") {
 		// +1 for the newline we'll re-add
-		if chunk.Len()+len(line)+1 > maxLen && chunk.Len() > 0 {
-			if err := SendMessageTelegram(botToken, chatID, chunk.String()); err != nil {
-				return err
-			}
+		if chunk.Len()+len(line)+1 > telegramChunkLen && chunk.Len() > 0 {
+			chunks = append(chunks, chunk.String())
 			chunk.Reset()
 		}
 		if chunk.Len() > 0 {
@@ -91,13 +93,24 @@ func SendMessageTelegramChunked(botToken string, chatID int64, text string) erro
 		chunk.WriteString(line)
 	}
 	if chunk.Len() > 0 {
-		return SendMessageTelegram(botToken, chatID, chunk.String())
+		chunks = append(chunks, chunk.String())
+	}
+	return chunks
+}
+
+// SendMessageTelegramChunked splits text at newline boundaries and sends
+// multiple messages if the content exceeds Telegram's 4096-char limit.
+func SendMessageTelegramChunked(botToken string, chatID int64, text string) error {
+	for _, chunk := range splitTelegramChunks(text) {
+		if err := SendMessageTelegram(botToken, chatID, chunk); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func SendMessageTelegram(botToken string, chatID int64, text string) error {
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
+	apiURL := fmt.Sprintf("%s/bot%s/sendMessage", telegramAPIBaseURL, botToken)
 
 	body := map[string]any{
 		"chat_id":                  chatID,
@@ -196,7 +209,7 @@ func SendMessageTelegramWithLinkButton(botToken string, chatID int64, text, butt
 }
 
 func EditMessageTelegramWithMarkup(botToken string, chatID int64, messageID int, text string, markup *InlineKeyboardMarkup) error {
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/editMessageText", botToken)
+	apiURL := fmt.Sprintf("%s/bot%s/editMessageText", telegramAPIBaseURL, botToken)
 
 	body := map[string]any{
 		"chat_id":                  chatID,
@@ -239,7 +252,7 @@ func EditMessageTelegramWithMarkup(botToken string, chatID int64, messageID int,
 }
 
 func AnswerCallbackQuery(botToken, callbackID string) error {
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/answerCallbackQuery", botToken)
+	apiURL := fmt.Sprintf("%s/bot%s/answerCallbackQuery", telegramAPIBaseURL, botToken)
 	body := map[string]any{
 		"callback_query_id": callbackID,
 	}
@@ -262,30 +275,6 @@ func AnswerCallbackQuery(botToken, callbackID string) error {
 	return nil
 }
 
-func MsgTelegram(msg string, token, typeChatid string, db *gorm.DB) (err error) {
-
-	if token == "" {
-		return fmt.Errorf("token is empty")
-	}
-
-	ids, err := database.GetAllChatIDs(db, typeChatid)
-	if err != nil {
-		log.Printf("❌ GetAllChatIDs failed: %v", err)
-		return err
-	}
-
-	for _, chatID := range ids {
-
-		err := SendMessageTelegram(token, chatID, msg)
-		if err != nil {
-			fmt.Printf("❌ Error for  %d: %v\n", chatID, err)
-		} else {
-			fmt.Printf("✅ Msg Send  %d\n Msg: %s", chatID, msg)
-		}
-	}
-
-	return nil
-}
 // MsgTelegramAlert sends msg to every chat that has an active subscription for
 // the given (chainID, addr) pair. chainID is used to scope the subscription
 // lookup so that alerts from one chain do not bleed into chats that are
@@ -312,6 +301,50 @@ func MsgTelegramChain(msg, chainID, token, typeChatid string, db *gorm.DB) error
 		}
 	}
 	return nil
+}
+
+// MsgTelegramGovdao sends a GovDAO notice about chainID to every GovDAO chat
+// whose active chain is chainID, so a chat that picked another chain with
+// /setchain does not receive this chain's proposals.
+func MsgTelegramGovdao(msg, chainID, token, defaultChainID string, enabledChains []string, db *gorm.DB) error {
+	if token == "" {
+		return fmt.Errorf("token is empty")
+	}
+
+	prefs, err := database.GetAllGovdaoChatChains(db)
+	if err != nil {
+		log.Printf("❌ GetAllGovdaoChatChains failed: %v", err)
+		return err
+	}
+
+	for _, chatID := range govdaoChatIDsForChain(prefs, chainID, defaultChainID, enabledChains) {
+		if err := SendMessageTelegram(token, chatID, msg); err != nil {
+			log.Printf("❌ MsgTelegramGovdao send failed for chat_id=%d: %v", chatID, err)
+		} else {
+			log.Printf("✅ MsgTelegramGovdao sent to chat_id=%d (chain=%s)", chatID, chainID)
+		}
+	}
+	return nil
+}
+
+// govdaoChatIDsForChain returns, in ascending order, the chats from prefs
+// (chat_id -> stored chain) whose effective chain is chainID. A stored chain
+// that is not enabled counts as defaultChainID: rows created before multi-chain
+// support carry the migration default 'betanet', which may no longer be
+// enabled, and those chats must keep receiving the default chain's notices.
+func govdaoChatIDsForChain(prefs map[int64]string, chainID, defaultChainID string, enabledChains []string) []int64 {
+	var ids []int64
+	for chatID, stored := range prefs {
+		effective := stored
+		if !validateChainID(stored, enabledChains) {
+			effective = defaultChainID
+		}
+		if effective == chainID {
+			ids = append(ids, chatID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
 }
 
 func MsgTelegramAlert(msg string, addr, chainID, token, typeChatid string, db *gorm.DB) (err error) {
@@ -361,20 +394,67 @@ func MsgTelegramAlert(msg string, addr, chainID, token, typeChatid string, db *g
 }
 
 // ============================== handler telegram ==============================
-func extractCommand(msg *message) (cmd, args string, ok bool) {
+// extractCommand returns the command at the start of msg and its arguments.
+// A command addressed to another bot ("/status@OtherBot") is ignored, so the
+// validator and GovDAO bots do not both answer in a shared group. botUsername
+// is this bot's username without "@"; when it is empty (getMe failed) every
+// addressed command is accepted.
+func extractCommand(msg *message, botUsername string) (cmd, args string, ok bool) {
 	if msg == nil || msg.Text == "" || len(msg.Entities) == 0 {
 		return
 	}
 	for _, e := range msg.Entities {
 		if e.Type == "bot_command" && e.Offset == 0 && e.Length <= len(msg.Text) {
-			raw := msg.Text[:e.Length]                    // ex: "/status@MonBot"
-			parts := strings.SplitN(raw, "@", 2)          // delete @MonBot
+			raw := msg.Text[:e.Length]           // ex: "/status@MyBot"
+			parts := strings.SplitN(raw, "@", 2) // split off @MyBot
+			if len(parts) == 2 && botUsername != "" && !strings.EqualFold(parts[1], botUsername) {
+				return "", "", false
+			}
 			cmd = strings.ToLower(parts[0])               // "/status"
 			args = strings.TrimSpace(msg.Text[e.Length:]) // get arguments
 			return cmd, args, true
 		}
 	}
 	return
+}
+
+// isAddressedCommand reports whether msg starts with a command carrying an
+// "@botname" suffix.
+func isAddressedCommand(msg *message) bool {
+	if msg == nil {
+		return false
+	}
+	for _, e := range msg.Entities {
+		if e.Type == "bot_command" && e.Offset == 0 && e.Length <= len(msg.Text) {
+			return strings.Contains(msg.Text[:e.Length], "@")
+		}
+	}
+	return false
+}
+
+// fetchBotUsername returns the bot's username from the getMe endpoint.
+func fetchBotUsername(token string) (string, error) {
+	apiURL := telegramAPIBaseURL + "/bot" + url.PathEscape(token) + "/getMe"
+	resp, err := telegramHTTPClient.Get(apiURL)
+	if err != nil {
+		return "", fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var res struct {
+		Ok          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      struct {
+			Username string `json:"username"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return "", fmt.Errorf("decode: %w", err)
+	}
+	if resp.StatusCode/100 != 2 || !res.Ok {
+		return "", fmt.Errorf("telegram http %d: %s", resp.StatusCode, res.Description)
+	}
+	return res.Result.Username, nil
 }
 
 // StartCommandLoop continuously reads getUpdates and calls the handlers.
@@ -386,7 +466,7 @@ func extractCommand(msg *message) (cmd, args string, ok bool) {
 // Pass an empty string for bots that do not need chain-scoped hour reports
 // (e.g. govdao).
 func StartCommandLoop(stopCtx context.Context, token string, handlers map[string]func(int64, string), callbackHandler func(int64, int, string), typeChatid string, db *gorm.DB, chainID ...string) error {
-	base := "https://api.telegram.org/bot" + url.PathEscape(token) + "/getUpdates"
+	base := telegramAPIBaseURL + "/bot" + url.PathEscape(token) + "/getUpdates"
 	offset := 0
 	httpClient := &http.Client{Timeout: 50 * time.Second}
 
@@ -394,6 +474,13 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 	defaultChain := ""
 	if len(chainID) > 0 {
 		defaultChain = chainID[0]
+	}
+
+	// The bot username lets extractCommand ignore commands addressed to
+	// another bot. A failed lookup is retried on the next addressed command.
+	botUsername, err := fetchBotUsername(token)
+	if err != nil {
+		log.Printf("⚠️ StartCommandLoop(%s): getMe failed, commands addressed to other bots are accepted until it succeeds: %v", typeChatid, err)
 	}
 
 	// Hydrate chatChainState from DB for validator bots on startup.
@@ -480,14 +567,18 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 					log.Printf("⚠️ InsertChatID failed for chat_id=%d: %v", chatIDToInsert, err)
 					return
 				}
-				if insert && typeChatid == "govdao" {
-					log.Println("Send ultimate govdao telegram")
-					govdaolist, err := database.GetLastGovDaoInfo(db)
+				if insert && typeChatid == "govdao" && defaultChain != "" {
+					// A new chat starts on the default chain: send it that
+					// chain's latest proposal, not the latest one of any chain.
+					last, err := database.GetLastGovDaoInfoByChain(db, defaultChain)
 					if err != nil {
-						log.Printf("error get lastid govdao: %s", err)
+						log.Printf("error get last govdao proposal (chain=%s): %s", defaultChain, err)
 						return
 					}
-					if err := SendReportGovdaoTelegram(govdaolist.ChainID, govdaolist.Id, govdaolist.Title, govdaolist.Url, govdaolist.Tx, token, chatIDToInsert); err != nil {
+					if last.ChainID == "" {
+						return // no proposal recorded on this chain yet
+					}
+					if err := SendReportGovdaoTelegram(last.ChainID, last.Id, last.Title, last.Url, last.Tx, token, chatIDToInsert); err != nil {
 						log.Printf("❌ SendReportGovdaoTelegram failed for chat_id=%d: %v", chatIDToInsert, err)
 					}
 				}
@@ -496,7 +587,12 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 				continue
 			}
 			// ========================
-			cmd, args, ok := extractCommand(up.Message)
+			if botUsername == "" && isAddressedCommand(up.Message) {
+				if name, err := fetchBotUsername(token); err == nil {
+					botUsername = name
+				}
+			}
+			cmd, args, ok := extractCommand(up.Message, botUsername)
 			if !ok {
 				continue
 			}

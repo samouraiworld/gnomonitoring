@@ -11,64 +11,75 @@ import (
 	"gorm.io/gorm"
 )
 
-func BuildTelegramGovdaoHandlers(token string, db *gorm.DB, defaultChainID string, enabledChains []string) map[string]func(int64, string) {
+// govdaoLimitDefault and govdaoLimitMax bound the "limit" argument of the
+// GovDAO list commands, so a huge value cannot build an oversized reply.
+const (
+	govdaoLimitDefault = 10
+	govdaoLimitMax     = 50
+)
 
-	limit_default := int64(10)
+// parseGovdaoLimit returns the "limit" argument clamped to
+// [1, govdaoLimitMax], or govdaoLimitDefault when absent or not a number.
+func parseGovdaoLimit(raw string) int {
+	limit, err := strconv.Atoi(raw)
+	if err != nil {
+		return govdaoLimitDefault
+	}
+	if limit < 1 {
+		return 1
+	}
+	if limit > govdaoLimitMax {
+		return govdaoLimitMax
+	}
+	return limit
+}
+
+func BuildTelegramGovdaoHandlers(token string, db *gorm.DB, defaultChainID string, enabledChains []string) map[string]func(int64, string) {
+	help := func(chatID int64, _ string) {
+		_ = SendMessageTelegram(token, chatID, formatHelpgovdao())
+	}
+
 	return map[string]func(int64, string){
 		// status on Govdao proposals
 		"/status": func(chatID int64, args string) {
 			chainID := getGovdaoActiveChain(chatID, defaultChainID)
-			params := parseParams(args)
+			limit := parseGovdaoLimit(parseParams(args)["limit"])
 
-			limit, err := strconv.ParseInt(params["limit"], 10, 64)
+			msg, err := formatStatusProposal(db, chainID, limit)
 			if err != nil {
-				log.Printf("error conversion limit value : %v", err)
-				limit = limit_default
+				log.Printf("error get status proposal: %v", err)
+				msg = "⚠️ Unable to fetch GovDAO proposals."
 			}
-			limitint := int(limit)
-
-			msg, err := formatStatusProposal(db, chainID, limitint)
-			if err != nil {
-				log.Printf("error get status proposal%s", err)
-			}
-
-			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+			if err := SendMessageTelegramChunked(token, chatID, msg); err != nil {
 				log.Printf("send %s failed: %v", "/status", err)
 			}
-
 		},
 		// last executed proposals
 		"/executedproposals": func(chatID int64, args string) {
 			chainID := getGovdaoActiveChain(chatID, defaultChainID)
-			params := parseParams(args)
+			limit := parseGovdaoLimit(parseParams(args)["limit"])
 
-			limit, err := strconv.ParseInt(params["limit"], 10, 64)
+			msg, err := FormatGetLastExecute(db, chainID, limit)
 			if err != nil {
-				log.Printf("error conversion limit value : %v", err)
-				limit = limit_default
+				log.Printf("error get last executed proposal: %v", err)
+				msg = "⚠️ Unable to fetch executed proposals."
 			}
-			limitint := int(limit)
-
-			msg, err := FormatGetLastExecute(db, chainID, limitint)
-			if err != nil {
-				log.Printf("error get last executed proposal: %s", err)
-			}
-			if err := SendMessageTelegram(token, chatID, msg); err != nil {
+			if err := SendMessageTelegramChunked(token, chatID, msg); err != nil {
 				log.Printf("send %s failed: %v", "/executedproposals", err)
 			}
-			// last proposal posted
 		},
-		"/lastproposal": func(chatID int64, args string) {
+		// last proposal posted
+		"/lastproposal": func(chatID int64, _ string) {
 			chainID := getGovdaoActiveChain(chatID, defaultChainID)
 
 			msg, err := FormatGetLastProposal(db, chainID)
 			if err != nil {
-				log.Printf("error get last proposal: %s", err)
+				log.Printf("error get last proposal: %v", err)
+				msg = "⚠️ Unable to fetch the last proposal."
 			}
 			if err := SendMessageTelegram(token, chatID, msg); err != nil {
 				log.Printf("send %s failed: %v", "/lastproposal", err)
 			}
-
 		},
 
 		"/chain": func(chatID int64, _ string) {
@@ -105,11 +116,8 @@ func BuildTelegramGovdaoHandlers(token string, db *gorm.DB, defaultChainID strin
 			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("Chain set to <code>%s</code>.", html.EscapeString(requested)))
 		},
 
-		"/help": func(chatID int64, _ string) {
-
-			msg := formatHelpgovdao()
-			_ = SendMessageTelegram(token, chatID, msg)
-		},
+		"/help":  help,
+		"/start": help,
 
 		"*": func(chatID int64, _ string) {
 			if err := SendMessageTelegram(token, chatID,
@@ -131,7 +139,7 @@ func formatStatusProposal(db *gorm.DB, chainID string, limit int) (msg string, e
 		return " <b>No GovDAO proposals available</b>", nil
 	}
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "🗳️ [%s] <b>Gov Dao Proposal</b>", html.EscapeString(chainID))
+	fmt.Fprintf(&builder, "🗳️ [%s] <b>GovDAO Proposals</b>\n\n", html.EscapeString(chainID))
 
 	// limit
 	if len(status) < limit {
@@ -163,7 +171,7 @@ func formatStatusProposal(db *gorm.DB, chainID string, limit int) (msg string, e
 			html.EscapeString(r.Title),
 			html.EscapeString(r.Url),
 			emoji,
-			r.Status,
+			html.EscapeString(r.Status),
 		))
 
 	}
@@ -185,15 +193,14 @@ func FormatGetLastExecute(db *gorm.DB, chainID string, limit int) (msg string, e
 		limit = len(status)
 	}
 	var builder strings.Builder
-	builder.WriteString("🗳️ <b>Last Executed Proposals</b>")
+	builder.WriteString("🗳️ <b>Last Executed Proposals</b>\n\n")
 
 	for i, r := range status {
 		if i >= limit {
 			break
 		}
 
-		format := FormatTelegramMsg(chainID, r.Id, r.Title, r.Url, r.Tx)
-		builder.WriteString(format)
+		builder.WriteString(formatProposalBody(chainID, "Executed Proposal", r.Id, r.Title, r.Url, r.Tx))
 		builder.WriteString("\n\n")
 
 	}
@@ -211,14 +218,10 @@ func FormatGetLastProposal(db *gorm.DB, chainID string) (msg string, err error) 
 		return " <b>No recent proposals found</b>", nil
 	}
 	var builder strings.Builder
-	builder.WriteString("🗳️ <b>Most Recent Proposal</b>")
+	builder.WriteString("🗳️ <b>Most Recent Proposal</b>\n\n")
 
 	for _, r := range status {
-
-		format := FormatTelegramMsg(chainID, r.Id, r.Title, r.Url, r.Tx)
-
-		builder.WriteString(format)
-
+		builder.WriteString(formatProposalBody(chainID, "Proposal", r.Id, r.Title, r.Url, r.Tx))
 	}
 
 	return builder.String(), err
@@ -243,18 +246,27 @@ func MembaProposalURL(id int) string {
 	return fmt.Sprintf("https://memba.club/os/dao/govdao/proposals/%d", id)
 }
 
+// FormatTelegramMsg renders the new-proposal notice.
 func FormatTelegramMsg(chainID string, id int, title, proposalURL, txURL string) string {
+	return formatProposalBody(chainID, "New Proposal", id, title, proposalURL, txURL)
+}
+
+// formatProposalBody renders one proposal with its links. label names the
+// proposal in the heading ("New Proposal", "Executed Proposal", ...); it is a
+// fixed string, not user input, so it is not escaped.
+func formatProposalBody(chainID, label string, id int, title, proposalURL, txURL string) string {
 	esc := html.EscapeString
 	voteURL := MembaProposalURL(id)
 
 	return fmt.Sprintf(
 
-		"🗳️ [%s] <b>New Proposal Nº %d</b>: %s\n"+
+		"🗳️ [%s] <b>%s Nº %d</b>: %s\n"+
 			"🔗 Source: <a href=\"%s\">Gno.land</a>\n"+
 			"🗒️ Tx: <a href=\"%s\">Gnoscan</a>\n"+
 			"🖐️ Interact & Vote: <a href=\"%s\">Open proposal on Memba</a> \n"+
 			" <b> Make sure you're using the appropriate network on Memba </b>",
 		esc(chainID),
+		label,
 		id,
 		esc(title),
 		esc(proposalURL),
@@ -268,11 +280,11 @@ func formatHelpgovdao() string {
 	b.WriteString("Use the commands below. Arguments are passed as <code>key=value</code> pairs.\n\n")
 
 	b.WriteString("• <code>/status</code> — list recent GovDAO proposals\n")
-	b.WriteString("   ⮑ Params: <code>limit</code> (optional, default: 10)\n")
+	b.WriteString("   ⮑ Params: <code>limit</code> (optional, default: 10, max: 50)\n")
 	b.WriteString("   ⮑ Example: <code>/status limit=5</code>\n\n")
 
 	b.WriteString("• <code>/executedproposals</code> — show the last executed proposals\n")
-	b.WriteString("   ⮑ Params: <code>limit</code> (optional, default: 10)\n")
+	b.WriteString("   ⮑ Params: <code>limit</code> (optional, default: 10, max: 50)\n")
 	b.WriteString("   ⮑ Example: <code>/executedproposals limit=5</code>\n\n")
 
 	b.WriteString("• <code>/lastproposal</code> — show the most recent proposal\n\n")

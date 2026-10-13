@@ -166,6 +166,31 @@ Entries are ordered newest-first within each section.
   now states that the endpoint returns the whole alert log, including
   `RESOLVED` and `LATENCY` rows and the `all`/`rpc` system rows (#138); those rows are
   still returned, and the response shape is unchanged.
+- **Telegram and GovDAO bot hardening** — a batch of notification and command
+  fixes:
+  - GovDAO status-change notices (accepted/rejected) now HTML-escape the
+    proposal title and URL. A title with `&` or `<` used to make Telegram
+    reject the message, so the notice was lost for every chat.
+  - GovDAO Telegram notices now reach only the chats whose active chain
+    (`/setchain`, else `default_chain`) is the proposal's chain. A chat whose
+    stored chain is no longer enabled (for example the `betanet` migration
+    default) counts as being on `default_chain`. A newly registered chat gets
+    the latest proposal of its own chain instead of the latest of any chain.
+  - `/subscribe` escapes monikers, splits long lists across messages, and
+    replies with one summary instead of one message per validator for
+    `on`/`off`.
+  - Pagination buttons carry the chain they were built for, so paging an old
+    message after `/setchain` keeps showing the right chain.
+  - GovDAO bot: `/status` and `/executedproposals` clamp `limit` to 1-50 and
+    reply with an error message instead of an empty one on a DB error; list
+    headings end with a newline; `/executedproposals` and `/lastproposal` no
+    longer label proposals "New Proposal".
+  - Both bots answer `/start` (same text as `/help`) and ignore commands
+    addressed to another bot (`/status@OtherBot`) in shared groups.
+  - Remaining French user-facing strings are translated to English, and the
+    `/report` usage hint uses HTML `<code>` instead of Markdown backticks.
+- **Build artifacts were tracked** — `backend/backend`, `backend/coverage.out`
+  and `backend/gno.log` are removed from the repository and ignored.
 
 - **`LoadConfig` accumulated duplicate chain IDs when called twice in one
   process** — it appended to the package-level `EnabledChains` without
