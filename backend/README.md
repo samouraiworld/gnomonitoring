@@ -92,7 +92,7 @@ curl http://localhost:8989/block_height
 ```bash
 GET /latest_incidents?period=[current_week|current_month|current_year|all_time][&addr=<validator address>][&limit=<1-100>]
 ```
-Without `addr` and `limit`, returns the chain's 10 most recent incidents. `addr` returns only that validator's incidents; `limit` returns up to 100 rows. An `addr` containing anything other than lowercase letters and digits, or longer than 64 characters, is rejected with `400`; so are the chain-wide pseudo-addresses `all` and `rpc`, and an out-of-range `limit`. Either parameter present but empty is rejected too. An unknown address returns an empty list.
+Returns rows of the chain's alert log: validator `WARNING`/`CRITICAL` alerts, `RESOLVED` rows, and chain-wide rows with `addr` `all` (chain stagnation) or `rpc` (RPC outage). Rows are sorted by `endHeight` descending, then `sentAt` descending; RPC rows have `endHeight` 0 and come last. Period bounds are UTC (the week starts on Monday 00:00 UTC), start included, end excluded. Without `addr` and `limit`, returns the chain's 10 most recent rows. `addr` returns only that validator's rows; `limit` returns up to 100 rows. An `addr` containing anything other than lowercase letters and digits, or longer than 64 characters, is rejected with `400`; so are the chain-wide pseudo-addresses `all` and `rpc`, and an out-of-range `limit`. Either parameter present but empty is rejected too. An unknown address returns an empty list.
 ```bash
 curl "http://localhost:8989/latest_incidents?period=current_month"
 curl "http://localhost:8989/latest_incidents?period=all_time&addr=g1j306jcl4qyhgjw78shl3ajp88vmvdcf7m7ntm2&limit=50"
