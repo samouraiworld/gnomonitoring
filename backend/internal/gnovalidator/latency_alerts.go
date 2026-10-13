@@ -9,6 +9,7 @@ import (
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/jobclock"
 	"gorm.io/gorm"
 )
 
@@ -201,6 +202,11 @@ func WatchLatencyAlerts(ctx context.Context, db *gorm.DB, chainID string) {
 				log.Printf("[latency][%s] WatchLatencyAlerts panic: %v", chainID, r)
 			}
 		}()
+		// Wall-clock phase shared with the other periodic jobs (see jobclock),
+		// so this check does not run in the metrics or valset refresh minute.
+		// Recomputed every cycle to follow chains added or removed at runtime.
+		log.Printf("[latency][%s] checks every %v at +%v", chainID, GetThresholds().LatencyAlertCheckInterval(),
+			jobclock.LatencyOffset(chainID, internal.EnabledChainsSnapshot()))
 		for {
 			t := GetThresholds()
 			if isChainSynced(chainID) {
@@ -210,7 +216,8 @@ func WatchLatencyAlerts(ctx context.Context, db *gorm.DB, chainID string) {
 			case <-ctx.Done():
 				log.Printf("[latency][%s] WatchLatencyAlerts stopped", chainID)
 				return
-			case <-time.After(t.LatencyAlertCheckInterval()):
+			case <-time.After(jobclock.UntilNext(time.Now(), t.LatencyAlertCheckInterval(),
+				jobclock.LatencyOffset(chainID, internal.EnabledChainsSnapshot()))):
 			}
 		}
 	}()

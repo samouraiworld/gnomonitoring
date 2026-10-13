@@ -430,6 +430,14 @@ func SetChainEnabled(id string, enabled bool) error {
 	return nil
 }
 
+// EnabledChainsSnapshot returns a copy of EnabledChains taken under ConfigMu,
+// safe to call while the admin API adds, removes or toggles chains.
+func EnabledChainsSnapshot() []string {
+	ConfigMu.Lock()
+	defer ConfigMu.Unlock()
+	return append([]string(nil), EnabledChains...)
+}
+
 // GetEnabledChainIDs returns a sorted slice of all enabled chain IDs.
 func (c *config) GetEnabledChainIDs() []string {
 	var ids []string

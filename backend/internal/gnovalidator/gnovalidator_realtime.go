@@ -10,6 +10,7 @@ import (
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/jobclock"
 	"gorm.io/gorm"
 )
 
@@ -391,15 +392,19 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 
 func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client, chainCfg *internal.ChainConfig, refreshInterval time.Duration) {
 	go func() {
-		ticker := time.NewTicker(refreshInterval)
-		defer ticker.Stop()
+		if refreshInterval <= 0 {
+			refreshInterval = jobclock.Cycle
+		}
+		log.Printf("[monitor][%s] valset refresh every %v at +%v", chainID, refreshInterval,
+			jobclock.ValsetOffset(chainID, internal.EnabledChainsSnapshot()))
 
 		for {
 			select {
 			case <-ctx.Done():
 				log.Printf("[monitor][%s] WatchNewValidators stopped", chainID)
 				return
-			case <-ticker.C:
+			case <-time.After(jobclock.UntilNext(time.Now(), refreshInterval,
+				jobclock.ValsetOffset(chainID, internal.EnabledChainsSnapshot()))):
 				oldMap := GetMonikerMap(chainID)
 				prevSigningToOperator := getSigningToOperator(chainID)
 
@@ -542,6 +547,15 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 				log.Printf("[validator][%s] WatchValidatorAlerts panic: %v", chainID, r)
 			}
 		}()
+		// Each chain checks on its own slot of the interval, so the per-chain
+		// loops do not hit the database in lockstep. The slot is recomputed
+		// every cycle to follow chains added or removed at runtime.
+		log.Printf("[validator][%s] alert checks every %v at +%v", chainID, checkInterval,
+			jobclock.AlertOffset(chainID, internal.EnabledChainsSnapshot(), checkInterval))
+		nextCheck := func() <-chan time.Time {
+			offset := jobclock.AlertOffset(chainID, internal.EnabledChainsSnapshot(), checkInterval)
+			return time.After(jobclock.UntilNext(time.Now(), checkInterval, offset))
+		}
 		for {
 			// During backfill, skip new-alert detection but still dispatch
 			// pending RESOLVED alerts so the dedup window is not permanently
@@ -551,7 +565,7 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(checkInterval):
+				case <-nextCheck():
 				}
 				continue
 			}
@@ -572,7 +586,7 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(checkInterval):
+				case <-nextCheck():
 				}
 				continue
 			}
@@ -676,7 +690,7 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 			case <-ctx.Done():
 				log.Printf("[monitor][%s] WatchValidatorAlerts stopped", chainID)
 				return
-			case <-time.After(checkInterval):
+			case <-nextCheck():
 			}
 		}
 	}()
