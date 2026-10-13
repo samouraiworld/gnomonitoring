@@ -100,10 +100,10 @@ func legacyAggregate(t *testing.T, db *gorm.DB, maxDays int) []string {
 // requireMatchesLegacy seeds rows on and around day boundaries and requires
 // AggregateChain to produce exactly the rows the legacy queries produce, both
 // from scratch and when continuing from a watermark the legacy code wrote.
-func requireMatchesLegacy(t *testing.T, db *gorm.DB) {
+func requireMatchesLegacy(t *testing.T, db *gorm.DB, rows []database.DailyParticipation) {
 	t.Helper()
 	require.NoError(t, db.Exec(`DELETE FROM daily_participations`).Error)
-	require.NoError(t, db.Create(boundaryRows()).Error)
+	require.NoError(t, db.Create(rows).Error)
 
 	days := legacyAggregate(t, db, 0)
 	require.GreaterOrEqual(t, len(days), 2, "legacy oracle should see several complete days")
@@ -134,7 +134,7 @@ func requireMatchesLegacy(t *testing.T, db *gorm.DB) {
 // session InitDB sets.
 func TestAggregateChain_MatchesLegacyDayCasts(t *testing.T) {
 	db := testoutils.NewTestDB(t)
-	requireMatchesLegacy(t, db)
+	requireMatchesLegacy(t, db, boundaryRows())
 	require.Len(t, agregaSnapshot(t, db, testChain), 5, "4 complete days, two validators on one of them")
 }
 
@@ -150,7 +150,39 @@ func TestAggregateChain_MatchesLegacyUnderSessionTimeZones(t *testing.T) {
 			require.NoError(t, err)
 			sqlDB.SetMaxOpenConns(1) // keep the SET on the one connection every query uses
 			require.NoError(t, db.Exec(`SET TIME ZONE '`+zone+`'`).Error)
-			requireMatchesLegacy(t, db)
+			requireMatchesLegacy(t, db, boundaryRows())
 		})
 	}
+}
+
+// TestAggregateChain_MatchesLegacyOnAmbiguousMidnight covers a DST fall-back
+// at local midnight: in America/Havana on 2018-11-04 the clocks went from
+// 01:00 -04 back to 00:00 -05, so 00:30 happened twice and "2018-11-04"
+// resolves to 00:00 -05, after the first local half hour of that day.
+func TestAggregateChain_MatchesLegacyOnAmbiguousMidnight(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.Exec(`SET TIME ZONE 'America/Havana'`).Error)
+
+	at := func(s string) time.Time {
+		v, err := time.Parse(time.RFC3339, s)
+		require.NoError(t, err)
+		return v
+	}
+	rows := []database.DailyParticipation{
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 1, Date: at("2018-11-03T23:30:00-04:00"), Participated: true},
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 2, Date: at("2018-11-04T00:30:00-04:00"), Participated: true},
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 3, Date: at("2018-11-04T00:30:00-05:00"), Participated: false},
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 4, Date: at("2018-11-04T23:30:00-05:00"), Participated: true},
+		{ChainID: testChain, Addr: "g1aaa", BlockHeight: 5, Date: at("2018-11-05T00:10:00-05:00"), Participated: true},
+	}
+	requireMatchesLegacy(t, db, rows)
+
+	got := agregaSnapshot(t, db, testChain)
+	require.Len(t, got, 3)
+	require.Equal(t, "2018-11-04", got[1].BlockDate)
+	require.Equal(t, int64(2), got[1].FirstBlockHeight, "first local hour belongs to 2018-11-04")
+	require.Equal(t, 3, got[1].TotalBlocks)
 }

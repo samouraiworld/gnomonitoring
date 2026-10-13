@@ -23,9 +23,9 @@ Entries are ordered newest-first within each section.
   ~13. The hourly aggregator selects days with half-open timestamp ranges
   instead of `date::date` casts, so it uses the `(chain_id, date, addr)` index
   instead of scanning the chain, and its day scan is bounded to the days after
-  the aggregation watermark. The ranges are built in the session TimeZone, so
-  the aggregator selects the same days and writes the same rows as before,
-  whatever TimeZone the DSN sets. No schema, index or
+  the aggregation watermark. The original `date::date` predicate is kept
+  alongside the index bounds, so the aggregator selects the same days and
+  writes the same rows as before, whatever TimeZone the DSN sets. No schema, index or
   configuration change.
 
 - **GovDAO "Interact & Vote" links now point to memba.club** — new-proposal

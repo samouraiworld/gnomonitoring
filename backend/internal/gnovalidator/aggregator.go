@@ -58,12 +58,18 @@ func runAggregation(db *gorm.DB) {
 // — ON CONFLICT DO UPDATE overwrites it with the freshly recomputed totals,
 // which is exactly what re-aggregating a day is supposed to do.
 //
-// The day is selected with a half-open range on the raw timestamptz column,
-// [day 00:00, next day 00:00) in the session TimeZone, instead of
-// "date::date = day". Both select the same rows in any session TimeZone, but
-// the range lets the planner use the (chain_id, date, ...) index rather than
-// casting every row of the chain. block_date is the day itself, which is what
-// date::date rendered for every row of that day.
+// The day is still selected with "date::date = day", so rows land in exactly
+// the same day as before in any session TimeZone. The bounds on the raw
+// timestamptz column only let the planner use the (chain_id, date, ...) index
+// instead of casting every row of the chain. They are padded by
+// dayBoundaryMargin because local midnight can be ambiguous on a DST
+// fall-back day, so the first local hour of a day may sit before
+// day::timestamptz. block_date is the day itself, which is what date::date
+// rendered for every row of that day.
+// dayBoundaryMargin pads the index bounds around local day boundaries. DST
+// shifts are at most two hours.
+const dayBoundaryMargin = `interval '3 hours'`
+
 const aggregateDayQuery = `
 	INSERT INTO daily_participation_agregas
 	  (chain_id, addr, block_date, moniker,
@@ -89,8 +95,9 @@ const aggregateDayQuery = `
 	  percentile_cont(0.9) WITHIN GROUP (ORDER BY precommit_lag_ms) AS precommit_lag_p90_ms
 	FROM daily_participations
 	WHERE chain_id = ?
-	  AND date >= CAST(? AS date)::timestamptz
-	  AND date < (CAST(? AS date) + 1)::timestamptz
+	  AND date >= CAST(? AS date)::timestamptz - ` + dayBoundaryMargin + `
+	  AND date < (CAST(? AS date) + 1)::timestamptz + ` + dayBoundaryMargin + `
+	  AND date::date = CAST(? AS date)
 	GROUP BY chain_id, addr
 	ON CONFLICT(chain_id, addr, block_date) DO UPDATE SET
 	  moniker               = excluded.moniker,
@@ -108,7 +115,7 @@ const aggregateDayQuery = `
 
 // aggregateDay upserts one calendar day (format "2006-01-02") for chainID.
 func aggregateDay(db *gorm.DB, chainID, day string) (int64, error) {
-	result := db.Exec(aggregateDayQuery, day, chainID, day, day)
+	result := db.Exec(aggregateDayQuery, day, chainID, day, day, day)
 	if result.Error != nil {
 		return 0, fmt.Errorf("aggregate day %s: %w", day, result.Error)
 	}
@@ -135,19 +142,20 @@ func AggregateChain(db *gorm.DB, chainID string) error {
 		return err
 	}
 
-	// Same days as "date::date > watermark AND date::date < CURRENT_DATE", in
-	// any session TimeZone, but written as bounds on the raw timestamptz column
-	// so the scan is an index range over the days after the watermark instead
-	// of a cast of every row of the chain.
+	// Same days as before ("date::date > watermark AND date::date <
+	// CURRENT_DATE"), plus padded bounds on the raw timestamptz column so the
+	// scan is an index range over the days after the watermark instead of a
+	// cast of every row of the chain (see aggregateDayQuery for the padding).
 	var dayStarts []time.Time
 	if err := db.Raw(
 		`SELECT DISTINCT date::date AS d
 		 FROM daily_participations
 		 WHERE chain_id = ?
-		   AND date >= (CAST(? AS date) + 1)::timestamptz
-		   AND date < CURRENT_DATE::timestamptz
+		   AND date >= (CAST(? AS date) + 1)::timestamptz - `+dayBoundaryMargin+`
+		   AND date < CURRENT_DATE::timestamptz + `+dayBoundaryMargin+`
+		   AND date::date > CAST(? AS date) AND date::date < CURRENT_DATE
 		 ORDER BY d ASC`,
-		chainID, lastDate,
+		chainID, lastDate, lastDate,
 	).Scan(&dayStarts).Error; err != nil {
 		return err
 	}
