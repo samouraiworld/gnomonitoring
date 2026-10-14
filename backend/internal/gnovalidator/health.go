@@ -208,7 +208,7 @@ func FetchChainHealthSnapshot(db *gorm.DB, chainID string) ChainHealthSnapshot {
 
 		// Phase 3: Enrich ValidatorSet with valopers realm data (KeepRunning, ServerType).
 		if len(snap.ValidatorSet) > 0 {
-			enrichValidatorInfoFromValopers(rpcClient, snap.ValidatorSet)
+			enrichValidatorInfoFromValopers(getCachedValopers(chainID), snap.ValidatorSet)
 		}
 
 	}
@@ -385,54 +385,19 @@ func fetchPrecommitBitmap(rpcClient *FallbackRPCClient, valSet []ValidatorInfo) 
 	return bitmap
 }
 
-// enrichValidatorInfoFromValopers queries the valopers realm for each validator in-place.
-// For each validator, it calls ABCIQuery with path vm/qrender and data
-// "gno.land/r/gnops/valopers:<address>", then parses the render output to extract
-// ServerType. KeepRunning is always set to true because the realm does not expose it
-// in the rendered output. All queries run in parallel under a 5-second global timeout.
-// On any error the validator retains the safe defaults (KeepRunning=true, ServerType="").
-func enrichValidatorInfoFromValopers(rpcClient *FallbackRPCClient, vals []ValidatorInfo) {
-	var wg sync.WaitGroup
+// enrichValidatorInfoFromValopers fills each validator's ServerType from the
+// valoper profiles already fetched by the moniker refresh (GetValopers), so
+// no profile is fetched twice. Validators are matched by consensus address
+// through valoperIndex: the realm is keyed by operator address, which differs
+// from the address in the validator set whenever a valoper uses a dedicated
+// signing key. KeepRunning is always set to true because the realm does not
+// expose it. A validator with no matching profile keeps ServerType "".
+func enrichValidatorInfoFromValopers(valopers []Valoper, vals []ValidatorInfo) {
+	idx := valoperIndex(valopers)
 	for i := range vals {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			vals[idx].KeepRunning = true
-
-			query := []byte("gno.land/r/gnops/valopers:" + vals[idx].Address)
-			resp, err := rpcClient.ABCIQuery("vm/qrender", query)
-			if err != nil || resp == nil || resp.Response.Error != nil {
-				return
-			}
-			vals[idx].ServerType = parseValoperServerType(string(resp.Response.Data))
-		}(i)
+		vals[i].KeepRunning = true
+		vals[i].ServerType = idx[vals[i].Address].ServerType
 	}
-	wg.Wait()
-}
-
-// parseValoperServerType extracts the "Server Type" field from the valopers realm
-// render output for a single validator address. The expected format is:
-//
-//	Valoper's details:
-//	## <Moniker>
-//	<Description>
-//
-//	- Address: <addr>
-//	- PubKey: <pubkey>
-//	- Server Type: <serverType>
-//
-//	[Profile link](...)
-//
-// Returns "" if the field is not found.
-func parseValoperServerType(render string) string {
-	const prefix = "- Server Type: "
-	for _, line := range strings.Split(render, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
-		}
-	}
-	return ""
 }
 
 // parseValsetChanges parses the bullet-list emitted by r/sys/validators/v2 Render.

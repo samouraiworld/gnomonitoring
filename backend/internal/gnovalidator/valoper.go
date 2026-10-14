@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
@@ -33,19 +33,62 @@ type Valoper struct {
 	// separate from their operator account). Empty if the profile does not
 	// declare one.
 	SigningAddress string
+	// ServerType is the profile's declared infrastructure ("cloud",
+	// "on-prem", "data-center"), or "" if not declared. Parsed from the same
+	// profile render as SigningAddress.
+	ServerType string
 }
 
 // valoperListRe matches a `[Name](/r/gnops/valopers:operatorAddr)` link in the
 // valopers list render.
 var valoperListRe = regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnops/valopers:([a-z0-9]+)\)`)
 
-// signingAddrRe matches the `Signing Address: g1...` line in an individual
-// valoper profile render.
-var signingAddrRe = regexp.MustCompile(`Signing Address:\s*(g1[a-z0-9]+)`)
+// Profile field lines of an individual valoper profile render. The realm
+// renders the free-form description before the fields, in a fixed order
+// (Operator Address, Signing Address, Signing PubKey, Server Type), so a
+// description may contain a line that imitates a field. Each pattern is
+// therefore anchored to a line start, either a real newline or the escaped
+// `\n` that the vm/qeval string literal carries, and lastFieldValue keeps the
+// last match, which is always the rendered field. The value classes stop at
+// whitespace and at the backslash of an escaped `\n`, and accept an empty
+// value so an empty real field never falls back to a description line.
+var (
+	signingAddrRe = regexp.MustCompile(`(?:^|\n|\\n)- Signing Address:[ \t]*([a-z0-9]*)`)
+	serverTypeRe  = regexp.MustCompile(`(?:^|\n|\\n)- Server Type:[ \t]*([A-Za-z0-9_-]*)`)
+)
 
-// maxValoperProfileConcurrency bounds how many individual profile renders are
-// fetched in parallel when enriching valopers with their signing address.
-const maxValoperProfileConcurrency = 10
+// lastFieldValue returns the value captured by the last match of re in
+// render, or "" if there is none.
+func lastFieldValue(re *regexp.Regexp, render string) string {
+	m := re.FindAllStringSubmatch(render, -1)
+	if len(m) == 0 {
+		return ""
+	}
+	return m[len(m)-1][1]
+}
+
+const (
+	// maxValoperProfileConcurrency is the number of workers fetching
+	// individual profile renders in parallel.
+	maxValoperProfileConcurrency = 10
+	// valoperProfileAttempts bounds the tries per profile on a transport
+	// error. The pool already walks every endpoint within one try; the retry
+	// only absorbs a transient blip that hit all of them at once.
+	valoperProfileAttempts = 3
+	// valoperProfileRetryBackoff is the wait before the second try, doubled
+	// before each later one.
+	valoperProfileRetryBackoff = 250 * time.Millisecond
+	// valoperProfileFetchBudget bounds the whole profile enrichment of one
+	// refresh cycle, so a slow endpoint cannot stall InitMonikerMap.
+	// Profiles not fetched in time keep their last known values.
+	valoperProfileFetchBudget = 30 * time.Second
+)
+
+// realmError is an error the realm returned in the ABCI response, as opposed
+// to a transport failure. Every node answers the same, so it is not retried.
+type realmError struct{ msg string }
+
+func (e *realmError) Error() string { return e.msg }
 
 // qevalRender evaluates `gno.land/r/gnops/valopers.Render(arg)` over the RPC
 // client and returns the raw rendered output. arg is quoted as a Go string
@@ -57,7 +100,7 @@ func qevalRender(client gnoclient.Client, arg string) (string, error) {
 		return "", err
 	}
 	if resp.Response.Error != nil && resp.Response.Error.Error() != "" {
-		return "", errors.New(resp.Response.Error.Error())
+		return "", &realmError{msg: resp.Response.Error.Error()}
 	}
 	return string(resp.Response.Data), nil
 }
@@ -65,49 +108,152 @@ func qevalRender(client gnoclient.Client, arg string) (string, error) {
 // parseSigningAddress extracts the Signing Address from an individual valoper
 // profile render, or "" if the profile does not declare one.
 func parseSigningAddress(markdown string) string {
-	m := signingAddrRe.FindStringSubmatch(markdown)
-	if len(m) < 2 {
+	addr := lastFieldValue(signingAddrRe, markdown)
+	if !strings.HasPrefix(addr, "g1") {
 		return ""
 	}
-	return m[1]
+	return addr
 }
 
-// fetchValoperSigningAddress fetches the individual profile render for
-// operatorAddr and returns its declared Signing Address (possibly "").
-func fetchValoperSigningAddress(client gnoclient.Client, operatorAddr string) (string, error) {
-	data, err := qevalRender(client, operatorAddr)
-	if err != nil {
-		return "", err
+// parseServerType extracts the Server Type from an individual valoper profile
+// render, or "" if the profile does not declare one.
+func parseServerType(markdown string) string {
+	return lastFieldValue(serverTypeRe, markdown)
+}
+
+// profileFetcher returns the individual profile render of an operator address.
+type profileFetcher func(operatorAddr string) (string, error)
+
+// fetchValoperProfileWithRetry fetches one profile render, retrying a
+// transport error with exponential backoff (starting at backoff) up to
+// valoperProfileAttempts
+// tries. A realm error, or ctx expiring, ends the retries early; no new try
+// starts once ctx has expired.
+func fetchValoperProfileWithRetry(ctx context.Context, fetch profileFetcher, operatorAddr string, backoff time.Duration) (string, error) {
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		render, err := fetch(operatorAddr)
+		if err == nil {
+			return render, nil
+		}
+		var re *realmError
+		if errors.As(err, &re) || attempt >= valoperProfileAttempts {
+			return "", err
+		}
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return "", err
+		}
+		backoff *= 2
 	}
-	return parseSigningAddress(data), nil
 }
 
-// enrichValoperSigningAddresses populates the SigningAddress field of each
-// valoper by fetching its individual profile render. Fetches run with bounded
-// concurrency; per-valoper failures are logged and leave SigningAddress empty
-// so a single unreachable profile never fails the whole refresh.
-func enrichValoperSigningAddresses(client gnoclient.Client, valopers []Valoper) {
-	sem := make(chan struct{}, maxValoperProfileConcurrency)
-	var wg sync.WaitGroup
-	for i := range valopers {
-		wg.Add(1)
-		go func(v *Valoper) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+// profileResult is one worker's outcome for valopers[idx].
+type profileResult struct {
+	idx    int
+	render string
+	err    error
+}
 
-			signing, err := fetchValoperSigningAddress(client, v.Address)
-			if err != nil {
-				log.Printf("[valoper] failed to fetch signing address for %s (%s): %v", v.Name, v.Address, err)
+// enrichValoperProfiles fills SigningAddress and ServerType of each valoper
+// from its individual profile render, one fetch per profile.
+//
+// Each valoper first inherits the values of the same operator address in
+// prev (the last known-good snapshot), so a profile whose fetch fails, or is
+// still in flight when ctx expires, keeps its last known values instead of
+// being reset to "". A successful fetch always wins, even when it declares
+// no signing address.
+//
+// A fixed pool of workers bounds both the goroutines spawned and the RPCs in
+// flight. Only this function writes to valopers; workers that are still
+// blocked on a slow endpoint when ctx expires finish later into a buffered
+// channel nobody reads, without touching valopers.
+func enrichValoperProfiles(ctx context.Context, fetch profileFetcher, valopers []Valoper, prev []Valoper, backoff time.Duration) {
+	if len(valopers) == 0 {
+		return
+	}
+
+	prevByOperator := make(map[string]Valoper, len(prev))
+	for _, p := range prev {
+		prevByOperator[p.Address] = p
+	}
+	addrs := make([]string, len(valopers))
+	hasPrev := make([]bool, len(valopers))
+	for i := range valopers {
+		addrs[i] = valopers[i].Address
+		if p, ok := prevByOperator[addrs[i]]; ok {
+			valopers[i].SigningAddress = p.SigningAddress
+			valopers[i].ServerType = p.ServerType
+			hasPrev[i] = true
+		}
+	}
+
+	jobs := make(chan int)
+	results := make(chan profileResult, len(valopers))
+	workers := min(maxValoperProfileConcurrency, len(valopers))
+	for w := 0; w < workers; w++ {
+		go func() {
+			for idx := range jobs {
+				render, err := fetchValoperProfileWithRetry(ctx, fetch, addrs[idx], backoff)
+				results <- profileResult{idx: idx, render: render, err: err}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for i := range addrs {
+			select {
+			case jobs <- i:
+			case <-ctx.Done():
 				return
 			}
-			v.SigningAddress = signing
-		}(&valopers[i])
+		}
+	}()
+
+	apply := func(r profileResult) {
+		v := &valopers[r.idx]
+		if r.err != nil {
+			if hasPrev[r.idx] {
+				log.Printf("[valoper] failed to fetch profile for %s (%s), keeping last known values: %v", v.Name, v.Address, r.err)
+			} else {
+				log.Printf("[valoper] failed to fetch profile for %s (%s), no last known values: %v", v.Name, v.Address, r.err)
+			}
+			return
+		}
+		v.SigningAddress = parseSigningAddress(r.render)
+		v.ServerType = parseServerType(r.render)
 	}
-	wg.Wait()
+
+	for received := 0; received < len(valopers); received++ {
+		select {
+		case r := <-results:
+			apply(r)
+		case <-ctx.Done():
+			// select picks at random among ready cases: apply the results
+			// already delivered before giving up on the rest.
+		drain:
+			for {
+				select {
+				case r := <-results:
+					apply(r)
+					received++
+				default:
+					break drain
+				}
+			}
+			log.Printf("[valoper] profile fetch budget exhausted: %d/%d profiles answered, the rest keep their last known values", received, len(valopers))
+			return
+		}
+	}
 }
 
-func GetValopers(client gnoclient.Client) ([]Valoper, error) {
+// GetValopers lists every registered valoper, then fetches each profile for
+// its signing address and server type. prev is the last known-good snapshot;
+// it supplies the values of any profile that cannot be fetched this cycle.
+func GetValopers(client gnoclient.Client, prev []Valoper) ([]Valoper, error) {
 	var allValopers []Valoper
 	page := 1
 
@@ -137,12 +283,36 @@ func GetValopers(client gnoclient.Client) ([]Valoper, error) {
 
 	// The list render only exposes operator addresses; fetch each profile to
 	// learn its consensus Signing Address, which is what matches the validator
-	// set and block precommits.
-	enrichValoperSigningAddresses(client, allValopers)
+	// set and block precommits, and its Server Type.
+	ctx, cancel := context.WithTimeout(context.Background(), valoperProfileFetchBudget)
+	defer cancel()
+	fetch := func(operatorAddr string) (string, error) { return qevalRender(client, operatorAddr) }
+	enrichValoperProfiles(ctx, fetch, allValopers, prev, valoperProfileRetryBackoff)
 
 	log.Printf("[valoper] fetched %d valopers", len(allValopers))
 	return allValopers, nil
 }
+
+// valoperIndex keys each valoper by its signing address, then by its operator
+// address as a fallback for profiles where the operator account is itself the
+// signer or no signing address is declared yet. Signing keys are written
+// first and an operator key never replaces an existing entry, so one
+// valoper's operator address can never shadow another's signing address.
+func valoperIndex(valopers []Valoper) map[string]Valoper {
+	idx := make(map[string]Valoper, 2*len(valopers))
+	for _, v := range valopers {
+		if v.SigningAddress != "" {
+			idx[v.SigningAddress] = v
+		}
+	}
+	for _, v := range valopers {
+		if _, taken := idx[v.Address]; !taken {
+			idx[v.Address] = v
+		}
+	}
+	return idx
+}
+
 // GetGenesisMonikers fetches /genesis from the first endpoint that answers
 // and extracts the validator name for each genesis validator address. The
 // response is streamed rather than buffered: a genesis file can be large.
@@ -376,22 +546,17 @@ func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainC
 	}
 
 	// Step 2 — Use passed client for valopers.Render
-	valopers, err := GetValopers(client)
+	valopers, err := GetValopers(client, getCachedValopers(chainID))
 	if err != nil {
 		log.Printf("⚠️ Failed to get valopers: %v", err)
 	}
 
 	// Key the valoper map by the consensus Signing Address, since that is what
-	// appears in the validator set and block precommits. Also keep an
-	// operator-address entry as a fallback for chains/profiles where the
-	// operator account is itself the signer (or no signing address is
-	// declared yet).
+	// appears in the validator set and block precommits, with the operator
+	// address as a non-shadowing fallback (see valoperIndex).
 	valoperMap := make(map[string]string)
-	for _, v := range valopers {
-		if v.SigningAddress != "" {
-			valoperMap[v.SigningAddress] = v.Name
-		}
-		valoperMap[v.Address] = v.Name
+	for addr, v := range valoperIndex(valopers) {
+		valoperMap[addr] = v.Name
 	}
 
 	// Step 3 — Genesis monikers
