@@ -388,6 +388,63 @@ func TestRenderDailyReportTelegramHTML_WorstCaseFitsMessageLimit(t *testing.T) {
 	if n := len(utf16.Encode([]rune(visible))); n > 4096 {
 		t.Fatalf("worst-case Telegram report is %d UTF-16 units, over the 4096 limit", n)
 	}
+
+	// Unbounded monikers: 200 emoji (2 UTF-16 units each) with HTML-escaped
+	// characters. The renderer must cut names, stop before the limit and
+	// still summarize the rest.
+	for i := range d.Problems {
+		d.Problems[i].Moniker = strings.Repeat("🚀<&>", 200)
+	}
+	text, _, _ = RenderDailyReportTelegramHTML(d)
+	visible = html.UnescapeString(regexp.MustCompile(`<[^>]+>`).ReplaceAllString(text, ""))
+	if n := len(utf16.Encode([]rune(visible))); n > 4096 {
+		t.Fatalf("Telegram report with huge monikers is %d UTF-16 units, over the 4096 limit", n)
+	}
+	if !strings.Contains(text, "more") {
+		t.Fatalf("Telegram report must summarize the validators it left out:\n%s", text)
+	}
+}
+
+func TestReportName_CutsLongMonikers(t *testing.T) {
+	long := strings.Repeat("é", 300)
+	got := reportName(database.ValidatorReportEntry{Moniker: long})
+	if n := len([]rune(got)); n != maxReportNameRunes {
+		t.Fatalf("reportName length = %d runes, want %d", n, maxReportNameRunes)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("reportName = %q, want a trailing ellipsis", got)
+	}
+	if got := reportName(database.ValidatorReportEntry{Moniker: "short"}); got != "short" {
+		t.Fatalf("reportName(short) = %q", got)
+	}
+}
+
+func TestRenderDailyReportSlackBlocks_EscapesMoniker(t *testing.T) {
+	d := bftReportData()
+	d.Problems[0].Moniker = "<!channel> & <https://evil.example|click>"
+	for _, b := range RenderDailyReportSlackBlocks(d) {
+		if b.Text == nil || !strings.Contains(b.Text.Text, "g1bad") {
+			continue
+		}
+		if strings.Contains(b.Text.Text, "<!channel>") || strings.Contains(b.Text.Text, "<https://") {
+			t.Fatalf("Slack moniker not escaped: %q", b.Text.Text)
+		}
+		if !strings.Contains(b.Text.Text, "&lt;!channel&gt; &amp; &lt;https://evil.example|click&gt;") {
+			t.Fatalf("Slack moniker escaped unexpectedly: %q", b.Text.Text)
+		}
+		return
+	}
+	t.Fatalf("no Slack section for g1bad")
+}
+
+func TestRenderDailyReportDiscordEmbed_CutsLongFieldName(t *testing.T) {
+	d := bftReportData()
+	d.Problems[0].Moniker = strings.Repeat("x", 500)
+	for _, f := range RenderDailyReportDiscordEmbed(d).Fields {
+		if n := len([]rune(f.Name)); n > 256 {
+			t.Fatalf("Discord field name is %d runes, over the 256 limit", n)
+		}
+	}
 }
 
 // TestRenderDailyReportDiscordEmbed_ReportLinkIsClickable pins that the

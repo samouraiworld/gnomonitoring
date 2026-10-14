@@ -1,4 +1,4 @@
-package api
+package internal
 
 import "testing"
 
@@ -10,8 +10,8 @@ func TestValidateReportURL(t *testing.T) {
 		"https://memba.club/os/reports/{chain}?tab=score",
 	}
 	for _, v := range valid {
-		if err := validateReportURL(v); err != nil {
-			t.Errorf("validateReportURL(%q) = %v, want nil", v, err)
+		if err := ValidateReportURL(v); err != nil {
+			t.Errorf("ValidateReportURL(%q) = %v, want nil", v, err)
 		}
 	}
 
@@ -26,8 +26,8 @@ func TestValidateReportURL(t *testing.T) {
 		"https://example.test/a b",            // whitespace
 	}
 	for _, v := range invalid {
-		if err := validateReportURL(v); err == nil {
-			t.Errorf("validateReportURL(%q) = nil, want an error", v)
+		if err := ValidateReportURL(v); err == nil {
+			t.Errorf("ValidateReportURL(%q) = nil, want an error", v)
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"html"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
@@ -27,7 +28,7 @@ import (
 const (
 	maxProblemsDiscord   = 20 // Discord embeds cap at 25 fields; leaves room for a "…and N more" field.
 	maxProblemsSlack     = 40 // Slack messages cap at 50 blocks; leaves room for header/summary/divider/link blocks.
-	maxProblemsTelegram  = 25 // Telegram caps messages at 4096 chars; a worst-case entry is ~140 visible chars, so 25 fit alongside the header/summary/BFT margin text.
+	maxProblemsTelegram  = 25 // Telegram caps messages at 4096 chars; RenderDailyReportTelegramHTML also stops early when the next line would not fit (see telegramMessageLimit).
 	maxProblemsPlainText = 60 // Server log line, no hard transport limit; matches Telegram's budget for a readable trace.
 )
 
@@ -63,6 +64,48 @@ type DailyReportData struct {
 	// means "not computed" (the line is omitted); a non-nil margin with
 	// Available false renders as "unavailable" (no voting-power snapshot).
 	BFTMargin *BFTMargin
+}
+
+// Message-size guards. maxReportNameRunes caps a validator name in the
+// Discord, Slack and Telegram renderers: monikers come from on-chain or
+// admin data with no length bound, and one oversized name must not make a
+// channel reject the whole report (Discord limits a field name to 256
+// chars). telegramMessageLimit is Telegram's message limit in UTF-16 units;
+// telegramTailReserve keeps room for the "…and N more" line.
+const (
+	maxReportNameRunes   = 64
+	telegramMessageLimit = 4096
+	telegramTailReserve  = 64
+)
+
+// reportName returns e's display name, cut to maxReportNameRunes runes.
+func reportName(e database.ValidatorReportEntry) string {
+	name := e.DisplayName()
+	if utf8.RuneCountInString(name) <= maxReportNameRunes {
+		return name
+	}
+	return string([]rune(name)[:maxReportNameRunes-1]) + "…"
+}
+
+// utf16Len returns the length of s in UTF-16 code units, the unit Telegram
+// counts its message limit in.
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		if r >= 0x10000 {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
+// slackEscape escapes the three characters Slack mrkdwn gives control
+// meaning to (<!channel>, <url|text>, entities), so untrusted text such as
+// a moniker renders literally.
+func slackEscape(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
 }
 
 // truncateProblems caps all to at most limit entries, returning the shown
@@ -253,7 +296,7 @@ func RenderDailyReportDiscordEmbed(d DailyReportData) internal.DiscordEmbed {
 				vpPct = fmt.Sprintf(" | VP: %.1f%%", pct)
 			}
 			fields = append(fields, internal.DiscordEmbedField{
-				Name:  p.DisplayName(),
+				Name:  reportName(p),
 				Value: fmt.Sprintf("Tier: %s | Score: %d | Missed: %d | %s%s", p.Tier, p.Score, p.MissedBlocks, proposedText(p), vpPct),
 			})
 		}
@@ -350,7 +393,7 @@ func RenderDailyReportSlackBlocks(d DailyReportData) []internal.SlackBlock {
 				Type: "section",
 				Text: &internal.SlackText{
 					Type: "mrkdwn",
-					Text: fmt.Sprintf("*%s* (`%s`)\nTier: %s | Score: %d | Missed: %d | %s", p.DisplayName(), p.Addr, p.Tier, p.Score, p.MissedBlocks, proposedText(p)),
+					Text: fmt.Sprintf("*%s* (`%s`)\nTier: %s | Score: %d | Missed: %d | %s", slackEscape(reportName(p)), p.Addr, p.Tier, p.Score, p.MissedBlocks, proposedText(p)),
 				},
 			})
 		}
@@ -389,13 +432,21 @@ func RenderDailyReportTelegramHTML(d DailyReportData) (text, buttonText, buttonU
 	if d.AllHealthy {
 		sb.WriteString(fmt.Sprintf("✅ All %d validators healthy (last 24h)\n", d.TotalCount))
 	} else {
-		shown, truncatedCount := truncateProblems(d.Problems, maxProblemsTelegram)
+		candidates, _ := truncateProblems(d.Problems, maxProblemsTelegram)
 		sb.WriteString(fmt.Sprintf("⚠️ %d/%d validators need attention (last 24h):\n", len(d.Problems), d.TotalCount))
-		for _, p := range shown {
-			sb.WriteString(fmt.Sprintf("  <b>%s</b> (<code>%s</code>) — Tier: %s | Score: %d | Missed: %d | %s\n",
-				html.EscapeString(p.DisplayName()), html.EscapeString(p.Addr), p.Tier, p.Score, p.MissedBlocks, html.EscapeString(proposedText(p))))
+		// The raw HTML length (tags and entities included) is never below
+		// the visible length Telegram counts, so this check is conservative.
+		shown := 0
+		for _, p := range candidates {
+			line := fmt.Sprintf("  <b>%s</b> (<code>%s</code>) — Tier: %s | Score: %d | Missed: %d | %s\n",
+				html.EscapeString(reportName(p)), html.EscapeString(p.Addr), p.Tier, p.Score, p.MissedBlocks, html.EscapeString(proposedText(p)))
+			if utf16Len(sb.String())+utf16Len(line)+telegramTailReserve > telegramMessageLimit {
+				break
+			}
+			sb.WriteString(line)
+			shown++
 		}
-		if truncatedCount > 0 {
+		if truncatedCount := len(d.Problems) - shown; truncatedCount > 0 {
 			sb.WriteString(html.EscapeString(truncatedSummaryText(truncatedCount)) + "\n")
 		}
 	}
