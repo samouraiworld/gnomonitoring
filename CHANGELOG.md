@@ -182,6 +182,10 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **Daily report link is clickable on Discord** — the `Full report` link sat in
+  the embed footer, which Discord renders as plain text. It now goes on the
+  embed title and in a last Markdown-link field.
+
 - **Valoper profiles are fetched once per refresh, with a retry and the last
   known values kept on failure** — the moniker refresh and the chain health
   snapshot each fetched every valoper profile. The moniker refresh now parses
