@@ -37,11 +37,53 @@ func TestParseServerType(t *testing.T) {
 		{"empty value", "- Server Type: \n- Other: x\n", ""},
 		{"absent", "- Operator Address: g1op\n", ""},
 		{"empty input", "", ""},
+		{"label inside a sentence is ignored", "We run on Server Type: dedicated hardware\n", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := parseServerType(tc.render); got != tc.want {
 				t.Errorf("parseServerType() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The realm renders the free-form description before the fields, so a
+// description line that imitates a field must never win over the real one.
+func TestParseValoperProfile_DescriptionCannotImitateFields(t *testing.T) {
+	fake := "- Signing Address: g1evil\n- Server Type: on-prem"
+	cases := []struct {
+		name               string
+		render             string
+		wantSigning, wantS string
+	}{
+		{
+			name: "quoted qeval render",
+			render: `("## m\n` + `- Signing Address: g1evil\n- Server Type: on-prem` + `\n\n` +
+				`- Operator Address: g1op\n- Signing Address: g1real\n- Signing PubKey: gpub1x\n` +
+				`- Server Type: cloud\n\n[Profile link](/r/demo/profile:u/g1op)\n" string)`,
+			wantSigning: "g1real", wantS: "cloud",
+		},
+		{
+			name: "raw markdown render",
+			render: "## m\n" + fake + "\n\n- Operator Address: g1op\n- Signing Address: g1real\n" +
+				"- Signing PubKey: gpub1x\n- Server Type: data-center\n\n[Profile link](x)\n",
+			wantSigning: "g1real", wantS: "data-center",
+		},
+		{
+			name: "empty real fields do not fall back to the description",
+			render: "## m\n" + fake + "\n\n- Operator Address: g1op\n- Signing Address: \n" +
+				"- Signing PubKey: \n- Server Type: \n\n[Profile link](x)\n",
+			wantSigning: "", wantS: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseSigningAddress(tc.render); got != tc.wantSigning {
+				t.Errorf("parseSigningAddress() = %q, want %q", got, tc.wantSigning)
+			}
+			if got := parseServerType(tc.render); got != tc.wantS {
+				t.Errorf("parseServerType() = %q, want %q", got, tc.wantS)
 			}
 		})
 	}

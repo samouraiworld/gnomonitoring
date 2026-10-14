@@ -184,7 +184,9 @@ Entries are ordered newest-first within each section.
   reset, so a transient RPC error no longer turns its moniker into `unknown`.
   Profiles are fetched by a fixed pool of 10 workers, and the whole profile
   fetch is bounded to 30 s per refresh. An operator-address key in the moniker
-  lookup can no longer shadow another valoper's signing-address key.
+  lookup can no longer shadow another valoper's signing-address key. The
+  Signing Address and Server Type fields are read from the rendered field
+  lines only, so a profile description that imitates a field line is ignored.
 
 - **`/latest_incidents` returns a deterministic row order and UTC period
   bounds** — rows that share an `endHeight` (a `RESOLVED` row and the alert it

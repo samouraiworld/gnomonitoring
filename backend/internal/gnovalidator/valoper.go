@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
@@ -42,15 +43,29 @@ type Valoper struct {
 // valopers list render.
 var valoperListRe = regexp.MustCompile(`\[\s*([^\]]+?)\s*]\(/r/gnops/valopers:([a-z0-9]+)\)`)
 
-// signingAddrRe matches the `Signing Address: g1...` line in an individual
-// valoper profile render.
-var signingAddrRe = regexp.MustCompile(`Signing Address:\s*(g1[a-z0-9]+)`)
+// Profile field lines of an individual valoper profile render. The realm
+// renders the free-form description before the fields, in a fixed order
+// (Operator Address, Signing Address, Signing PubKey, Server Type), so a
+// description may contain a line that imitates a field. Each pattern is
+// therefore anchored to a line start, either a real newline or the escaped
+// `\n` that the vm/qeval string literal carries, and lastFieldValue keeps the
+// last match, which is always the rendered field. The value classes stop at
+// whitespace and at the backslash of an escaped `\n`, and accept an empty
+// value so an empty real field never falls back to a description line.
+var (
+	signingAddrRe = regexp.MustCompile(`(?:^|\n|\\n)- Signing Address:[ \t]*([a-z0-9]*)`)
+	serverTypeRe  = regexp.MustCompile(`(?:^|\n|\\n)- Server Type:[ \t]*([A-Za-z0-9_-]*)`)
+)
 
-// serverTypeRe matches the `Server Type: <type>` line in an individual valoper
-// profile render. The value class stops at whitespace and at the backslash of
-// the escaped `\n` that the vm/qeval string literal carries, so it parses both
-// the quoted qeval output and a raw markdown render.
-var serverTypeRe = regexp.MustCompile(`Server Type:[ \t]*([A-Za-z0-9_-]+)`)
+// lastFieldValue returns the value captured by the last match of re in
+// render, or "" if there is none.
+func lastFieldValue(re *regexp.Regexp, render string) string {
+	m := re.FindAllStringSubmatch(render, -1)
+	if len(m) == 0 {
+		return ""
+	}
+	return m[len(m)-1][1]
+}
 
 const (
 	// maxValoperProfileConcurrency is the number of workers fetching
@@ -94,21 +109,17 @@ func qevalRender(client gnoclient.Client, arg string) (string, error) {
 // parseSigningAddress extracts the Signing Address from an individual valoper
 // profile render, or "" if the profile does not declare one.
 func parseSigningAddress(markdown string) string {
-	m := signingAddrRe.FindStringSubmatch(markdown)
-	if len(m) < 2 {
+	addr := lastFieldValue(signingAddrRe, markdown)
+	if !strings.HasPrefix(addr, "g1") {
 		return ""
 	}
-	return m[1]
+	return addr
 }
 
 // parseServerType extracts the Server Type from an individual valoper profile
 // render, or "" if the profile does not declare one.
 func parseServerType(markdown string) string {
-	m := serverTypeRe.FindStringSubmatch(markdown)
-	if len(m) < 2 {
-		return ""
-	}
-	return m[1]
+	return lastFieldValue(serverTypeRe, markdown)
 }
 
 // profileFetcher returns the individual profile render of an operator address.
