@@ -75,15 +75,14 @@ const (
 	// error. The pool already walks every endpoint within one try; the retry
 	// only absorbs a transient blip that hit all of them at once.
 	valoperProfileAttempts = 3
+	// valoperProfileRetryBackoff is the wait before the second try, doubled
+	// before each later one.
+	valoperProfileRetryBackoff = 250 * time.Millisecond
 	// valoperProfileFetchBudget bounds the whole profile enrichment of one
 	// refresh cycle, so a slow endpoint cannot stall InitMonikerMap.
 	// Profiles not fetched in time keep their last known values.
 	valoperProfileFetchBudget = 30 * time.Second
 )
-
-// valoperProfileRetryBackoff is the wait before the second try, doubled
-// before each later one. A variable so tests can shorten it.
-var valoperProfileRetryBackoff = 250 * time.Millisecond
 
 // realmError is an error the realm returned in the ABCI response, as opposed
 // to a transport failure. Every node answers the same, so it is not retried.
@@ -126,11 +125,15 @@ func parseServerType(markdown string) string {
 type profileFetcher func(operatorAddr string) (string, error)
 
 // fetchValoperProfileWithRetry fetches one profile render, retrying a
-// transport error with exponential backoff up to valoperProfileAttempts
-// tries. A realm error, or ctx expiring, ends the retries early.
-func fetchValoperProfileWithRetry(ctx context.Context, fetch profileFetcher, operatorAddr string) (string, error) {
-	backoff := valoperProfileRetryBackoff
+// transport error with exponential backoff (starting at backoff) up to
+// valoperProfileAttempts
+// tries. A realm error, or ctx expiring, ends the retries early; no new try
+// starts once ctx has expired.
+func fetchValoperProfileWithRetry(ctx context.Context, fetch profileFetcher, operatorAddr string, backoff time.Duration) (string, error) {
 	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		render, err := fetch(operatorAddr)
 		if err == nil {
 			return render, nil
@@ -168,7 +171,7 @@ type profileResult struct {
 // flight. Only this function writes to valopers; workers that are still
 // blocked on a slow endpoint when ctx expires finish later into a buffered
 // channel nobody reads, without touching valopers.
-func enrichValoperProfiles(ctx context.Context, fetch profileFetcher, valopers []Valoper, prev []Valoper) {
+func enrichValoperProfiles(ctx context.Context, fetch profileFetcher, valopers []Valoper, prev []Valoper, backoff time.Duration) {
 	if len(valopers) == 0 {
 		return
 	}
@@ -178,11 +181,13 @@ func enrichValoperProfiles(ctx context.Context, fetch profileFetcher, valopers [
 		prevByOperator[p.Address] = p
 	}
 	addrs := make([]string, len(valopers))
+	hasPrev := make([]bool, len(valopers))
 	for i := range valopers {
 		addrs[i] = valopers[i].Address
 		if p, ok := prevByOperator[addrs[i]]; ok {
 			valopers[i].SigningAddress = p.SigningAddress
 			valopers[i].ServerType = p.ServerType
+			hasPrev[i] = true
 		}
 	}
 
@@ -192,7 +197,7 @@ func enrichValoperProfiles(ctx context.Context, fetch profileFetcher, valopers [
 	for w := 0; w < workers; w++ {
 		go func() {
 			for idx := range jobs {
-				render, err := fetchValoperProfileWithRetry(ctx, fetch, addrs[idx])
+				render, err := fetchValoperProfileWithRetry(ctx, fetch, addrs[idx], backoff)
 				results <- profileResult{idx: idx, render: render, err: err}
 			}
 		}()
@@ -208,18 +213,38 @@ func enrichValoperProfiles(ctx context.Context, fetch profileFetcher, valopers [
 		}
 	}()
 
+	apply := func(r profileResult) {
+		v := &valopers[r.idx]
+		if r.err != nil {
+			if hasPrev[r.idx] {
+				log.Printf("[valoper] failed to fetch profile for %s (%s), keeping last known values: %v", v.Name, v.Address, r.err)
+			} else {
+				log.Printf("[valoper] failed to fetch profile for %s (%s), no last known values: %v", v.Name, v.Address, r.err)
+			}
+			return
+		}
+		v.SigningAddress = parseSigningAddress(r.render)
+		v.ServerType = parseServerType(r.render)
+	}
+
 	for received := 0; received < len(valopers); received++ {
 		select {
 		case r := <-results:
-			v := &valopers[r.idx]
-			if r.err != nil {
-				log.Printf("[valoper] failed to fetch profile for %s (%s), keeping last known values: %v", v.Name, v.Address, r.err)
-				continue
-			}
-			v.SigningAddress = parseSigningAddress(r.render)
-			v.ServerType = parseServerType(r.render)
+			apply(r)
 		case <-ctx.Done():
-			log.Printf("[valoper] profile fetch budget exhausted: %d/%d profiles fetched, the rest keep their last known values", received, len(valopers))
+			// select picks at random among ready cases: apply the results
+			// already delivered before giving up on the rest.
+		drain:
+			for {
+				select {
+				case r := <-results:
+					apply(r)
+					received++
+				default:
+					break drain
+				}
+			}
+			log.Printf("[valoper] profile fetch budget exhausted: %d/%d profiles answered, the rest keep their last known values", received, len(valopers))
 			return
 		}
 	}
@@ -262,7 +287,7 @@ func GetValopers(client gnoclient.Client, prev []Valoper) ([]Valoper, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), valoperProfileFetchBudget)
 	defer cancel()
 	fetch := func(operatorAddr string) (string, error) { return qevalRender(client, operatorAddr) }
-	enrichValoperProfiles(ctx, fetch, allValopers, prev)
+	enrichValoperProfiles(ctx, fetch, allValopers, prev, valoperProfileRetryBackoff)
 
 	log.Printf("[valoper] fetched %d valopers", len(allValopers))
 	return allValopers, nil

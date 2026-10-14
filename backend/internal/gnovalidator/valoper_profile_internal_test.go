@@ -18,13 +18,8 @@ func profileRender(operator, signing, serverType string) string {
 		operator, signing, serverType)
 }
 
-// fastRetries shortens the retry backoff for the duration of a test.
-func fastRetries(t *testing.T) {
-	t.Helper()
-	orig := valoperProfileRetryBackoff
-	valoperProfileRetryBackoff = time.Millisecond
-	t.Cleanup(func() { valoperProfileRetryBackoff = orig })
-}
+// testBackoff keeps retry tests fast.
+const testBackoff = time.Millisecond
 
 func TestParseServerType(t *testing.T) {
 	cases := []struct {
@@ -131,7 +126,6 @@ func TestValoperIndex_OperatorKeyNeverShadowsSigningKey(t *testing.T) {
 }
 
 func TestEnrichValoperProfiles_RetriesTransientFailure(t *testing.T) {
-	fastRetries(t)
 	var calls atomic.Int32
 	fetch := func(op string) (string, error) {
 		if calls.Add(1) < valoperProfileAttempts {
@@ -141,7 +135,7 @@ func TestEnrichValoperProfiles_RetriesTransientFailure(t *testing.T) {
 	}
 	valopers := []Valoper{{Name: "v", Address: "g1op"}}
 
-	enrichValoperProfiles(context.Background(), fetch, valopers, nil)
+	enrichValoperProfiles(context.Background(), fetch, valopers, nil, testBackoff)
 
 	if got := calls.Load(); got != valoperProfileAttempts {
 		t.Errorf("fetch called %d times, want %d", got, valoperProfileAttempts)
@@ -152,7 +146,6 @@ func TestEnrichValoperProfiles_RetriesTransientFailure(t *testing.T) {
 }
 
 func TestEnrichValoperProfiles_FailureKeepsLastKnownValues(t *testing.T) {
-	fastRetries(t)
 	prev := []Valoper{{Name: "v", Address: "g1op", SigningAddress: "g1known", ServerType: "on-prem"}}
 
 	t.Run("transport error is retried, then last values kept", func(t *testing.T) {
@@ -160,7 +153,7 @@ func TestEnrichValoperProfiles_FailureKeepsLastKnownValues(t *testing.T) {
 		fetch := func(string) (string, error) { calls.Add(1); return "", errors.New("timeout") }
 		valopers := []Valoper{{Name: "v", Address: "g1op"}}
 
-		enrichValoperProfiles(context.Background(), fetch, valopers, prev)
+		enrichValoperProfiles(context.Background(), fetch, valopers, prev, testBackoff)
 
 		if got := calls.Load(); got != valoperProfileAttempts {
 			t.Errorf("fetch called %d times, want %d", got, valoperProfileAttempts)
@@ -175,7 +168,7 @@ func TestEnrichValoperProfiles_FailureKeepsLastKnownValues(t *testing.T) {
 		fetch := func(string) (string, error) { calls.Add(1); return "", &realmError{msg: "panic"} }
 		valopers := []Valoper{{Name: "v", Address: "g1op"}}
 
-		enrichValoperProfiles(context.Background(), fetch, valopers, prev)
+		enrichValoperProfiles(context.Background(), fetch, valopers, prev, testBackoff)
 
 		if got := calls.Load(); got != 1 {
 			t.Errorf("fetch called %d times, want 1", got)
@@ -189,7 +182,7 @@ func TestEnrichValoperProfiles_FailureKeepsLastKnownValues(t *testing.T) {
 		fetch := func(string) (string, error) { return "- Operator Address: g1op\n", nil }
 		valopers := []Valoper{{Name: "v", Address: "g1op"}}
 
-		enrichValoperProfiles(context.Background(), fetch, valopers, prev)
+		enrichValoperProfiles(context.Background(), fetch, valopers, prev, testBackoff)
 
 		if valopers[0].SigningAddress != "" || valopers[0].ServerType != "" {
 			t.Errorf("got %+v, want fresh empty values", valopers[0])
@@ -214,7 +207,7 @@ func TestEnrichValoperProfiles_BudgetBoundsSlowFetch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	enrichValoperProfiles(ctx, fetch, valopers, prev)
+	enrichValoperProfiles(ctx, fetch, valopers, prev, testBackoff)
 
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("enrichValoperProfiles took %v, want it bounded by the ctx budget", elapsed)
@@ -246,7 +239,7 @@ func TestEnrichValoperProfiles_BoundsConcurrency(t *testing.T) {
 		valopers[i].Address = fmt.Sprintf("g1op%d", i)
 	}
 
-	enrichValoperProfiles(context.Background(), fetch, valopers, nil)
+	enrichValoperProfiles(context.Background(), fetch, valopers, nil, testBackoff)
 
 	if peak > maxValoperProfileConcurrency {
 		t.Errorf("peak in-flight fetches = %d, want <= %d", peak, maxValoperProfileConcurrency)
@@ -255,5 +248,28 @@ func TestEnrichValoperProfiles_BoundsConcurrency(t *testing.T) {
 		if v.SigningAddress != "g1s"+v.Address {
 			t.Fatalf("valoper %s not enriched: %+v", v.Address, v)
 		}
+	}
+}
+
+// Once the budget has expired no new fetch starts, and every profile keeps
+// its last known values.
+func TestEnrichValoperProfiles_ExpiredBudgetStartsNoFetch(t *testing.T) {
+	var calls atomic.Int32
+	fetch := func(op string) (string, error) {
+		calls.Add(1)
+		return profileRender(op, "g1fresh", "cloud"), nil
+	}
+	valopers := []Valoper{{Address: "g1op"}}
+	prev := []Valoper{{Address: "g1op", SigningAddress: "g1known", ServerType: "on-prem"}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	enrichValoperProfiles(ctx, fetch, valopers, prev, testBackoff)
+
+	if got := calls.Load(); got != 0 {
+		t.Errorf("fetch called %d times after the budget expired, want 0", got)
+	}
+	if valopers[0].SigningAddress != "g1known" || valopers[0].ServerType != "on-prem" {
+		t.Errorf("got %+v, want last known g1known / on-prem", valopers[0])
 	}
 }
