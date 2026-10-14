@@ -58,6 +58,13 @@ func reportLinkURL(db *gorm.DB, chainID string) string {
 	if tmpl == "" {
 		return ""
 	}
+	// The admin API validates report_url on write; re-check here so a value
+	// written another way (older row, direct SQL) can never break a report:
+	// Discord rejects the whole embed when embed.URL is not a valid URL.
+	if err := internal.ValidateReportURL(tmpl); err != nil {
+		log.Printf("[report][%s] ignoring invalid report_url %q: %v", chainID, tmpl, err)
+		return ""
+	}
 	return strings.ReplaceAll(tmpl, "{chain}", chainID)
 }
 

@@ -70,6 +70,17 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **Daily report shows the BFT margin and each flagged validator's proposed
+  blocks** (#99) — every daily report (Discord, Slack, Telegram) gains a line
+  such as `🛡️ BFT margin (last 24h): 6/7 validators online (85.7% VP) — 19.0%
+  VP above 2/3 quorum, can lose 1 more validator (largest first) ⚠️`. Only
+  voting power counts: a validator is online when it signed at least 50% of
+  the last 24h blocks, and the tolerable losses remove the largest online
+  validators first (worst case). Before the first voting-power snapshot the
+  line reads `unavailable` instead of showing a wrong number. Each Watch or
+  Critical validator line now ends with `Proposed: N` over the same last-24h
+  window.
+
 - **Signing-latency alerts (`LATENCY` / `LATENCY_RESOLVED`)** — a validator
   whose median precommit lag over the last hour is at once >=
   `latency_alert_min_lag_ms` (default 50) and >= `latency_alert_peer_factor`
@@ -170,6 +181,17 @@ Entries are ordered newest-first within each section.
   realm prerequisite that must be satisfied before the production cutover.
 
 ### Fixed
+
+- **Daily report link is clickable on Discord** — the `Full report` link sat in
+  the embed footer, which Discord renders as plain text. It now goes on the
+  embed title and in a last Markdown-link field.
+
+- **Daily report survives untrusted monikers and report URLs** — validator
+  names are cut to 64 characters and escaped in Slack (a moniker can no
+  longer trigger `<!channel>`); the Telegram report stops adding lines before
+  the 4096-character limit and summarizes the rest; `report_url` is
+  re-validated when the report is built and capped at 512 characters, so an
+  invalid stored value drops the link instead of the whole report.
 
 - **Valoper profiles are fetched once per refresh, with a retry and the last
   known values kept on failure** — the moniker refresh and the chain health

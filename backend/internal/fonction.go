@@ -455,6 +455,7 @@ func (c *config) GetEnabledChainIDs() []string {
 // for the full schema.
 type DiscordEmbed struct {
 	Title       string              `json:"title,omitempty"`
+	URL         string              `json:"url,omitempty"`
 	Description string              `json:"description,omitempty"`
 	Color       int                 `json:"color,omitempty"`
 	Fields      []DiscordEmbedField `json:"fields,omitempty"`

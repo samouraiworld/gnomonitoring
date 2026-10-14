@@ -383,8 +383,8 @@ func TestRenderDailyReportPlainText_TruncatedCountAddsSummaryLine(t *testing.T) 
 // TestReportLinkAppearsExactlyOnceWhenTruncated is a regression test: the
 // report link used to appear both inline in the "…and N more" text and again
 // in each renderer's own footer/context block/trailing line/button. Seeds
-// more problems than the highest per-channel limit (maxProblemsPlainText/
-// maxProblemsTelegram, both 60) so every renderer truncates.
+// more problems than the highest per-channel limit (maxProblemsPlainText,
+// 60) so every renderer truncates.
 func TestReportLinkAppearsExactlyOnceWhenTruncated(t *testing.T) {
 	d := DailyReportData{
 		ChainID: "test12", Date: "2025-11-02", TotalCount: 90,

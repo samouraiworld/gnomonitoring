@@ -45,3 +45,22 @@ func TestReportLinkLine(t *testing.T) {
 		t.Fatalf("no report url should be empty, got %q", got)
 	}
 }
+
+// TestReportLinkURL_IgnoresInvalidStoredValue pins the render-time check: a
+// report_url that bypassed the admin API validation is dropped, so the
+// report still goes out without a link instead of failing on Discord.
+func TestReportLinkURL_IgnoresInvalidStoredValue(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	database.SetAdminConfig(db, "validator_report_enabled.test12", "true")
+	for _, v := range []string{
+		"javascript:alert(1)",
+		"memba.example/os/validators",
+		"https://memba.example/a b",
+		"https://memba.example/<x>",
+	} {
+		database.SetAdminConfig(db, "report_url", v)
+		if got := reportLinkURL(db, "test12"); got != "" {
+			t.Errorf("reportLinkURL with report_url %q = %q, want empty", v, got)
+		}
+	}
+}
