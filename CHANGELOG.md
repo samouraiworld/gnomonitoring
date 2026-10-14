@@ -171,6 +171,21 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **Valoper profiles are fetched once per refresh, with a retry and the last
+  known values kept on failure** — the moniker refresh and the chain health
+  snapshot each fetched every valoper profile. The moniker refresh now parses
+  both the Signing Address and the Server Type from one fetch, and the health
+  snapshot reads the Server Type from that result instead of querying the
+  realm again. This also fixes an empty Server Type for every validator whose
+  signing address differs from its operator address: the health snapshot
+  queried the realm by signing address, but the realm is keyed by operator
+  address. A failed profile fetch is retried twice with backoff, and a profile
+  that still cannot be fetched keeps its last known values instead of being
+  reset, so a transient RPC error no longer turns its moniker into `unknown`.
+  Profiles are fetched by a fixed pool of 10 workers, and the whole profile
+  fetch is bounded to 30 s per refresh. An operator-address key in the moniker
+  lookup can no longer shadow another valoper's signing-address key.
+
 - **`/latest_incidents` returns a deterministic row order and UTC period
   bounds** — rows that share an `endHeight` (a `RESOLVED` row and the alert it
   closes, every `rpc` row at height 0) are now ordered by `sentAt`, newest
