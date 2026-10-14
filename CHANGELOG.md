@@ -70,6 +70,17 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **Daily report shows the BFT margin and each flagged validator's proposed
+  blocks** (#99) — every daily report (Discord, Slack, Telegram) gains a line
+  such as `🛡️ BFT margin (last 24h): 6/7 validators online (85.7% VP) — 19.0%
+  VP above 2/3 quorum, can lose 1 more validator (largest first) ⚠️`. Only
+  voting power counts: a validator is online when it signed at least 50% of
+  the last 24h blocks, and the tolerable losses remove the largest online
+  validators first (worst case). Before the first voting-power snapshot the
+  line reads `unavailable` instead of showing a wrong number. Each Watch or
+  Critical validator line now ends with `Proposed: N` over the same last-24h
+  window.
+
 - **Signing-latency alerts (`LATENCY` / `LATENCY_RESOLVED`)** — a validator
   whose median precommit lag over the last hour is at once >=
   `latency_alert_min_lag_ms` (default 50) and >= `latency_alert_peer_factor`

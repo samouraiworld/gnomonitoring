@@ -28,6 +28,7 @@ type ValidatorReportEntry struct {
 	IncidentRatePerWeek float64
 	DowntimeBlocks      int64
 	MissedBlocks        int64
+	ProposedBlocks      int64
 }
 
 // DisplayName returns e's moniker, falling back to the "unknown" sentinel
@@ -257,6 +258,7 @@ func BuildChainValidatorReport(db *gorm.DB, ctx *ValidatorReportContext, chainID
 		e.IncidentRatePerWeek = res.IncidentRatePerWeek
 		e.DowntimeBlocks = in.DowntimeBlocks
 		e.MissedBlocks = in.TotalBlocks - in.SignedBlocks
+		e.ProposedBlocks = in.ProposedBlocks
 		if res.ProposerScored {
 			pr := res.ProposerReliability
 			e.ProposerReliability = &pr
