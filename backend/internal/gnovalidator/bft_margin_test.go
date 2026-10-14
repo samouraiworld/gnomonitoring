@@ -389,3 +389,30 @@ func TestRenderDailyReportTelegramHTML_WorstCaseFitsMessageLimit(t *testing.T) {
 		t.Fatalf("worst-case Telegram report is %d UTF-16 units, over the 4096 limit", n)
 	}
 }
+
+// TestRenderDailyReportDiscordEmbed_ReportLinkIsClickable pins that the
+// report link is never put in the footer, which Discord renders as plain
+// text: it goes on the title URL and in a last Markdown-link field.
+func TestRenderDailyReportDiscordEmbed_ReportLinkIsClickable(t *testing.T) {
+	d := bftReportData()
+	d.ReportLink = "https://example.com/reports/(test12)"
+	embed := RenderDailyReportDiscordEmbed(d)
+
+	if embed.Footer != nil {
+		t.Fatalf("report link must not go in the footer: %+v", embed.Footer)
+	}
+	if embed.URL != d.ReportLink {
+		t.Fatalf("embed.URL = %q, want %q", embed.URL, d.ReportLink)
+	}
+	last := embed.Fields[len(embed.Fields)-1]
+	want := "📊 [Open the validator report](https://example.com/reports/%28test12%29)"
+	if last.Name != "Full report" || last.Value != want {
+		t.Fatalf("last field = %+v, want Full report / %q", last, want)
+	}
+
+	d.ReportLink = ""
+	embed = RenderDailyReportDiscordEmbed(d)
+	if embed.URL != "" || embed.Fields[len(embed.Fields)-1].Name == "Full report" {
+		t.Fatalf("no report link must give no title URL and no link field: %+v", embed)
+	}
+}

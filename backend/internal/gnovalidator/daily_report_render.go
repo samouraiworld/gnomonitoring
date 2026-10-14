@@ -215,7 +215,8 @@ const (
 // RenderDailyReportDiscordEmbed builds a single Discord embed summarizing
 // the daily report: color reflects the worst tier among Problems (red for
 // any Critical, orange for Watch-only, green when AllHealthy), with one
-// field per problem validator.
+// field per problem validator, and a last clickable "Full report" field when
+// ReportLink is set.
 func RenderDailyReportDiscordEmbed(d DailyReportData) internal.DiscordEmbed {
 	color := discordColorHealthy
 	hasCritical, hasWatch := false, false
@@ -283,10 +284,23 @@ func RenderDailyReportDiscordEmbed(d DailyReportData) internal.DiscordEmbed {
 		Color:       color,
 		Fields:      fields,
 	}
+	// Discord never renders links in an embed footer, so the report link goes
+	// on the title (embed.URL) and in a last field as a Markdown link, both
+	// clickable.
 	if d.ReportLink != "" {
-		embed.Footer = &internal.DiscordEmbedFooter{Text: "Full report: " + d.ReportLink}
+		embed.URL = d.ReportLink
+		embed.Fields = append(embed.Fields, internal.DiscordEmbedField{
+			Name:  "Full report",
+			Value: "📊 [Open the validator report](" + discordLinkTarget(d.ReportLink) + ")",
+		})
 	}
 	return embed
+}
+
+// discordLinkTarget percent-encodes the parentheses in url so it cannot end
+// the target of a Discord Markdown link early.
+func discordLinkTarget(url string) string {
+	return strings.NewReplacer("(", "%28", ")", "%29").Replace(url)
 }
 
 // RenderDailyReportSlackBlocks builds a Slack Block Kit message summarizing
