@@ -340,10 +340,10 @@ func RenderDailyReportDiscordEmbed(d DailyReportData) internal.DiscordEmbed {
 	return embed
 }
 
-// discordLinkTarget percent-encodes the parentheses in url so it cannot end
-// the target of a Discord Markdown link early.
+// discordLinkTarget percent-encodes the parentheses and backslashes in url
+// so it cannot end, or escape the end of, a Discord Markdown link target.
 func discordLinkTarget(url string) string {
-	return strings.NewReplacer("(", "%28", ")", "%29").Replace(url)
+	return strings.NewReplacer("(", "%28", ")", "%29", "\\", "%5C").Replace(url)
 }
 
 // RenderDailyReportSlackBlocks builds a Slack Block Kit message summarizing

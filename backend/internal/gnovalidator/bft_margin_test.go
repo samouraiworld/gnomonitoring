@@ -452,7 +452,7 @@ func TestRenderDailyReportDiscordEmbed_CutsLongFieldName(t *testing.T) {
 // text: it goes on the title URL and in a last Markdown-link field.
 func TestRenderDailyReportDiscordEmbed_ReportLinkIsClickable(t *testing.T) {
 	d := bftReportData()
-	d.ReportLink = "https://example.com/reports/(test12)"
+	d.ReportLink = "https://example.com/reports/(test12)\\"
 	embed := RenderDailyReportDiscordEmbed(d)
 
 	if embed.Footer != nil {
@@ -462,7 +462,7 @@ func TestRenderDailyReportDiscordEmbed_ReportLinkIsClickable(t *testing.T) {
 		t.Fatalf("embed.URL = %q, want %q", embed.URL, d.ReportLink)
 	}
 	last := embed.Fields[len(embed.Fields)-1]
-	want := "📊 [Open the validator report](https://example.com/reports/%28test12%29)"
+	want := "📊 [Open the validator report](https://example.com/reports/%28test12%29%5C)"
 	if last.Name != "Full report" || last.Value != want {
 		t.Fatalf("last field = %+v, want Full report / %q", last, want)
 	}

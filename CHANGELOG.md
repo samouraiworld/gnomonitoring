@@ -186,6 +186,13 @@ Entries are ordered newest-first within each section.
   the embed footer, which Discord renders as plain text. It now goes on the
   embed title and in a last Markdown-link field.
 
+- **Daily report survives untrusted monikers and report URLs** — validator
+  names are cut to 64 characters and escaped in Slack (a moniker can no
+  longer trigger `<!channel>`); the Telegram report stops adding lines before
+  the 4096-character limit and summarizes the rest; `report_url` is
+  re-validated when the report is built and capped at 512 characters, so an
+  invalid stored value drops the link instead of the whole report.
+
 - **Valoper profiles are fetched once per refresh, with a retry and the last
   known values kept on failure** — the moniker refresh and the chain health
   snapshot each fetched every valoper profile. The moniker refresh now parses
