@@ -32,12 +32,20 @@ type Realm struct {
 	// down makes the discovery endpoint answer 503, standing in for an issuer
 	// the backend cannot reach.
 	down atomic.Bool
+	// keysDown makes the JWKS endpoint answer 503 while discovery still works.
+	keysDown atomic.Bool
 }
 
 // SetDown makes the realm's discovery endpoint fail (true) or answer again
 // (false), to exercise the backend's behavior while the issuer is unreachable.
 func (r *Realm) SetDown(down bool) {
 	r.down.Store(down)
+}
+
+// SetKeysDown makes only the realm's JWKS endpoint fail (true) or answer again
+// (false), for an issuer that answers discovery but not its keys.
+func (r *Realm) SetKeysDown(down bool) {
+	r.keysDown.Store(down)
 }
 
 // NewRealm starts the fake realm and stops it when the test ends.
@@ -71,6 +79,10 @@ func NewRealm(t *testing.T) *Realm {
 	})
 
 	mux.HandleFunc("/protocol/openid-connect/certs", func(w http.ResponseWriter, _ *http.Request) {
+		if r.keysDown.Load() {
+			http.Error(w, "keys down", http.StatusServiceUnavailable)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{
 			Keys: []jose.JSONWebKey{{

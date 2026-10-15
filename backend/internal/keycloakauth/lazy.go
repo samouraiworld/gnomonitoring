@@ -93,7 +93,42 @@ func (l *LazyVerifier) attempt(ctx context.Context, issuerURL string, allowedCli
 	if err != nil {
 		return err
 	}
+	// go-oidc fetches the JWKS only when the first token arrives. Publishing
+	// the verifier before the keys are known to be reachable would turn an
+	// issuer that answers discovery but not JWKS into 401s for every token.
+	if err := checkJWKS(ctx, v.provider); err != nil {
+		return err
+	}
 	l.verifier.Store(v)
+	return nil
+}
+
+// checkJWKS fetches the provider's JWKS once and requires at least one key.
+func checkJWKS(ctx context.Context, provider *oidc.Provider) error {
+	var meta struct {
+		JWKSURL string `json:"jwks_uri"`
+	}
+	if err := provider.Claims(&meta); err != nil || meta.JWKSURL == "" {
+		return fmt.Errorf("keycloakauth: discovery document has no jwks_uri")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, meta.JWKSURL, nil)
+	if err != nil {
+		return fmt.Errorf("keycloakauth: JWKS request: %w", err)
+	}
+	resp, err := issuerClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("keycloakauth: fetch JWKS %s: %w", meta.JWKSURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("keycloakauth: fetch JWKS %s: status %d", meta.JWKSURL, resp.StatusCode)
+	}
+	var keySet struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&keySet); err != nil || len(keySet.Keys) == 0 {
+		return fmt.Errorf("keycloakauth: JWKS %s has no keys", meta.JWKSURL)
+	}
 	return nil
 }
 

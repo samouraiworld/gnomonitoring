@@ -80,6 +80,24 @@ func TestDiscover_UnreachableIssuerDegradesThenRecovers(t *testing.T) {
 	assert.Equal(t, "kc-sub-1", claims.Subject)
 }
 
+// An issuer that answers discovery but not its JWKS is not ready: publishing
+// the verifier would turn every token into a 401 instead of a 503.
+func TestDiscover_UnreachableKeysAreNotReady(t *testing.T) {
+	realm := kctest.NewRealm(t)
+	token := realm.Token(t, "kc-sub-1", nil)
+	realm.SetKeysDown(true)
+
+	l := discover(t, realm.Issuer)
+
+	require.False(t, l.Ready())
+	assert.Equal(t, http.StatusServiceUnavailable, serve(l, token).Code)
+
+	realm.SetKeysDown(false)
+
+	require.Eventually(t, l.Ready, 5*time.Second, 5*time.Millisecond)
+	assert.Equal(t, http.StatusOK, serve(l, token).Code)
+}
+
 // An empty or malformed issuer is a configuration mistake no retry can fix.
 func TestDiscover_InvalidIssuerIsAnError(t *testing.T) {
 	for _, issuer := range []string{"  ", "auth.example.com/realms/gno-world", "ftp://auth.example.com", "https://"} {

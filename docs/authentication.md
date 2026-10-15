@@ -41,8 +41,9 @@ Leaving all three unset builds an unauthenticated panel for use against a
 An unreachable `keycloak_issuer` does not stop the backend. Monitoring,
 alerting, the Telegram bots, Prometheus and the public routes start normally.
 The backend logs `[auth] ERROR: Keycloak issuer discovery failed` and retries
-OIDC discovery in the background, from 5 s and doubling up to 5 min between
-attempts. Until one attempt succeeds:
+in the background, from 5 s and doubling up to 5 min between attempts. An
+attempt succeeds only when both the OIDC discovery document and the JWKS (at
+least one key) are fetched. Until one attempt succeeds:
 
 - `/admin/*` and, with the Clerk fallback off, the general routes answer
   `503` with `Retry-After`, not `401`: the token was never checked.
