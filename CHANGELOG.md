@@ -182,6 +182,11 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **GovDAO status checks skip disabled chains** — `CheckProposalStatus` only
+  polls proposals of enabled chains. It used to poll every stored proposal and
+  log `no RPC pool registered` for each proposal of a disabled chain every
+  5 minutes. Rows of disabled chains stay untouched.
+
 - **Daily report link is clickable on Discord** — the `Full report` link sat in
   the embed footer, which Discord renders as plain text. It now goes on the
   embed title and in a last Markdown-link field.
