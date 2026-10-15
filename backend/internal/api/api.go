@@ -150,6 +150,7 @@ func ListWebhooksHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 }
 
 func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 
 	var webhook database.WebhookGovDAO
@@ -161,6 +162,9 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 	webhook.UserID = userID
@@ -215,6 +219,9 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	// If not exist insert (with chain_id support).
 	err = database.InsertWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, webhook.ChainID, db)
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		log.Println("Insert error:", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -225,11 +232,15 @@ func CreateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 }
 
 func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 	idStr := r.URL.Query().Get("id")
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 
@@ -241,6 +252,9 @@ func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 	err = database.DeleteWebhook(id, userID, db)
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -248,6 +262,7 @@ func DeleteWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 }
 
 func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	var webhook database.WebhookGovDAO
 	EnableCORS(w, r)
 	err := json.NewDecoder(r.Body).Decode(&webhook)
@@ -259,6 +274,9 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 	webhook.UserID = userID
@@ -279,6 +297,9 @@ func UpdateWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, webhook.ChainID, "webhook_gov_daos")
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		log.Println(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -318,6 +339,7 @@ func ListMonitoringWebhooksHandler(w http.ResponseWriter, r *http.Request, db *g
 }
 
 func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 
 	var webhook database.WebhookValidator
@@ -330,6 +352,9 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 	webhook.UserID = userID
@@ -373,6 +398,9 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	// ✅ If not exist insert
 	err = database.InsertMonitoringWebhook(webhook.UserID, webhook.URL, webhook.Description, webhook.Type, chainID, db)
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -382,12 +410,16 @@ func CreateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 }
 
 func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 	idStr := r.URL.Query().Get("id")
 	// for get userid with apiclerk
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 
@@ -399,6 +431,9 @@ func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 
 	err = database.DeleteMonitoringWebhook(id, userID, db)
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -406,6 +441,7 @@ func DeleteMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 }
 
 func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 	var webhook database.WebhookValidator
 	err := json.NewDecoder(r.Body).Decode(&webhook)
@@ -417,6 +453,9 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 	webhook.UserID = userID
@@ -437,6 +476,9 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 
 	err = database.UpdateMonitoringWebhook(db, webhook.ID, webhook.UserID, webhook.Description, webhook.URL, webhook.Type, webhook.ChainID, "webhook_validators")
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -445,6 +487,7 @@ func UpdateMonitoringWebhookHandler(w http.ResponseWriter, r *http.Request, db *
 
 // =======================USER==========================================func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 
 	var users database.User
@@ -457,6 +500,9 @@ func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, "Missing or invalid user_id", http.StatusBadRequest)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 
@@ -480,6 +526,9 @@ func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	// Insertion
 	err = database.InsertUser(userID, users.Email, users.Name, db)
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, "Insert error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -488,6 +537,7 @@ func CreateUserhandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 }
 
 func DeleteUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -533,6 +583,7 @@ func GetUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 	json.NewEncoder(w).Encode(user)
 }
 func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 
 	if r.Method != http.MethodPut {
@@ -556,9 +607,15 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
+	if rejectErasedAccount(w, db, userID) {
+		return
+	}
 
 	err = database.UpdateUser(db, user.Name, user.Email, userID)
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, "Failed to update user: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -568,6 +625,7 @@ func UpdateUserHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 
 // =====================Hour Report ================================
 func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -591,9 +649,15 @@ func UpdateReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB
 		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
 		return
 	}
+	if rejectErasedAccount(w, db, userID) {
+		return
+	}
 
 	err = database.UpdateHeureReport(db, payload.Hour, payload.Minute, payload.Timezone, userID)
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to update report hour: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -625,6 +689,7 @@ func GetReportHourHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
 // ======================Alert Contact ================================
 
 func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -647,6 +712,9 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 	input.UserID = userID
@@ -679,6 +747,9 @@ func InsertAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 
 	err = database.InsertAlertContact(db, input.UserID, input.Moniker, input.NameContact, input.MentionTag, input.IDwebhook)
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to insert alert contact: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -709,6 +780,7 @@ func GetAlertContactsHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB
 	json.NewEncoder(w).Encode(contacts)
 }
 func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 
 	EnableCORS(w, r)
 	if r.Method != http.MethodPut {
@@ -731,6 +803,9 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 
@@ -789,6 +864,9 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 		return
 	}
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to update alert contact: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -797,6 +875,7 @@ func UpdateAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	w.Write([]byte("Alert contact updated"))
 }
 func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.DB) {
+	db = db.WithContext(r.Context())
 	EnableCORS(w, r)
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -806,6 +885,9 @@ func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 	userID, err := authUserIDFromContext(r)
 	if err != nil {
 		http.Error(w, "Unauthorized: "+err.Error(), http.StatusUnauthorized)
+		return
+	}
+	if rejectErasedAccount(w, db, userID) {
 		return
 	}
 
@@ -823,6 +905,9 @@ func DeleteAlertContactHandler(w http.ResponseWriter, r *http.Request, db *gorm.
 
 	err = database.DeleteAlertContact(db, id, userID)
 	if err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to delete alert contact: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1469,6 +1554,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		mux.Handle("/webhooks/govdao", webhookGovDAOHandler)
 		mux.Handle("/webhooks/validator", webhookValidatorHandler)
 		mux.Handle("/users", userHandler)
+		mux.HandleFunc("/users/erase", func(w http.ResponseWriter, r *http.Request) { EraseAccountHandler(w, r, db) })
 		mux.Handle("/alert-contacts", alertContactsHandler)
 		mux.Handle("/usersH", usersHHandler)
 	} else {
@@ -1481,6 +1567,7 @@ func StartWebhookAPI(db *gorm.DB) {
 		mux.Handle("/webhooks/govdao", corsThenAuth(webhookGovDAOHandler, protected))
 		mux.Handle("/webhooks/validator", corsThenAuth(webhookValidatorHandler, protected))
 		mux.Handle("/users", corsThenAuth(userHandler, protected))
+		registerAccountErasureRoute(mux, db, protected)
 		mux.Handle("/alert-contacts", corsThenAuth(alertContactsHandler, protected))
 		mux.Handle("/usersH", corsThenAuth(usersHHandler, protected))
 	}
