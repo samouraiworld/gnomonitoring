@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,16 +38,27 @@ func sanitizeSchema(name string) string {
 	return b.String()
 }
 
+// schemaSeq numbers the schemas NewTestDB creates within this process.
+var schemaSeq atomic.Uint64
+
 // NewTestDB creates an isolated Postgres schema for the test, runs InitDB's
 // migrations against it, seeds fake data, and drops the schema on cleanup.
 func NewTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
-	schema := "test_" + sanitizeSchema(strings.ToLower(strings.ReplaceAll(t.Name(), "/", "_")))
-	// Postgres identifiers are capped at 63 bytes; keep schema names safe.
-	if len(schema) > 63 {
-		schema = schema[:63]
+	// The schema name must be unique per call, not only per test name: two
+	// go test processes sharing this database (parallel sessions, or the same
+	// package run twice) would otherwise drop and recreate each other's schema
+	// mid-test, which surfaced as "relation alert_logs does not exist" in the
+	// longest tests. The pid separates processes; the counter separates
+	// -count=N repeats and test names that collide once truncated.
+	suffix := fmt.Sprintf("_%d_%d", os.Getpid(), schemaSeq.Add(1))
+	base := "test_" + sanitizeSchema(strings.ToLower(strings.ReplaceAll(t.Name(), "/", "_")))
+	// Postgres identifiers are capped at 63 bytes: truncate the name, keep the suffix.
+	if limit := 63 - len(suffix); len(base) > limit {
+		base = base[:limit]
 	}
+	schema := base + suffix
 
 	dsn := testDSN() + fmt.Sprintf(" search_path=%s", schema)
 
