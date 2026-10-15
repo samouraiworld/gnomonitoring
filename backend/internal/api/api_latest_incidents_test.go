@@ -120,7 +120,7 @@ func TestGetlastincident_RejectsReservedAddr(t *testing.T) {
 	// `all` and `rpc` rows carry chain stagnation and RPC outage messages, which
 	// embed raw client errors and endpoint names. They must not be reachable
 	// through a per-validator query on this unauthenticated endpoint.
-	for _, addr := range []string{"all", "rpc"} {
+	for _, addr := range []string{"all", "rpc", "bft"} {
 		rec, _ := getIncidents(t, db, "period=all_time&chain=test12&addr="+addr)
 		assert.Equal(t, http.StatusBadRequest, rec.Code, "addr=%s is reserved and must be rejected", addr)
 	}

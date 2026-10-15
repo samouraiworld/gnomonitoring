@@ -24,7 +24,8 @@ const (
 const bftResolveChecks = 2
 
 // bftStaleIntervals: when the window's latest block is older than this many
-// check intervals, the chain is stalled (or collection is): the frozen
+// check intervals (see bftStaleAfter), the chain is stalled (or collection
+// is): the frozen
 // window says nothing about who is online now, so no verdict is drawn from
 // it — in particular no false resolve during a halt. The halt itself is the
 // stagnation alert's job.
@@ -63,23 +64,59 @@ type bftEval struct {
 }
 
 // bftEntries converts the window rows into the report entries
-// computeBFTMargin expects. The collector writes one row per block for every
-// valset member, signed or not, so a member with rows for fewer than half
-// of the collected heights only just joined (or just left) the valset: its
-// sign rate would rest on a handful of blocks, or on none, so it is left out
-// of both the online and the total voting power until it has a history.
-func bftEntries(w database.BFTWindow) []database.ValidatorReportEntry {
+// computeBFTMargin expects. Every voting-power holder stays in the total,
+// as it does for consensus: a validator that just joined and has no row
+// yet counts as offline until it is seen signing. A validator that missed
+// its last missedTip blocks in a row is offline too (sign rate forced to
+// 0), however well it signed earlier in the window: it stopped, and waiting
+// for its window-wide rate to fall under 50% would delay the alert by half
+// a window.
+func bftEntries(w database.BFTWindow, missedTip int) []database.ValidatorReportEntry {
 	entries := make([]database.ValidatorReportEntry, 0, len(w.Entries))
 	for _, e := range w.Entries {
-		if e.Blocks == 0 || 2*e.Blocks < w.Heights {
-			continue
+		var rate float64
+		stopped := missedTip > 0 && e.TrailingMissed >= int64(missedTip)
+		if e.Blocks > 0 && !stopped {
+			rate = float64(e.Signed) / float64(e.Blocks) * 100
 		}
-		rate := float64(e.Signed) / float64(e.Blocks) * 100
 		entries = append(entries, database.ValidatorReportEntry{
 			Addr: e.Addr, Moniker: e.Moniker, VotingPower: e.VotingPower, SignRate: rate,
 		})
 	}
 	return entries
+}
+
+// bftSinglePointsOfFailure counts the online validators whose loss alone
+// would take the online voting power to 2/3 of the total or below.
+func bftSinglePointsOfFailure(entries []database.ValidatorReportEntry) int {
+	var total, online int64
+	for _, e := range entries {
+		if e.VotingPower <= 0 {
+			continue
+		}
+		total += e.VotingPower
+		if e.SignRate >= bftOnlineSignRate {
+			online += e.VotingPower
+		}
+	}
+	n := 0
+	for _, e := range entries {
+		if e.VotingPower > 0 && e.SignRate >= bftOnlineSignRate && 3*(online-e.VotingPower) <= 2*total {
+			n++
+		}
+	}
+	return n
+}
+
+// bftStaleAfter is how old the window's latest block may be before the
+// window counts as frozen: two check intervals, and never under 10 minutes,
+// so a short interval does not turn ordinary clock skew into silence.
+func bftStaleAfter(t Thresholds) time.Duration {
+	d := bftStaleIntervals * t.BFTAlertCheckInterval()
+	if d < 10*time.Minute {
+		d = 10 * time.Minute
+	}
+	return d
 }
 
 // evaluateBFT grades the chain's BFT margin over the window. Two criteria,
@@ -88,23 +125,27 @@ func bftEntries(w database.BFTWindow) []database.ValidatorReportEntry {
 //   - margin: the online voting power above 2/3, as a share of the total.
 //     With every validator online it is always 33.3%, so it only ever drops
 //     because validators went offline.
-//   - tolerable losses: how many more validators (largest first) can go
-//     offline before the quorum is lost. It only counts when offline
-//     validators lowered it below its all-online value: a small or
-//     concentrated valset that tolerates no loss even when complete is a
-//     structural fact, not an incident, and must not alert forever.
+//   - losses: CRITICAL when no further loss (largest first) is survivable
+//     and offline validators made it so — the complete set survived at least
+//     one loss, or more validators are now each a single point of failure
+//     than when everyone is online; WARNING when at most
+//     bft_alert_warning_losses losses are left and offline validators
+//     lowered that count. A small or concentrated valset that is fragile
+//     even when complete is a structural fact, not an incident, and does not
+//     alert on that alone.
 //
-// Nothing is evaluated without a voting-power snapshot, when fewer than half
-// of the window's heights were collected, or when the latest block is stale
-// (see bftStaleIntervals).
+// Nothing is evaluated without a voting-power snapshot, when less than 80%
+// of the window's possible heights were collected, or when the latest block
+// is stale (see bftStaleAfter).
 func evaluateBFT(w database.BFTWindow, t Thresholds, now time.Time) bftEval {
-	if 2*w.Heights < int64(t.BFTAlertWindowBlocks) || w.Heights == 0 {
+	span := w.MaxHeight - w.MinHeight + 1
+	if w.Heights == 0 || 5*w.Heights < 4*span {
 		return bftEval{}
 	}
-	if now.Sub(w.LastBlockTime) > bftStaleIntervals*t.BFTAlertCheckInterval() {
+	if now.Sub(w.LastBlockTime) > bftStaleAfter(t) {
 		return bftEval{}
 	}
-	entries := bftEntries(w)
+	entries := bftEntries(w, t.WarningThreshold)
 	live := computeBFTMargin(entries)
 	if !live.Available {
 		return bftEval{}
@@ -137,54 +178,85 @@ func evaluateBFT(w database.BFTWindow, t Thresholds, now time.Time) bftEval {
 	case margin < t.BFTAlertWarningMarginPct:
 		ev.Severity = bftWarning
 	}
-	if live.TolerableLosses < ev.Structural.TolerableLosses {
-		switch {
-		case live.TolerableLosses == 0:
-			ev.Severity = bftCritical
-		case live.TolerableLosses <= t.BFTAlertWarningLosses && ev.Severity < bftWarning:
-			ev.Severity = bftWarning
-		}
+	switch {
+	case live.TolerableLosses == 0 && (ev.Structural.TolerableLosses > 0 ||
+		bftSinglePointsOfFailure(entries) > bftSinglePointsOfFailure(all)):
+		ev.Severity = bftCritical
+	case live.TolerableLosses <= t.BFTAlertWarningLosses && live.TolerableLosses < ev.Structural.TolerableLosses &&
+		ev.Severity < bftWarning:
+		ev.Severity = bftWarning
 	}
 	return ev
 }
 
+// bftStreak is the per-chain hysteresis state decideBFT carries between
+// checks. Height is the window tip of the last check that counted: a check
+// only counts towards a streak when the chain moved since, so two checks of
+// the same frozen height prove nothing.
+type bftStreak struct {
+	OK     int
+	Bad    int
+	Height int64
+}
+
 // decideBFT turns a verdict into the level to dispatch ("" for none), given
-// the chain's latest BFT alert_logs row and the count of consecutive healthy
-// checks seen so far. It returns the new count.
+// the window tip, the chain's latest BFT alert_logs row and the streak so
+// far. It returns the new streak.
 //
-//   - no open alert: send the verdict's level, if any;
+//   - no open alert: send the verdict's level, if any — but right after a
+//     resolve (inside the warning resend window) only once
+//     bftResolveChecks checks in a row agree, so a margin hovering around a
+//     threshold does not flip between alert and resolve;
 //   - open WARNING, CRITICAL verdict (escalation): send it now;
 //   - open CRITICAL, WARNING verdict (de-escalation) or same level: send only
 //     once the open level's resend window (alert_warning_resend_hours /
-//     alert_critical_resend_hours) elapsed, so a margin hovering around a
-//     threshold does not re-alert every cycle;
+//     alert_critical_resend_hours) elapsed;
 //   - open alert, healthy verdict: resolve after bftResolveChecks in a row.
-func decideBFT(sev bftSeverity, state database.BFTAlertState, okStreak int, now time.Time, t Thresholds) (string, int) {
+func decideBFT(sev bftSeverity, height int64, state database.BFTAlertState, st bftStreak, now time.Time, t Thresholds) (string, bftStreak) {
 	active := state.Level == bftLevelWarning || state.Level == bftLevelCritical
+	moved := height > st.Height
+	reset := bftStreak{Height: height}
+
 	if sev == bftOK {
 		if !active {
-			return "", 0
+			return "", reset
 		}
-		okStreak++
-		if okStreak >= bftResolveChecks {
-			return bftLevelResolved, 0
+		if moved {
+			st = bftStreak{OK: st.OK + 1, Height: height}
 		}
-		return "", okStreak
+		if st.OK >= bftResolveChecks {
+			return bftLevelResolved, reset
+		}
+		return "", st
 	}
 
 	level := bftLevelWarning
 	if sev == bftCritical {
 		level = bftLevelCritical
 	}
-	if !active || (level == bftLevelCritical && state.Level == bftLevelWarning) {
-		return level, 0
+	if !active {
+		justResolved := state.Level == bftLevelResolved &&
+			now.Sub(state.SentAt) < time.Duration(t.ResendHoursForLevel("WARNING"))*time.Hour
+		if !justResolved {
+			return level, reset
+		}
+		if moved {
+			st = bftStreak{Bad: st.Bad + 1, Height: height}
+		}
+		if st.Bad >= bftResolveChecks {
+			return level, reset
+		}
+		return "", bftStreak{Bad: st.Bad, Height: st.Height}
+	}
+	if level == bftLevelCritical && state.Level == bftLevelWarning {
+		return level, reset
 	}
 	openLevel := "WARNING"
 	if state.Level == bftLevelCritical {
 		openLevel = "CRITICAL"
 	}
 	if now.Sub(state.SentAt) >= time.Duration(t.ResendHoursForLevel(openLevel))*time.Hour {
-		return level, 0
+		return level, reset
 	}
-	return "", 0
+	return "", reset
 }

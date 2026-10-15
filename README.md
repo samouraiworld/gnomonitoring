@@ -418,26 +418,28 @@ curl -L -X PUT '127.0.0.7:8989/webhooks/[govdao | validator]' \
     score. Disable with `latency_alert_enabled=false` (no restart).
 - The chain is close to losing its 2/3 quorum (BFT margin):
   - checked every `bft_alert_check_minutes` (default 5) over the last
-    `bft_alert_window_blocks` (default 100); a validator counts as online when
-    it signed at least 50% of them. Only voting power counts.
+    `bft_alert_window_blocks` (default 100). Only voting power counts. A
+    validator is online when it signed at least 50% of its rows in the window
+    and did not miss its last `warning_threshold` blocks in a row; a
+    validator that just joined counts in the total, offline until seen signing.
   - CRITICAL when the online voting power is less than
     `bft_alert_critical_margin_pct` (default 3) points of total voting power
-    above 2/3, or when one more validator going offline (largest first) would
-    halt the chain; WARNING under `bft_alert_warning_margin_pct` (default 10)
-    or with at most `bft_alert_warning_losses` (default 1) validator left to
-    lose. The tolerable-losses rule only counts when offline validators
-    lowered it: a valset too small to lose anyone even when complete does not
-    alert on that alone.
+    above 2/3, or when one more validator going offline would halt the chain
+    because of the validators already offline; WARNING under
+    `bft_alert_warning_margin_pct` (default 10) or with at most
+    `bft_alert_warning_losses` (default 1) validator left to lose, down from
+    the all-online count. A valset that is fragile even when complete (one
+    validator above 1/3, or a 10/10/11 set) does not alert on that alone.
   - an escalation is sent at once; a de-escalation or a same-level resend
-    waits for `alert_warning_resend_hours` / `alert_critical_resend_hours`.
-  - not evaluated before the first voting-power snapshot, with fewer than half
-    of the window's blocks collected, or when the latest block is older than
-    two check intervals; a validator that just joined (rows for under half of
-    the window) is left out of the total.
-  - resolved (BFT_RESOLVED) after two healthy checks in a row; carries no
-    contact mention and does not affect the health score. Disable with
-    `bft_alert_enabled=false` (no restart). A chain that already halted is
-    reported by the stagnation alert, not this one.
+    waits for `alert_warning_resend_hours` / `alert_critical_resend_hours`;
+    a new alert right after a resolve needs two bad checks in a row.
+  - not evaluated before the first voting-power snapshot, with under 80% of
+    the window's blocks collected, or when the latest block is older than two
+    check intervals (at least 10 minutes): a halted chain is reported by the
+    stagnation alert.
+  - resolved (BFT_RESOLVED) after two healthy checks in a row on an advancing
+    chain; carries no contact mention and does not affect the health score.
+    Disable with `bft_alert_enabled=false` (no restart).
 
 ![Alert example](assets/alert.png)
 

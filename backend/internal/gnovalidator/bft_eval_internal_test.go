@@ -12,7 +12,7 @@ import (
 
 func bftTestThresholds() Thresholds {
 	return Thresholds{
-		AlertWarningResendHours: 6, AlertCriticalResendHours: 24,
+		WarningThreshold: 5, AlertWarningResendHours: 6, AlertCriticalResendHours: 24,
 		BFTAlertEnabled: true, BFTAlertCheckMinutes: 5, BFTAlertWindowBlocks: 100,
 		BFTAlertWarningLosses: 1, BFTAlertWarningMarginPct: 10, BFTAlertCriticalMarginPct: 3,
 	}
@@ -29,10 +29,19 @@ func bftWindow(vps []int64, signed []int64) database.BFTWindow {
 	for i, vp := range vps {
 		w.Entries = append(w.Entries, database.BFTWindowEntry{
 			Addr: fmt.Sprintf("g1v%d", i), Moniker: fmt.Sprintf("v%d", i),
-			VotingPower: vp, Blocks: 100, Signed: signed[i],
+			VotingPower: vp, Blocks: 100, Signed: signed[i], TrailingMissed: trailing(signed[i]),
 		})
 	}
 	return w
+}
+
+// trailing models a validator's misses as spread over the window, except
+// for one that signed nothing: it missed every block, the last ones too.
+func trailing(signed int64) int64 {
+	if signed == 0 {
+		return 100
+	}
+	return 0
 }
 
 func repeat(v int64, n int) []int64 {
@@ -73,10 +82,23 @@ func TestEvaluateBFT(t *testing.T) {
 			want: bftCritical, wantMargin: 1.1, wantLosses: 0, wantStruct: 0, wantOff: []string{"v0"},
 		},
 		{
-			// A tiny validator down barely moves the margin and the set
-			// already tolerated no loss: nothing to report.
+			// The complete set already could not lose crew-3, but it could
+			// lose crew-1 or crew-2. With the 1-VP validator down, losing any
+			// of the three halts the chain: more single points of failure.
 			name: "tiny validator down on a structurally weak set", vps: []int64{10, 10, 11, 1}, signed: []int64{100, 100, 100, 0},
-			want: bftOK, wantMargin: 30.2, wantLosses: 0, wantStruct: 0, wantOff: []string{"v3"},
+			want: bftCritical, wantMargin: 30.2, wantLosses: 0, wantStruct: 0, wantOff: []string{"v3"},
+		},
+		{
+			// Losing the 40 always halted the chain; with one 20 down, so
+			// does losing any other validator. The margin alone (13.3%)
+			// would stay silent.
+			name: "concentrated set, a small validator down", vps: []int64{40, 20, 20, 20}, signed: []int64{100, 100, 100, 0},
+			want: bftCritical, wantMargin: 13.3, wantLosses: 0, wantStruct: 0, wantOff: []string{"v3"},
+		},
+		{
+			// One validator above 1/3 is a structural risk, not an incident.
+			name: "one validator above a third, all online", vps: []int64{34, 33, 33}, signed: []int64{100, 100, 100},
+			want: bftOK, wantMargin: 33.3, wantLosses: 0, wantStruct: 0,
 		},
 		{
 			name: "four equal, one down", vps: repeat(10, 4), signed: []int64{100, 100, 100, 0},
@@ -143,39 +165,59 @@ func TestEvaluateBFT_OfflineSortedByVotingPower(t *testing.T) {
 	assert.Equal(t, []int64{10, 5, 1}, []int64{ev.Offline[0].VotingPower, ev.Offline[1].VotingPower, ev.Offline[2].VotingPower})
 }
 
-// A member with no history yet (it just joined, the collector writes its
-// rows from the next block on) is neither online nor offline: it is left out
-// of the total, so a high-VP joiner cannot raise a false alert.
-func TestEvaluateBFT_JoinerWithoutHistoryIsIgnored(t *testing.T) {
-	for _, blocks := range []int64{0, 3, 49} {
-		w := bftWindow(append(repeat(10, 4), 40), append(repeat(100, 4), 0))
-		w.Entries[4].Blocks = blocks
-
-		ev := evaluateBFT(w, bftTestThresholds(), bftTestNow)
-
-		require.True(t, ev.Evaluated)
-		assert.Equal(t, bftOK, ev.Severity, "blocks=%d", blocks)
-		assert.Equal(t, int64(40), ev.Live.TotalVP, "blocks=%d", blocks)
-		assert.Empty(t, ev.Offline, "blocks=%d", blocks)
-	}
-
-	// With rows for half of the collected heights it counts.
+// Consensus counts a joiner's voting power from its first block, so the
+// monitor does too: with no row yet it is offline, and it is online as
+// soon as its own rows show it signing.
+func TestEvaluateBFT_JoinerStaysInTheTotal(t *testing.T) {
 	w := bftWindow(append(repeat(10, 4), 40), append(repeat(100, 4), 0))
-	w.Entries[4].Blocks = 50
+	w.Entries[4].Blocks, w.Entries[4].TrailingMissed = 0, 0
+
 	ev := evaluateBFT(w, bftTestThresholds(), bftTestNow)
+
 	assert.Equal(t, int64(80), ev.Live.TotalVP)
-	assert.Equal(t, bftCritical, ev.Severity)
+	assert.Equal(t, bftCritical, ev.Severity, "40 of 80 VP online is below the quorum")
+
+	w.Entries[4].Blocks, w.Entries[4].Signed = 3, 3
+	ev = evaluateBFT(w, bftTestThresholds(), bftTestNow)
+
+	assert.Equal(t, int64(80), ev.Live.OnlineVP)
+	assert.Equal(t, bftOK, ev.Severity)
 }
 
-func TestEvaluateBFT_PoorCoverageIsNotEvaluated(t *testing.T) {
-	w := bftWindow(repeat(10, 4), []int64{100, 100, 100, 0})
-	w.Heights = 49
-	for i := range w.Entries {
-		w.Entries[i].Blocks = 49
-	}
+// A validator that just stopped is offline once it missed warning_threshold
+// blocks in a row at the tip, long before its window-wide rate drops under
+// 50%.
+func TestEvaluateBFT_StoppedAtTheTipIsOffline(t *testing.T) {
+	w := bftWindow(repeat(10, 4), repeat(100, 4))
+	w.Entries[3].Signed, w.Entries[3].TrailingMissed = 95, 4
 
+	ev := evaluateBFT(w, bftTestThresholds(), bftTestNow)
+	assert.Equal(t, bftOK, ev.Severity, "4 misses in a row is not yet a stop")
+
+	w.Entries[3].TrailingMissed = 5
+	ev = evaluateBFT(w, bftTestThresholds(), bftTestNow)
+	assert.Equal(t, bftCritical, ev.Severity)
+	require.Len(t, ev.Offline, 1)
+	assert.Equal(t, "v3", ev.Offline[0].Moniker)
+
+	th := bftTestThresholds()
+	th.WarningThreshold = 0
+	assert.Equal(t, bftOK, evaluateBFT(w, th, bftTestNow).Severity, "a zero threshold disables the tip rule")
+}
+
+func TestEvaluateBFT_Coverage(t *testing.T) {
+	w := bftWindow(repeat(10, 4), []int64{100, 100, 100, 0})
+	w.Heights = 79
 	assert.False(t, evaluateBFT(w, bftTestThresholds(), bftTestNow).Evaluated,
-		"fewer than half of the window's heights collected")
+		"under 80% of the window's heights collected")
+
+	w.Heights = 80
+	assert.True(t, evaluateBFT(w, bftTestThresholds(), bftTestNow).Evaluated)
+
+	// A young chain is judged on the heights it can have, not the full window.
+	young := bftWindow(repeat(10, 4), repeat(100, 4))
+	young.MinHeight, young.MaxHeight, young.Heights = 1, 40, 40
+	assert.True(t, evaluateBFT(young, bftTestThresholds(), bftTestNow).Evaluated)
 }
 
 // A halted chain freezes the window on its last blocks; drawing a verdict
@@ -184,11 +226,16 @@ func TestEvaluateBFT_StaleWindowIsNotEvaluated(t *testing.T) {
 	th := bftTestThresholds()
 	w := bftWindow(repeat(10, 4), repeat(100, 4))
 
-	w.LastBlockTime = bftTestNow.Add(-2 * th.BFTAlertCheckInterval())
+	w.LastBlockTime = bftTestNow.Add(-10 * time.Minute)
 	assert.True(t, evaluateBFT(w, th, bftTestNow).Evaluated, "exactly two intervals old is still fresh")
 
-	w.LastBlockTime = bftTestNow.Add(-2*th.BFTAlertCheckInterval() - time.Second)
+	w.LastBlockTime = bftTestNow.Add(-10*time.Minute - time.Second)
 	assert.False(t, evaluateBFT(w, th, bftTestNow).Evaluated)
+
+	// A short interval does not shrink the allowance below 10 minutes.
+	th.BFTAlertCheckMinutes = 1
+	w.LastBlockTime = bftTestNow.Add(-9 * time.Minute)
+	assert.True(t, evaluateBFT(w, th, bftTestNow).Evaluated)
 }
 
 func TestDecideBFT(t *testing.T) {
@@ -197,33 +244,39 @@ func TestDecideBFT(t *testing.T) {
 	open := func(level string, ago time.Duration) database.BFTAlertState {
 		return database.BFTAlertState{Level: level, SentAt: now.Add(-ago)}
 	}
+	none := database.BFTAlertState{}
+	const h = int64(1000)
 
 	tests := []struct {
 		name       string
 		sev        bftSeverity
 		state      database.BFTAlertState
-		streak     int
+		streak     bftStreak
 		wantLevel  string
-		wantStreak int
+		wantStreak bftStreak
 	}{
-		{"healthy, nothing open", bftOK, database.BFTAlertState{}, 0, "", 0},
-		{"healthy after a resolve", bftOK, open(bftLevelResolved, time.Hour), 0, "", 0},
-		{"new warning", bftWarning, database.BFTAlertState{}, 0, bftLevelWarning, 0},
-		{"new critical after a resolve", bftCritical, open(bftLevelResolved, time.Minute), 0, bftLevelCritical, 0},
-		{"warning inside resend window", bftWarning, open(bftLevelWarning, 5*time.Hour), 0, "", 0},
-		{"warning after resend window", bftWarning, open(bftLevelWarning, 6*time.Hour), 0, bftLevelWarning, 0},
-		{"critical inside resend window", bftCritical, open(bftLevelCritical, 23*time.Hour), 0, "", 0},
-		{"critical after resend window", bftCritical, open(bftLevelCritical, 24*time.Hour), 0, bftLevelCritical, 0},
-		{"escalation is immediate", bftCritical, open(bftLevelWarning, time.Minute), 0, bftLevelCritical, 0},
-		{"de-escalation waits for the open level's resend window", bftWarning, open(bftLevelCritical, 23*time.Hour), 0, "", 0},
-		{"de-escalation after the open level's resend window", bftWarning, open(bftLevelCritical, 24*time.Hour), 0, bftLevelWarning, 0},
-		{"first healthy check holds", bftOK, open(bftLevelCritical, time.Hour), 0, "", 1},
-		{"second healthy check resolves", bftOK, open(bftLevelWarning, time.Hour), 1, bftLevelResolved, 0},
-		{"relapse resets the streak", bftWarning, open(bftLevelWarning, time.Hour), 1, "", 0},
+		{"healthy, nothing open", bftOK, none, bftStreak{}, "", bftStreak{Height: h}},
+		{"healthy after a resolve", bftOK, open(bftLevelResolved, time.Hour), bftStreak{Bad: 1, Height: 900}, "", bftStreak{Height: h}},
+		{"new warning", bftWarning, none, bftStreak{}, bftLevelWarning, bftStreak{Height: h}},
+		{"new critical long after a resolve", bftCritical, open(bftLevelResolved, 6*time.Hour), bftStreak{}, bftLevelCritical, bftStreak{Height: h}},
+		{"first bad check right after a resolve holds", bftCritical, open(bftLevelResolved, time.Hour), bftStreak{Height: 900}, "", bftStreak{Bad: 1, Height: h}},
+		{"second bad check right after a resolve sends", bftWarning, open(bftLevelResolved, time.Hour), bftStreak{Bad: 1, Height: 900}, bftLevelWarning, bftStreak{Height: h}},
+		{"bad check on a frozen height does not count", bftWarning, open(bftLevelResolved, time.Hour), bftStreak{Bad: 1, Height: h}, "", bftStreak{Bad: 1, Height: h}},
+		{"warning inside resend window", bftWarning, open(bftLevelWarning, 5*time.Hour), bftStreak{}, "", bftStreak{Height: h}},
+		{"warning after resend window", bftWarning, open(bftLevelWarning, 6*time.Hour), bftStreak{}, bftLevelWarning, bftStreak{Height: h}},
+		{"critical inside resend window", bftCritical, open(bftLevelCritical, 23*time.Hour), bftStreak{}, "", bftStreak{Height: h}},
+		{"critical after resend window", bftCritical, open(bftLevelCritical, 24*time.Hour), bftStreak{}, bftLevelCritical, bftStreak{Height: h}},
+		{"escalation is immediate", bftCritical, open(bftLevelWarning, time.Minute), bftStreak{}, bftLevelCritical, bftStreak{Height: h}},
+		{"de-escalation waits for the open level's resend window", bftWarning, open(bftLevelCritical, 23*time.Hour), bftStreak{}, "", bftStreak{Height: h}},
+		{"de-escalation after the open level's resend window", bftWarning, open(bftLevelCritical, 24*time.Hour), bftStreak{}, bftLevelWarning, bftStreak{Height: h}},
+		{"first healthy check holds", bftOK, open(bftLevelCritical, time.Hour), bftStreak{Height: 900}, "", bftStreak{OK: 1, Height: h}},
+		{"second healthy check resolves", bftOK, open(bftLevelWarning, time.Hour), bftStreak{OK: 1, Height: 900}, bftLevelResolved, bftStreak{Height: h}},
+		{"healthy check on a frozen height does not count", bftOK, open(bftLevelWarning, time.Hour), bftStreak{OK: 1, Height: h}, "", bftStreak{OK: 1, Height: h}},
+		{"relapse resets the streak", bftWarning, open(bftLevelWarning, time.Hour), bftStreak{OK: 1, Height: 900}, "", bftStreak{Height: h}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			level, streak := decideBFT(tt.sev, tt.state, tt.streak, now, th)
+			level, streak := decideBFT(tt.sev, h, tt.state, tt.streak, now, th)
 			assert.Equal(t, tt.wantLevel, level)
 			assert.Equal(t, tt.wantStreak, streak)
 		})

@@ -141,42 +141,45 @@ func defaultBFTDispatch(job bftJob) {
 	} else {
 		data = buildBFTAlertData(job.chainID, job.level, job.eval, job.windowBlocks)
 	}
-	if err := internal.SendInfoValidator(job.chainID, data, job.db); err != nil {
-		log.Printf("[bft][%s] SendInfoValidator error: %v", job.chainID, err)
-	}
-
 	m := job.eval.Live
 	msg := fmt.Sprintf("online_vp=%d/%d margin=%.1f%% tolerable=%d/%d offline=%d",
 		m.OnlineVP, m.TotalVP, m.MarginPercent(), m.TolerableLosses, job.eval.Structural.TolerableLosses, len(job.eval.Offline))
+	// The row is the dedup state, so it is written first: if it cannot be
+	// written, nothing is sent and the next check retries, instead of
+	// re-sending the same alert every cycle while the state never moves.
 	// skipped=false, like the RPC rows: this is not a validator incident, and
 	// SendResolveAlerts only considers skipped=true WARNING/CRITICAL rows.
 	if err := database.InsertAlertlog(job.db, job.chainID, bftAlertAddr, bftAlertAddr, job.level,
 		job.eval.MinHeight, job.eval.MaxHeight, false, time.Now(), msg); err != nil {
-		log.Printf("[bft][%s] InsertAlertlog error: %v", job.chainID, err)
+		log.Printf("[bft][%s] InsertAlertlog error, %s not sent: %v", job.chainID, job.level, err)
+		return
+	}
+	if err := internal.SendInfoValidator(job.chainID, data, job.db); err != nil {
+		log.Printf("[bft][%s] SendInfoValidator error: %v", job.chainID, err)
 	}
 }
 
-// bftOKStreaks counts, per chain, the consecutive healthy checks seen while
-// a BFT alert is open (see decideBFT). In memory only: after a restart an
-// open alert simply needs bftResolveChecks fresh healthy checks to resolve.
+// bftStreaks holds, per chain, the hysteresis state decideBFT carries
+// between checks. In memory only: after a restart an open alert simply needs
+// bftResolveChecks fresh healthy checks to resolve.
 var (
-	bftOKStreaksMu sync.Mutex
-	bftOKStreaks   = map[string]int{}
+	bftStreaksMu sync.Mutex
+	bftStreaks   = map[string]bftStreak{}
 )
 
-func resetBFTOKStreak(chainID string) {
-	bftOKStreaksMu.Lock()
-	bftOKStreaks[chainID] = 0
-	bftOKStreaksMu.Unlock()
+func resetBFTStreak(chainID string) {
+	bftStreaksMu.Lock()
+	delete(bftStreaks, chainID)
+	bftStreaksMu.Unlock()
 }
 
 // runBFTAlertCycle performs one evaluation pass for a chain. ctx is checked
-// once more right before dispatching, so a cycle still running when its
-// chain is restarted does not notify alongside the new goroutine's cycle.
+// once more before deciding, so a cycle still running when its chain is
+// restarted does not notify alongside the new goroutine's cycle.
 func runBFTAlertCycle(ctx context.Context, db *gorm.DB, chainID string, t Thresholds) {
 	if !t.BFTAlertEnabled {
 		ChainBFTMarginPercent.DeleteLabelValues(chainID)
-		resetBFTOKStreak(chainID)
+		resetBFTStreak(chainID)
 		return
 	}
 
@@ -189,9 +192,9 @@ func runBFTAlertCycle(ctx context.Context, db *gorm.DB, chainID string, t Thresh
 	if !ev.Evaluated {
 		// No voting-power snapshot, too few collected blocks, or a stalled
 		// chain: nothing is known about the quorum now. Absence of data is
-		// not a recovery either, so the healthy streak restarts.
+		// not a recovery either, so the streak restarts.
 		ChainBFTMarginPercent.DeleteLabelValues(chainID)
-		resetBFTOKStreak(chainID)
+		resetBFTStreak(chainID)
 		return
 	}
 	ChainBFTMarginPercent.WithLabelValues(chainID).Set(ev.Live.MarginPercent())
@@ -202,12 +205,17 @@ func runBFTAlertCycle(ctx context.Context, db *gorm.DB, chainID string, t Thresh
 		return
 	}
 
-	bftOKStreaksMu.Lock()
-	level, streak := decideBFT(ev.Severity, state, bftOKStreaks[chainID], time.Now(), t)
-	bftOKStreaks[chainID] = streak
-	bftOKStreaksMu.Unlock()
+	// Checked before deciding, so a cycle cut short by a chain restart does
+	// not consume the streak the new goroutine starts from.
+	if ctx.Err() != nil {
+		return
+	}
+	bftStreaksMu.Lock()
+	level, streak := decideBFT(ev.Severity, ev.MaxHeight, state, bftStreaks[chainID], time.Now(), t)
+	bftStreaks[chainID] = streak
+	bftStreaksMu.Unlock()
 
-	if level == "" || ctx.Err() != nil {
+	if level == "" {
 		return
 	}
 	getBFTDispatch()(bftJob{db: db, chainID: chainID, level: level, eval: ev, windowBlocks: t.BFTAlertWindowBlocks})

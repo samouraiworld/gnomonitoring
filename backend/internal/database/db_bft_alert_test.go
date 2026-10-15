@@ -26,7 +26,7 @@ func seedBFTRows(t *testing.T, db *gorm.DB, chainID, addr string, from, to int64
 func TestGetBFTWindow(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	const chain = "bft-window"
-	for addr, vp := range map[string]int64{"g1a": 10, "g1b": 10, "g1c": 11, "g1gone": 0} {
+	for addr, vp := range map[string]int64{"g1a": 10, "g1b": 10, "g1c": 11, "g1d": 5, "g1gone": 0} {
 		require.NoError(t, db.Create(&database.AddrMoniker{ChainID: chain, Addr: addr, Moniker: "m-" + addr, VotingPower: vp}).Error)
 	}
 	all := func(int64) bool { return true }
@@ -34,6 +34,8 @@ func TestGetBFTWindow(t *testing.T) {
 	// g1b stopped signing at height 170: 30 of the last 100 blocks missed.
 	seedBFTRows(t, db, chain, "g1b", 1, 200, func(h int64) bool { return h <= 170 })
 	seedBFTRows(t, db, chain, "g1gone", 1, 200, all)
+	// g1d signed nothing in the window: every row is a trailing miss.
+	seedBFTRows(t, db, chain, "g1d", 101, 200, func(int64) bool { return false })
 	// g1c holds voting power but has no row in the window at all.
 	seedBFTRows(t, db, chain, "g1c", 1, 50, all)
 	// Another chain must not leak into the window.
@@ -50,9 +52,12 @@ func TestGetBFTWindow(t *testing.T) {
 	for _, e := range w.Entries {
 		byAddr[e.Addr] = e
 	}
-	assert.Len(t, byAddr, 3, "only voting-power holders are returned")
+	assert.Len(t, byAddr, 4, "only voting-power holders are returned")
+	assert.Equal(t, int64(100), byAddr["g1d"].TrailingMissed)
 	assert.Equal(t, database.BFTWindowEntry{Addr: "g1a", Moniker: "m-g1a", VotingPower: 10, Blocks: 100, Signed: 100}, byAddr["g1a"])
 	assert.Equal(t, int64(70), byAddr["g1b"].Signed)
+	assert.Equal(t, int64(30), byAddr["g1b"].TrailingMissed)
+	assert.Equal(t, int64(0), byAddr["g1a"].TrailingMissed)
 	assert.Equal(t, int64(0), byAddr["g1c"].Blocks)
 	assert.Equal(t, int64(0), byAddr["g1c"].Signed)
 }

@@ -72,27 +72,31 @@ Entries are ordered newest-first within each section.
 
 - **BFT margin alert (`BFT_WARNING` / `BFT_CRITICAL` / `BFT_RESOLVED`)** —
   every `bft_alert_check_minutes` (default 5) each chain's online voting power
-  is checked over the last `bft_alert_window_blocks` (default 100); a
-  validator is online when it signed at least 50% of them. CRITICAL when the
-  margin above 2/3 drops under `bft_alert_critical_margin_pct` (default 3% of
-  total VP) or one more loss (largest first) would halt the chain; WARNING
-  under `bft_alert_warning_margin_pct` (default 10%) or with at most
-  `bft_alert_warning_losses` (default 1) loss left. The tolerable-losses rule
-  only fires when offline validators lowered it: a small valset that cannot
-  lose anyone even when complete (the devnet's 10/10/11) never alerts on that
-  alone. Same-level resends follow `alert_warning_resend_hours` /
-  `alert_critical_resend_hours`; an escalation is sent at once, a
-  de-escalation waits for the open level's resend window; `BFT_RESOLVED` needs
-  two healthy checks in a row. Sent through Discord, Slack
-  and Telegram with no contact mention, logged in `alert_logs` with
-  `addr = 'bft'`, excluded from the health score. No evaluation before the
-  first voting-power snapshot, with fewer than half of the window's blocks
-  collected, or when the latest block is older than two check intervals (a
-  halted chain is the stagnation alert's job); a validator with rows for
-  under half of the window (it just joined) is left out of the total. New gauge
-  `gnoland_chain_bft_margin_percent{chain}`. The check runs in minute 0 of the
-  5-minute job cycle (+45s..+60s). Tunable from the panel's Alert
-  Configuration page; kill switch `bft_alert_enabled=false`, no restart.
+  is checked over the last `bft_alert_window_blocks` (default 100). A
+  validator is online when it signed at least 50% of its rows in the window
+  and did not miss its last `warning_threshold` (default 5) blocks in a row;
+  every voting-power holder counts in the total, including one that just
+  joined. CRITICAL when the margin above 2/3 drops under
+  `bft_alert_critical_margin_pct` (default 3% of total VP), or when no further
+  loss (largest first) is survivable because of offline validators (the
+  complete set survived one, or more validators became single points of
+  failure); WARNING under `bft_alert_warning_margin_pct` (default 10%) or
+  with at most `bft_alert_warning_losses` (default 1) loss left, down from the
+  all-online count. A valset that is fragile even when complete (the devnet's
+  10/10/11, one validator above 1/3) does not alert on that alone. Same-level
+  resends and de-escalations follow `alert_warning_resend_hours` /
+  `alert_critical_resend_hours`; an escalation is sent at once;
+  `BFT_RESOLVED` needs two healthy checks in a row on an advancing chain, and
+  a new alert right after a resolve needs two bad checks. Sent through
+  Discord, Slack and Telegram with no contact mention, logged in `alert_logs`
+  with `addr = 'bft'` (reserved in the incidents API), excluded from the
+  health score. Not evaluated before the first voting-power snapshot, with
+  under 80% of the window's heights collected, or when the latest block is
+  older than two check intervals (at least 10 minutes; a halted chain is the
+  stagnation alert's job). New gauge `gnoland_chain_bft_margin_percent{chain}`.
+  The check runs in minute 0 of the 5-minute job cycle (+45s..+60s). Tunable
+  from the panel's Alert Configuration page; kill switch
+  `bft_alert_enabled=false`, no restart.
 
 - **Daily report shows the BFT margin and each flagged validator's proposed
   blocks** (#99) — every daily report (Discord, Slack, Telegram) gains a line

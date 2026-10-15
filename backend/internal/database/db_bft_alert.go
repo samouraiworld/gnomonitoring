@@ -11,13 +11,17 @@ import (
 // latest addr_monikers snapshot) with its signing record over the last N
 // blocks of the chain. Blocks is the number of rows it has in the window
 // (one per block it was in the valset for); Signed is how many of them it
-// signed. A member with no row in the window has Blocks = Signed = 0.
+// signed. TrailingMissed counts its rows after the last block it signed in
+// the window (all of them when it signed none): the misses at the tip,
+// which a window-wide rate hides for a validator that only just stopped.
+// A member with no row in the window has all three at 0.
 type BFTWindowEntry struct {
-	Addr        string `gorm:"column:addr"`
-	Moniker     string `gorm:"column:moniker"`
-	VotingPower int64  `gorm:"column:voting_power"`
-	Blocks      int64  `gorm:"column:blocks"`
-	Signed      int64  `gorm:"column:signed"`
+	Addr           string `gorm:"column:addr"`
+	Moniker        string `gorm:"column:moniker"`
+	VotingPower    int64  `gorm:"column:voting_power"`
+	Blocks         int64  `gorm:"column:blocks"`
+	Signed         int64  `gorm:"column:signed"`
+	TrailingMissed int64  `gorm:"column:trailing_missed"`
 }
 
 // BFTWindow is the result of GetBFTWindow: the window bounds, how many of
@@ -70,19 +74,33 @@ func GetBFTWindow(db *gorm.DB, chainID string, windowBlocks int) (BFTWindow, err
 	}
 
 	if err := db.Raw(`
-		WITH win AS (
-			SELECT addr,
-			       COUNT(*) AS blocks,
-			       COUNT(*) FILTER (WHERE participated) AS signed
+		WITH rows AS (
+			SELECT addr, block_height, participated
 			FROM daily_participations
 			WHERE chain_id = ? AND block_height BETWEEN ? AND ?
+		),
+		agg AS (
+			SELECT addr,
+			       COUNT(*) AS blocks,
+			       COUNT(*) FILTER (WHERE participated) AS signed,
+			       COALESCE(MAX(block_height) FILTER (WHERE participated), 0) AS last_signed
+			FROM rows
 			GROUP BY addr
+		),
+		trail AS (
+			SELECT r.addr, COUNT(*) AS trailing_missed
+			FROM rows r
+			JOIN agg a ON a.addr = r.addr
+			WHERE r.block_height > a.last_signed
+			GROUP BY r.addr
 		)
 		SELECT am.addr, am.moniker, am.voting_power,
-		       COALESCE(win.blocks, 0) AS blocks,
-		       COALESCE(win.signed, 0) AS signed
+		       COALESCE(agg.blocks, 0) AS blocks,
+		       COALESCE(agg.signed, 0) AS signed,
+		       COALESCE(trail.trailing_missed, 0) AS trailing_missed
 		FROM addr_monikers am
-		LEFT JOIN win ON win.addr = am.addr
+		LEFT JOIN agg ON agg.addr = am.addr
+		LEFT JOIN trail ON trail.addr = am.addr
 		WHERE am.chain_id = ? AND am.voting_power > 0
 		ORDER BY am.voting_power DESC, am.addr`,
 		chainID, w.MinHeight, w.MaxHeight, chainID).Scan(&w.Entries).Error; err != nil {

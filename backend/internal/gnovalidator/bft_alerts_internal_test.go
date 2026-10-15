@@ -123,19 +123,32 @@ func TestRunBFTAlertCycle_ResolvesAfterTwoHealthyChecks(t *testing.T) {
 	const chainID = "bft-cycle-resolve"
 	seedBFTChain(t, db, chainID, []int64{10, 10, 11}, []int64{100, 100, 100})
 	require.NoError(t, database.InsertAlertlog(db, chainID, bftAlertAddr, bftAlertAddr, bftLevelCritical, 101, 200, false, time.Now().UTC().Add(-time.Hour), ""))
-	t.Cleanup(func() {
-		bftOKStreaksMu.Lock()
-		delete(bftOKStreaks, chainID)
-		bftOKStreaksMu.Unlock()
-	})
+	t.Cleanup(func() { resetBFTStreak(chainID) })
 	jobs := captureBFTDispatch(t)
 
 	runBFTAlertCycle(context.Background(), db, chainID, bftTestThresholds())
 	assert.Empty(t, *jobs, "one healthy check is not enough to resolve")
 
 	runBFTAlertCycle(context.Background(), db, chainID, bftTestThresholds())
+	assert.Empty(t, *jobs, "a second check of the same height proves nothing new")
+
+	addBFTBlock(t, db, chainID, 3, 201)
+	runBFTAlertCycle(context.Background(), db, chainID, bftTestThresholds())
 	require.Len(t, *jobs, 1)
 	assert.Equal(t, bftLevelResolved, (*jobs)[0].level)
+}
+
+// addBFTBlock writes one more block, signed by all n validators of
+// seedBFTChain.
+func addBFTBlock(t *testing.T, db *gorm.DB, chainID string, n int, height int64) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		addr := bftWindow(repeat(1, n), repeat(100, n)).Entries[i].Addr
+		require.NoError(t, db.Create(&database.DailyParticipation{
+			ChainID: chainID, Addr: addr, Moniker: addr, BlockHeight: height,
+			Date: time.Now().UTC(), Participated: true,
+		}).Error)
+	}
 }
 
 func TestRunBFTAlertCycle_NoSnapshotDoesNothing(t *testing.T) {
