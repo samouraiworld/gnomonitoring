@@ -182,6 +182,20 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **Unreachable Keycloak issuer no longer stops the backend** — in keycloak
+  mode, a failed OIDC discovery at boot used to exit the process, taking
+  monitoring and alerting down with it. The backend now starts, retries
+  discovery in the background with backoff (5 s up to 5 min), and answers
+  `503` with `Retry-After` to Keycloak tokens until it succeeds. With the
+  Clerk fallback on, the general routes keep accepting Clerk tokens
+  meanwhile. Requests to the issuer now time out after 15 s, and a malformed
+  `keycloak_issuer` still stops startup. See `docs/authentication.md`.
+
+- **GovDAO status checks skip disabled chains** — `CheckProposalStatus` only
+  polls proposals of enabled chains. It used to poll every stored proposal and
+  log `no RPC pool registered` for each proposal of a disabled chain every
+  5 minutes. Rows of disabled chains stay untouched.
+
 - **Daily report link is clickable on Discord** — the `Full report` link sat in
   the embed footer, which Discord renders as plain text. It now goes on the
   embed title and in a last Markdown-link field.

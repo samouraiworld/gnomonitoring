@@ -185,20 +185,25 @@ type contextKey struct{}
 // structural change, only a different `protect` function.
 func (v *Verifier) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rawToken, ok := BearerToken(r)
-		if !ok {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		claims, err := v.VerifyToken(r.Context(), rawToken)
-		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r.WithContext(NewClaimsContext(r.Context(), claims)))
+		v.authenticate(w, r, next)
 	})
+}
+
+// authenticate is the body of Middleware, shared with LazyVerifier.
+func (v *Verifier) authenticate(w http.ResponseWriter, r *http.Request, next http.Handler) {
+	rawToken, ok := BearerToken(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	claims, err := v.VerifyToken(r.Context(), rawToken)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	next.ServeHTTP(w, r.WithContext(NewClaimsContext(r.Context(), claims)))
 }
 
 // BearerToken extracts the raw token from an "Authorization: Bearer <token>"
