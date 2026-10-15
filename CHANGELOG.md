@@ -70,6 +70,26 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **BFT margin alert (`BFT_WARNING` / `BFT_CRITICAL` / `BFT_RESOLVED`)** —
+  every `bft_alert_check_minutes` (default 5) each chain's online voting power
+  is checked over the last `bft_alert_window_blocks` (default 100); a
+  validator is online when it signed at least 50% of them. CRITICAL when the
+  margin above 2/3 drops under `bft_alert_critical_margin_pct` (default 3% of
+  total VP) or one more loss (largest first) would halt the chain; WARNING
+  under `bft_alert_warning_margin_pct` (default 10%) or with at most
+  `bft_alert_warning_losses` (default 1) loss left. The tolerable-losses rule
+  only fires when offline validators lowered it: a small valset that cannot
+  lose anyone even when complete (the devnet's 10/10/11) never alerts on that
+  alone. Same-level resends follow `alert_warning_resend_hours` /
+  `alert_critical_resend_hours`; escalation and de-escalation are sent at once;
+  `BFT_RESOLVED` needs two healthy checks in a row. Sent through Discord, Slack
+  and Telegram with no contact mention, logged in `alert_logs` with
+  `addr = 'bft'`, excluded from the health score. No evaluation before the
+  first voting-power snapshot. New gauge
+  `gnoland_chain_bft_margin_percent{chain}`. The check runs in minute 0 of the
+  5-minute job cycle (+45s..+60s). Tunable from the panel's Alert
+  Configuration page; kill switch `bft_alert_enabled=false`, no restart.
+
 - **Daily report shows the BFT margin and each flagged validator's proposed
   blocks** (#99) — every daily report (Discord, Slack, Telegram) gains a line
   such as `🛡️ BFT margin (last 24h): 6/7 validators online (85.7% VP) — 19.0%

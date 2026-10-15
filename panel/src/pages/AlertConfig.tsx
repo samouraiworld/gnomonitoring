@@ -6,7 +6,7 @@ import type { ApiStatus } from '../types/api'
 
 // Keys stored as "true"/"false" and read server-side with strconv.ParseBool.
 // A number input cannot represent them, so they are rendered as a select.
-const BOOLEAN_KEYS = new Set(['latency_alert_enabled'])
+const BOOLEAN_KEYS = new Set(['latency_alert_enabled', 'bft_alert_enabled'])
 
 function isBooleanKey(key: string, value: string): boolean {
   return BOOLEAN_KEYS.has(key) || value === 'true' || value === 'false'
@@ -56,6 +56,7 @@ export default function AlertConfig() {
     { title: 'Monitoring Intervals', keys: ['rpc_error_cooldown_minutes', 'new_validator_scan_minutes', 'alert_check_interval_seconds'] },
     { title: 'Data Retention', keys: ['raw_retention_days', 'aggregator_period_minutes'] },
     { title: 'Latency Alerts', keys: ['latency_alert_enabled', 'latency_alert_check_minutes', 'latency_alert_window_minutes', 'latency_alert_min_lag_ms', 'latency_alert_peer_factor', 'latency_alert_min_samples', 'latency_alert_resend_hours'] },
+    { title: 'BFT Margin Alerts', keys: ['bft_alert_enabled', 'bft_alert_check_minutes', 'bft_alert_window_blocks', 'bft_alert_warning_losses', 'bft_alert_warning_margin_pct', 'bft_alert_critical_margin_pct'] },
   ]
 
   if (loading) {

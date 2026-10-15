@@ -192,6 +192,17 @@ var (
 		[]string{"chain"},
 	)
 
+	// ChainBFTMarginPercent is the online voting power above the 2/3 quorum,
+	// as a percentage of the total, over the BFT alert window. Zero or below
+	// means the quorum is not met. Absent until a voting-power snapshot exists.
+	ChainBFTMarginPercent = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "gnoland_chain_bft_margin_percent",
+			Help: "Online voting power above the 2/3 quorum, in percent of total voting power",
+		},
+		[]string{"chain"},
+	)
+
 	initOnce sync.Once
 )
 
@@ -220,6 +231,7 @@ func Init() {
 		prometheus.MustRegister(ChainPeerCount)
 		prometheus.MustRegister(ChainMempoolTxCount)
 		prometheus.MustRegister(ChainValsetSize)
+		prometheus.MustRegister(ChainBFTMarginPercent)
 	})
 }
 

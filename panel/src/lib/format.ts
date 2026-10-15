@@ -47,6 +47,9 @@ export function getThresholdUnit(key: string): string {
   // Specific keys first: the generic suffix rules below do not cover them.
   if (key === 'latency_alert_min_lag_ms') return 'ms'
   if (key === 'latency_alert_peer_factor') return 'x peers'
+  if (key === 'bft_alert_window_blocks') return 'blocks'
+  if (key === 'bft_alert_warning_losses') return 'validators'
+  if (key.endsWith('_margin_pct')) return '% VP'
   if (key.includes('minutes')) return 'min'
   if (key.includes('seconds')) return 'sec'
   if (key.includes('hours')) return 'h'
@@ -65,6 +68,9 @@ export function levelBadgeClass(level: string): string {
     case 'INFO': return 'badge-info'
     case 'LATENCY': return 'badge-warn'
     case 'LATENCY_RESOLVED': return 'badge-ok'
+    case 'BFT_CRITICAL': return 'badge-critical'
+    case 'BFT_WARNING': return 'badge-warn'
+    case 'BFT_RESOLVED': return 'badge-ok'
     default: return 'badge-muted'
   }
 }

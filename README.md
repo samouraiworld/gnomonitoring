@@ -416,6 +416,22 @@ curl -L -X PUT '127.0.0.7:8989/webhooks/[govdao | validator]' \
     `flush_throttle_timeout`, `peer_gossip_sleep_duration`, `timeout_commit`
     or NTP drift, carries no contact mention and does not affect the health
     score. Disable with `latency_alert_enabled=false` (no restart).
+- The chain is close to losing its 2/3 quorum (BFT margin):
+  - checked every `bft_alert_check_minutes` (default 5) over the last
+    `bft_alert_window_blocks` (default 100); a validator counts as online when
+    it signed at least 50% of them. Only voting power counts.
+  - CRITICAL when the online voting power is less than
+    `bft_alert_critical_margin_pct` (default 3) points of total voting power
+    above 2/3, or when one more validator going offline (largest first) would
+    halt the chain; WARNING under `bft_alert_warning_margin_pct` (default 10)
+    or with at most `bft_alert_warning_losses` (default 1) validator left to
+    lose. The tolerable-losses rule only counts when offline validators
+    lowered it: a valset too small to lose anyone even when complete does not
+    alert on that alone.
+  - resolved (BFT_RESOLVED) after two healthy checks in a row; carries no
+    contact mention and does not affect the health score. Disable with
+    `bft_alert_enabled=false` (no restart). A chain that already halted is
+    reported by the stagnation alert, not this one.
 
 ![Alert example](assets/alert.png)
 
@@ -520,7 +536,8 @@ The Latest Incidents metric returns rows of the chain's alert log within a speci
 - `WARNING` and `CRITICAL` rows for a validator's missed blocks;
 - `LATENCY` and `LATENCY_RESOLVED` rows for a validator's precommit lag;
 - `RESOLVED` rows, sent when the validator, the chain or the RPC connection recovers;
-- chain-wide rows whose `addr` is `all` (chain stagnation) or `rpc` (RPC outage).
+- chain-wide rows whose `addr` is `all` (chain stagnation) or `rpc` (RPC outage);
+- chain-wide `BFT_WARNING`, `BFT_CRITICAL` and `BFT_RESOLVED` rows whose `addr` is `bft` (BFT margin).
 
 Rows are sorted by `endHeight` (descending), then by `sentAt` (newest first), and the limit applies to that order: an older row at a higher `endHeight` comes before a newer row at a lower one. RPC rows have `endHeight` 0, so they come last. `current_week` starts on Monday 00:00 UTC; `current_month` and `current_year` also start at 00:00 UTC. Each period includes its start and excludes its end.
 
@@ -850,6 +867,7 @@ Metrics are exposed at <http://localhost:8888/metrics>. All metrics include chai
 - `gnoland_chain_active_validators` — Number of active validators (last 100 blocks)
 - `gnoland_chain_avg_participation_rate` — Average participation rate (%) across chain
 - `gnoland_chain_current_height` — Current blockchain height
+- `gnoland_chain_bft_margin_percent` — Online voting power above the 2/3 quorum, in % of total voting power (0 or below: no quorum); absent before the first voting-power snapshot
 
 **Alert Metrics** (active and cumulative alerts):
 
