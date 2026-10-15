@@ -55,7 +55,11 @@ func buildAuthSetup(ctx context.Context) (*authSetup, error) {
 		}, nil
 	}
 
-	verifier, err := keycloakauth.New(ctx, internal.Config.KeycloakIssuer, internal.Config.KeycloakAllowedClients)
+	// An unreachable issuer does not fail startup: monitoring and alerting
+	// must keep running. Discover retries in the background, and until it
+	// succeeds the Keycloak-protected routes answer 503.
+	verifier, err := keycloakauth.Discover(ctx, internal.Config.KeycloakIssuer,
+		internal.Config.KeycloakAllowedClients, keycloakauth.DefaultBackoff)
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +83,12 @@ func buildAuthSetup(ctx context.Context) (*authSetup, error) {
 	}, nil
 }
 
+// tokenVerifier is the part of keycloakauth.Verifier and LazyVerifier that
+// dualAccept needs.
+type tokenVerifier interface {
+	VerifyToken(ctx context.Context, rawToken string) (*keycloakauth.Claims, error)
+}
+
 // dualAccept tries Keycloak verification first and delegates to Clerk's
 // middleware when the bearer token is absent or is not a valid Keycloak token.
 // Clerk's middleware is the last link, so it — not this wrapper — writes the
@@ -86,8 +96,10 @@ func buildAuthSetup(ctx context.Context) (*authSetup, error) {
 // the general routes returned before the cutover.
 //
 // A Keycloak token that verifies never reaches Clerk, so the fallback costs a
-// Keycloak-authenticated request nothing.
-func dualAccept(verifier *keycloakauth.Verifier, clerkProtect func(http.Handler) http.Handler) middleware {
+// Keycloak-authenticated request nothing. While the Keycloak issuer has not
+// been discovered yet, every token goes to Clerk, so Clerk callers keep
+// working.
+func dualAccept(verifier tokenVerifier, clerkProtect func(http.Handler) http.Handler) middleware {
 	return func(next http.Handler) http.Handler {
 		clerkChain := clerkProtect(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
