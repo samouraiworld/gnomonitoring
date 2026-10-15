@@ -18,6 +18,12 @@ import (
 // on a large valset does not produce an unreadable (or oversized) alert.
 const bftMaxOfflineListed = 10
 
+// bftMaxNameRunes caps each listed name. Monikers come from the chain and
+// have no length limit; with bftMaxOfflineListed names this keeps the field
+// under Discord's 1024-character embed field limit, which would otherwise
+// reject the whole alert.
+const bftMaxNameRunes = 64
+
 func pluralValidators(n int) string {
 	if n == 1 {
 		return "validator"
@@ -59,6 +65,9 @@ func bftOfflineText(offline []bftOffline) string {
 		name := o.Moniker
 		if name == "" {
 			name = o.Addr
+		}
+		if r := []rune(name); len(r) > bftMaxNameRunes {
+			name = string(r[:bftMaxNameRunes-1]) + "…"
 		}
 		parts = append(parts, fmt.Sprintf("%s (%d VP)", name, o.VotingPower))
 	}
@@ -155,10 +164,19 @@ var (
 	bftOKStreaks   = map[string]int{}
 )
 
-// runBFTAlertCycle performs one evaluation pass for a chain.
-func runBFTAlertCycle(db *gorm.DB, chainID string, t Thresholds) {
+func resetBFTOKStreak(chainID string) {
+	bftOKStreaksMu.Lock()
+	bftOKStreaks[chainID] = 0
+	bftOKStreaksMu.Unlock()
+}
+
+// runBFTAlertCycle performs one evaluation pass for a chain. ctx is checked
+// once more right before dispatching, so a cycle still running when its
+// chain is restarted does not notify alongside the new goroutine's cycle.
+func runBFTAlertCycle(ctx context.Context, db *gorm.DB, chainID string, t Thresholds) {
 	if !t.BFTAlertEnabled {
 		ChainBFTMarginPercent.DeleteLabelValues(chainID)
+		resetBFTOKStreak(chainID)
 		return
 	}
 
@@ -167,15 +185,13 @@ func runBFTAlertCycle(db *gorm.DB, chainID string, t Thresholds) {
 		log.Printf("[bft][%s] GetBFTWindow error: %v", chainID, err)
 		return
 	}
-	ev := evaluateBFT(window, t)
+	ev := evaluateBFT(window, t, time.Now())
 	if !ev.Evaluated {
-		// No voting-power snapshot (or no block yet): nothing is known about
-		// the quorum. Absence of data is not a recovery either, so the
-		// healthy streak restarts.
+		// No voting-power snapshot, too few collected blocks, or a stalled
+		// chain: nothing is known about the quorum now. Absence of data is
+		// not a recovery either, so the healthy streak restarts.
 		ChainBFTMarginPercent.DeleteLabelValues(chainID)
-		bftOKStreaksMu.Lock()
-		bftOKStreaks[chainID] = 0
-		bftOKStreaksMu.Unlock()
+		resetBFTOKStreak(chainID)
 		return
 	}
 	ChainBFTMarginPercent.WithLabelValues(chainID).Set(ev.Live.MarginPercent())
@@ -191,7 +207,7 @@ func runBFTAlertCycle(db *gorm.DB, chainID string, t Thresholds) {
 	bftOKStreaks[chainID] = streak
 	bftOKStreaksMu.Unlock()
 
-	if level == "" {
+	if level == "" || ctx.Err() != nil {
 		return
 	}
 	getBFTDispatch()(bftJob{db: db, chainID: chainID, level: level, eval: ev, windowBlocks: t.BFTAlertWindowBlocks})
@@ -214,7 +230,11 @@ func WatchBFTAlerts(ctx context.Context, db *gorm.DB, chainID string) {
 		for {
 			t := GetThresholds()
 			if isChainSynced(chainID) {
-				runBFTAlertCycle(db, chainID, t)
+				runBFTAlertCycle(ctx, db, chainID, t)
+			} else {
+				// Catching up: the stored tip is not the chain's, so a margin
+				// computed from it would be stale.
+				ChainBFTMarginPercent.DeleteLabelValues(chainID)
 			}
 			select {
 			case <-ctx.Done():

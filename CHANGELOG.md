@@ -81,11 +81,15 @@ Entries are ordered newest-first within each section.
   only fires when offline validators lowered it: a small valset that cannot
   lose anyone even when complete (the devnet's 10/10/11) never alerts on that
   alone. Same-level resends follow `alert_warning_resend_hours` /
-  `alert_critical_resend_hours`; escalation and de-escalation are sent at once;
-  `BFT_RESOLVED` needs two healthy checks in a row. Sent through Discord, Slack
+  `alert_critical_resend_hours`; an escalation is sent at once, a
+  de-escalation waits for the open level's resend window; `BFT_RESOLVED` needs
+  two healthy checks in a row. Sent through Discord, Slack
   and Telegram with no contact mention, logged in `alert_logs` with
   `addr = 'bft'`, excluded from the health score. No evaluation before the
-  first voting-power snapshot. New gauge
+  first voting-power snapshot, with fewer than half of the window's blocks
+  collected, or when the latest block is older than two check intervals (a
+  halted chain is the stagnation alert's job); a validator with rows for
+  under half of the window (it just joined) is left out of the total. New gauge
   `gnoland_chain_bft_margin_percent{chain}`. The check runs in minute 0 of the
   5-minute job cycle (+45s..+60s). Tunable from the panel's Alert
   Configuration page; kill switch `bft_alert_enabled=false`, no restart.

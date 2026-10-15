@@ -20,13 +20,17 @@ type BFTWindowEntry struct {
 	Signed      int64  `gorm:"column:signed"`
 }
 
-// BFTWindow is the result of GetBFTWindow: the window bounds and one entry
-// per voting-power holder. MaxHeight is 0 when the chain has no
-// participation row yet.
+// BFTWindow is the result of GetBFTWindow: the window bounds, how many of
+// its heights were actually collected (Heights; a fetch failure leaves a
+// gap until gap reconciliation fills it), the block time of the highest
+// height, and one entry per voting-power holder. MaxHeight is 0 when the
+// chain has no participation row yet.
 type BFTWindow struct {
-	MinHeight int64
-	MaxHeight int64
-	Entries   []BFTWindowEntry
+	MinHeight     int64
+	MaxHeight     int64
+	Heights       int64
+	LastBlockTime time.Time
+	Entries       []BFTWindowEntry
 }
 
 // GetBFTWindow returns, for every validator holding voting power in the
@@ -46,6 +50,23 @@ func GetBFTWindow(db *gorm.DB, chainID string, windowBlocks int) (BFTWindow, err
 	w.MinHeight = w.MaxHeight - int64(windowBlocks) + 1
 	if w.MinHeight < 1 {
 		w.MinHeight = 1
+	}
+
+	var cov struct {
+		Heights  int64
+		LastTime *time.Time
+	}
+	if err := db.Raw(`
+		SELECT COUNT(DISTINCT block_height) AS heights,
+		       MAX(date) FILTER (WHERE block_height = ?) AS last_time
+		FROM daily_participations
+		WHERE chain_id = ? AND block_height BETWEEN ? AND ?`,
+		w.MaxHeight, chainID, w.MinHeight, w.MaxHeight).Scan(&cov).Error; err != nil {
+		return BFTWindow{}, fmt.Errorf("GetBFTWindow(%s) coverage: %w", chainID, err)
+	}
+	w.Heights = cov.Heights
+	if cov.LastTime != nil {
+		w.LastBlockTime = *cov.LastTime
 	}
 
 	if err := db.Raw(`

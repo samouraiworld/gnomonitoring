@@ -23,6 +23,13 @@ const (
 // signing around the online threshold does not flip the alert every cycle.
 const bftResolveChecks = 2
 
+// bftStaleIntervals: when the window's latest block is older than this many
+// check intervals, the chain is stalled (or collection is): the frozen
+// window says nothing about who is online now, so no verdict is drawn from
+// it — in particular no false resolve during a halt. The halt itself is the
+// stagnation alert's job.
+const bftStaleIntervals = 2
+
 type bftSeverity int
 
 const (
@@ -56,15 +63,18 @@ type bftEval struct {
 }
 
 // bftEntries converts the window rows into the report entries
-// computeBFTMargin expects. A member with no row in the window has a sign
-// rate of 0: it did not sign anything the monitor saw.
+// computeBFTMargin expects. The collector writes one row per block for every
+// valset member, signed or not, so a member with rows for fewer than half
+// of the collected heights only just joined (or just left) the valset: its
+// sign rate would rest on a handful of blocks, or on none, so it is left out
+// of both the online and the total voting power until it has a history.
 func bftEntries(w database.BFTWindow) []database.ValidatorReportEntry {
 	entries := make([]database.ValidatorReportEntry, 0, len(w.Entries))
 	for _, e := range w.Entries {
-		var rate float64
-		if e.Blocks > 0 {
-			rate = float64(e.Signed) / float64(e.Blocks) * 100
+		if e.Blocks == 0 || 2*e.Blocks < w.Heights {
+			continue
 		}
+		rate := float64(e.Signed) / float64(e.Blocks) * 100
 		entries = append(entries, database.ValidatorReportEntry{
 			Addr: e.Addr, Moniker: e.Moniker, VotingPower: e.VotingPower, SignRate: rate,
 		})
@@ -83,7 +93,17 @@ func bftEntries(w database.BFTWindow) []database.ValidatorReportEntry {
 //     validators lowered it below its all-online value: a small or
 //     concentrated valset that tolerates no loss even when complete is a
 //     structural fact, not an incident, and must not alert forever.
-func evaluateBFT(w database.BFTWindow, t Thresholds) bftEval {
+//
+// Nothing is evaluated without a voting-power snapshot, when fewer than half
+// of the window's heights were collected, or when the latest block is stale
+// (see bftStaleIntervals).
+func evaluateBFT(w database.BFTWindow, t Thresholds, now time.Time) bftEval {
+	if 2*w.Heights < int64(t.BFTAlertWindowBlocks) || w.Heights == 0 {
+		return bftEval{}
+	}
+	if now.Sub(w.LastBlockTime) > bftStaleIntervals*t.BFTAlertCheckInterval() {
+		return bftEval{}
+	}
 	entries := bftEntries(w)
 	live := computeBFTMargin(entries)
 	if !live.Available {
@@ -133,9 +153,11 @@ func evaluateBFT(w database.BFTWindow, t Thresholds) bftEval {
 // checks seen so far. It returns the new count.
 //
 //   - no open alert: send the verdict's level, if any;
-//   - open alert, different level (escalation or de-escalation): send it now;
-//   - open alert, same level: resend only once the level's resend window
-//     (alert_warning_resend_hours / alert_critical_resend_hours) elapsed;
+//   - open WARNING, CRITICAL verdict (escalation): send it now;
+//   - open CRITICAL, WARNING verdict (de-escalation) or same level: send only
+//     once the open level's resend window (alert_warning_resend_hours /
+//     alert_critical_resend_hours) elapsed, so a margin hovering around a
+//     threshold does not re-alert every cycle;
 //   - open alert, healthy verdict: resolve after bftResolveChecks in a row.
 func decideBFT(sev bftSeverity, state database.BFTAlertState, okStreak int, now time.Time, t Thresholds) (string, int) {
 	active := state.Level == bftLevelWarning || state.Level == bftLevelCritical
@@ -150,14 +172,18 @@ func decideBFT(sev bftSeverity, state database.BFTAlertState, okStreak int, now 
 		return "", okStreak
 	}
 
-	level, resendLevel := bftLevelWarning, "WARNING"
+	level := bftLevelWarning
 	if sev == bftCritical {
-		level, resendLevel = bftLevelCritical, "CRITICAL"
+		level = bftLevelCritical
 	}
-	if !active || state.Level != level {
+	if !active || (level == bftLevelCritical && state.Level == bftLevelWarning) {
 		return level, 0
 	}
-	if now.Sub(state.SentAt) >= time.Duration(t.ResendHoursForLevel(resendLevel))*time.Hour {
+	openLevel := "WARNING"
+	if state.Level == bftLevelCritical {
+		openLevel = "CRITICAL"
+	}
+	if now.Sub(state.SentAt) >= time.Duration(t.ResendHoursForLevel(openLevel))*time.Hour {
 		return level, 0
 	}
 	return "", 0

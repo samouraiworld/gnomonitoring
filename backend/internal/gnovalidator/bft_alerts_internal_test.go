@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestBuildBFTAlertData(t *testing.T) {
-	ev := evaluateBFT(bftWindow([]int64{10, 10, 11}, []int64{0, 100, 100}), bftTestThresholds())
+	ev := evaluateBFT(bftWindow([]int64{10, 10, 11}, []int64{0, 100, 100}), bftTestThresholds(), bftTestNow)
 
 	d := buildBFTAlertData("betanet", bftLevelCritical, ev, 100)
 
@@ -34,7 +35,7 @@ func TestBuildBFTAlertData(t *testing.T) {
 }
 
 func TestBuildBFTAlertData_BelowQuorumAndLongOfflineList(t *testing.T) {
-	ev := evaluateBFT(bftWindow(repeat(10, 12), append(repeat(100, 1), repeat(0, 11)...)), bftTestThresholds())
+	ev := evaluateBFT(bftWindow(repeat(10, 12), append(repeat(100, 1), repeat(0, 11)...)), bftTestThresholds(), bftTestNow)
 
 	d := buildBFTAlertData("betanet", bftLevelCritical, ev, 100)
 
@@ -44,8 +45,18 @@ func TestBuildBFTAlertData_BelowQuorumAndLongOfflineList(t *testing.T) {
 	assert.Equal(t, bftMaxOfflineListed+1, len(strings.Split(off, ", ")))
 }
 
+func TestBuildBFTAlertData_TruncatesLongMonikers(t *testing.T) {
+	w := bftWindow(repeat(10, 4), []int64{100, 100, 100, 0})
+	w.Entries[3].Moniker = strings.Repeat("x", 500)
+	ev := evaluateBFT(w, bftTestThresholds(), bftTestNow)
+
+	off := fieldValue(t, buildBFTAlertData("betanet", bftLevelCritical, ev, 100), "offline (signed < 50% of last 100 blocks)")
+
+	assert.Equal(t, strings.Repeat("x", bftMaxNameRunes-1)+"… (10 VP)", off)
+}
+
 func TestBuildBFTResolvedData(t *testing.T) {
-	ev := evaluateBFT(bftWindow(repeat(10, 4), repeat(100, 4)), bftTestThresholds())
+	ev := evaluateBFT(bftWindow(repeat(10, 4), repeat(100, 4)), bftTestThresholds(), bftTestNow)
 
 	d := buildBFTResolvedData("betanet", ev)
 
@@ -87,7 +98,7 @@ func TestRunBFTAlertCycle_TriggersAndSetsGauge(t *testing.T) {
 	seedBFTChain(t, db, chainID, []int64{10, 10, 11}, []int64{0, 100, 100})
 	jobs := captureBFTDispatch(t)
 
-	runBFTAlertCycle(db, chainID, bftTestThresholds())
+	runBFTAlertCycle(context.Background(), db, chainID, bftTestThresholds())
 
 	require.Len(t, *jobs, 1)
 	assert.Equal(t, bftLevelCritical, (*jobs)[0].level)
@@ -102,7 +113,7 @@ func TestRunBFTAlertCycle_NoResendWhileActive(t *testing.T) {
 	require.NoError(t, database.InsertAlertlog(db, chainID, bftAlertAddr, bftAlertAddr, bftLevelCritical, 101, 200, false, time.Now().UTC().Add(-time.Hour), ""))
 	jobs := captureBFTDispatch(t)
 
-	runBFTAlertCycle(db, chainID, bftTestThresholds())
+	runBFTAlertCycle(context.Background(), db, chainID, bftTestThresholds())
 
 	assert.Empty(t, *jobs, "an open alert of the same level must not be re-sent inside the resend window")
 }
@@ -119,10 +130,10 @@ func TestRunBFTAlertCycle_ResolvesAfterTwoHealthyChecks(t *testing.T) {
 	})
 	jobs := captureBFTDispatch(t)
 
-	runBFTAlertCycle(db, chainID, bftTestThresholds())
+	runBFTAlertCycle(context.Background(), db, chainID, bftTestThresholds())
 	assert.Empty(t, *jobs, "one healthy check is not enough to resolve")
 
-	runBFTAlertCycle(db, chainID, bftTestThresholds())
+	runBFTAlertCycle(context.Background(), db, chainID, bftTestThresholds())
 	require.Len(t, *jobs, 1)
 	assert.Equal(t, bftLevelResolved, (*jobs)[0].level)
 }
@@ -135,10 +146,23 @@ func TestRunBFTAlertCycle_NoSnapshotDoesNothing(t *testing.T) {
 	// A margin left over from an earlier check must not outlive the snapshot.
 	ChainBFTMarginPercent.WithLabelValues(chainID).Set(20)
 
-	runBFTAlertCycle(db, chainID, bftTestThresholds())
+	runBFTAlertCycle(context.Background(), db, chainID, bftTestThresholds())
 
 	assert.Empty(t, *jobs)
 	assert.False(t, ChainBFTMarginPercent.DeleteLabelValues(chainID), "the gauge must be removed when nothing can be evaluated")
+}
+
+func TestRunBFTAlertCycle_CancelledContextDoesNotDispatch(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chainID = "bft-cycle-cancelled"
+	seedBFTChain(t, db, chainID, []int64{10, 10, 11}, []int64{0, 100, 100})
+	jobs := captureBFTDispatch(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	runBFTAlertCycle(ctx, db, chainID, bftTestThresholds())
+
+	assert.Empty(t, *jobs)
 }
 
 func TestRunBFTAlertCycle_DisabledDoesNothing(t *testing.T) {
@@ -149,7 +173,7 @@ func TestRunBFTAlertCycle_DisabledDoesNothing(t *testing.T) {
 
 	th := bftTestThresholds()
 	th.BFTAlertEnabled = false
-	runBFTAlertCycle(db, chainID, th)
+	runBFTAlertCycle(context.Background(), db, chainID, th)
 
 	assert.Empty(t, *jobs)
 }
@@ -157,7 +181,7 @@ func TestRunBFTAlertCycle_DisabledDoesNothing(t *testing.T) {
 func TestDefaultBFTDispatch_WritesAlertLog(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	const chainID = "bft-dispatch"
-	ev := evaluateBFT(bftWindow([]int64{10, 10, 11}, []int64{0, 100, 100}), bftTestThresholds())
+	ev := evaluateBFT(bftWindow([]int64{10, 10, 11}, []int64{0, 100, 100}), bftTestThresholds(), bftTestNow)
 
 	defaultBFTDispatch(bftJob{db: db, chainID: chainID, level: bftLevelCritical, eval: ev, windowBlocks: 100})
 

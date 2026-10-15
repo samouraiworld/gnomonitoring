@@ -44,6 +44,8 @@ func TestGetBFTWindow(t *testing.T) {
 
 	assert.Equal(t, int64(101), w.MinHeight)
 	assert.Equal(t, int64(200), w.MaxHeight)
+	assert.Equal(t, int64(100), w.Heights)
+	assert.WithinDuration(t, time.Now(), w.LastBlockTime, time.Minute)
 	byAddr := map[string]database.BFTWindowEntry{}
 	for _, e := range w.Entries {
 		byAddr[e.Addr] = e
@@ -119,4 +121,19 @@ func TestBFTRowsExcludedFromValidatorQueries(t *testing.T) {
 	n, err := database.GetActiveAlertCount(db2, chain, "CRITICAL")
 	require.NoError(t, err)
 	assert.Equal(t, 0, n)
+}
+
+func TestGetBFTWindow_CountsCollectedHeights(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain = "bft-gaps"
+	require.NoError(t, db.Create(&database.AddrMoniker{ChainID: chain, Addr: "g1a", Moniker: "a", VotingPower: 10}).Error)
+	// Heights 101..200 with every other one missing (fetch failures).
+	seedBFTRows(t, db, chain, "g1a", 101, 200, func(int64) bool { return true })
+	require.NoError(t, db.Exec(`DELETE FROM daily_participations WHERE chain_id = ? AND block_height % 2 = 1`, chain).Error)
+
+	w, err := database.GetBFTWindow(db, chain, 100)
+	require.NoError(t, err)
+	assert.Equal(t, int64(50), w.Heights)
+	require.Len(t, w.Entries, 1)
+	assert.Equal(t, int64(50), w.Entries[0].Blocks)
 }

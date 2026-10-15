@@ -428,6 +428,12 @@ curl -L -X PUT '127.0.0.7:8989/webhooks/[govdao | validator]' \
     lose. The tolerable-losses rule only counts when offline validators
     lowered it: a valset too small to lose anyone even when complete does not
     alert on that alone.
+  - an escalation is sent at once; a de-escalation or a same-level resend
+    waits for `alert_warning_resend_hours` / `alert_critical_resend_hours`.
+  - not evaluated before the first voting-power snapshot, with fewer than half
+    of the window's blocks collected, or when the latest block is older than
+    two check intervals; a validator that just joined (rows for under half of
+    the window) is left out of the total.
   - resolved (BFT_RESOLVED) after two healthy checks in a row; carries no
     contact mention and does not affect the health score. Disable with
     `bft_alert_enabled=false` (no restart). A chain that already halted is

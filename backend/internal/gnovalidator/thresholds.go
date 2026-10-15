@@ -223,29 +223,32 @@ func (t Thresholds) LatencyAlertCheckInterval() time.Duration {
 }
 
 // sanitizeBFTThresholds replaces any out-of-range BFT-alert value with its
-// default. A zero window would leave every validator without a signed block
-// (all offline), and a negative threshold has no meaning. A warning margin
+// default. A zero window would hold no block, a huge window or a huge
+// interval turns the check into a full-table scan or (once the duration
+// overflows) a hot loop, and a negative threshold has no meaning. A warning margin
 // below the critical one is kept: the critical check runs first, so the
 // warning band is then simply empty.
 func sanitizeBFTThresholds(t Thresholds) Thresholds {
-	if t.BFTAlertCheckMinutes <= 0 {
-		log.Printf("[thresholds] bft_alert_check_minutes <= 0, using default 5")
+	if t.BFTAlertCheckMinutes <= 0 || t.BFTAlertCheckMinutes > 1440 {
+		log.Printf("[thresholds] bft_alert_check_minutes outside 1..1440, using default 5")
 		t.BFTAlertCheckMinutes = 5
 	}
-	if t.BFTAlertWindowBlocks <= 0 {
-		log.Printf("[thresholds] bft_alert_window_blocks <= 0, using default 100")
+	if t.BFTAlertWindowBlocks <= 0 || t.BFTAlertWindowBlocks > 10000 {
+		log.Printf("[thresholds] bft_alert_window_blocks outside 1..10000, using default 100")
 		t.BFTAlertWindowBlocks = 100
 	}
 	if t.BFTAlertWarningLosses < 0 {
 		log.Printf("[thresholds] bft_alert_warning_losses < 0, using default 1")
 		t.BFTAlertWarningLosses = 1
 	}
-	if t.BFTAlertWarningMarginPct < 0 {
-		log.Printf("[thresholds] bft_alert_warning_margin_pct < 0, using default 10")
+	// The margin above 2/3 never exceeds 100/3 (every validator online): a
+	// threshold above that would keep a fully healthy chain in alert.
+	if t.BFTAlertWarningMarginPct < 0 || t.BFTAlertWarningMarginPct > 100.0/3 {
+		log.Printf("[thresholds] bft_alert_warning_margin_pct outside 0..33.3, using default 10")
 		t.BFTAlertWarningMarginPct = 10
 	}
-	if t.BFTAlertCriticalMarginPct < 0 {
-		log.Printf("[thresholds] bft_alert_critical_margin_pct < 0, using default 3")
+	if t.BFTAlertCriticalMarginPct < 0 || t.BFTAlertCriticalMarginPct > 100.0/3 {
+		log.Printf("[thresholds] bft_alert_critical_margin_pct outside 0..33.3, using default 3")
 		t.BFTAlertCriticalMarginPct = 3
 	}
 	return t

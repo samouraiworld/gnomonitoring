@@ -18,10 +18,14 @@ func bftTestThresholds() Thresholds {
 	}
 }
 
-// bftWindow builds a 100-block window: vps gives each validator's voting
-// power and signed how many of the 100 blocks it signed.
+// bftTestNow is the evaluation time of the pure tests; bftWindow's latest
+// block is one block time before it, so the window is never stale.
+var bftTestNow = time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+
+// bftWindow builds a fully collected 100-block window: vps gives each
+// validator's voting power and signed how many of the 100 blocks it signed.
 func bftWindow(vps []int64, signed []int64) database.BFTWindow {
-	w := database.BFTWindow{MinHeight: 101, MaxHeight: 200}
+	w := database.BFTWindow{MinHeight: 101, MaxHeight: 200, Heights: 100, LastBlockTime: bftTestNow.Add(-5 * time.Second)}
 	for i, vp := range vps {
 		w.Entries = append(w.Entries, database.BFTWindowEntry{
 			Addr: fmt.Sprintf("g1v%d", i), Moniker: fmt.Sprintf("v%d", i),
@@ -42,8 +46,8 @@ func repeat(v int64, n int) []int64 {
 func TestEvaluateBFT_NoSnapshot(t *testing.T) {
 	th := bftTestThresholds()
 
-	assert.False(t, evaluateBFT(database.BFTWindow{}, th).Evaluated, "empty window")
-	assert.False(t, evaluateBFT(bftWindow([]int64{0, 0, 0}, []int64{0, 0, 0}), th).Evaluated,
+	assert.False(t, evaluateBFT(database.BFTWindow{}, th, bftTestNow).Evaluated, "empty window")
+	assert.False(t, evaluateBFT(bftWindow([]int64{0, 0, 0}, []int64{0, 0, 0}), th, bftTestNow).Evaluated,
 		"no voting power anywhere means no snapshot yet")
 }
 
@@ -112,7 +116,7 @@ func TestEvaluateBFT(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ev := evaluateBFT(bftWindow(tt.vps, tt.signed), bftTestThresholds())
+			ev := evaluateBFT(bftWindow(tt.vps, tt.signed), bftTestThresholds(), bftTestNow)
 
 			require.True(t, ev.Evaluated)
 			assert.Equal(t, tt.want, ev.Severity)
@@ -133,21 +137,58 @@ func TestEvaluateBFT(t *testing.T) {
 }
 
 func TestEvaluateBFT_OfflineSortedByVotingPower(t *testing.T) {
-	ev := evaluateBFT(bftWindow([]int64{1, 10, 5, 50}, []int64{0, 0, 0, 100}), bftTestThresholds())
+	ev := evaluateBFT(bftWindow([]int64{1, 10, 5, 50}, []int64{0, 0, 0, 100}), bftTestThresholds(), bftTestNow)
 
 	require.Len(t, ev.Offline, 3)
 	assert.Equal(t, []int64{10, 5, 1}, []int64{ev.Offline[0].VotingPower, ev.Offline[1].VotingPower, ev.Offline[2].VotingPower})
 }
 
-func TestEvaluateBFT_MemberWithoutRowsIsOffline(t *testing.T) {
-	w := bftWindow(repeat(10, 4), repeat(100, 4))
-	w.Entries[3].Blocks, w.Entries[3].Signed = 0, 0
+// A member with no history yet (it just joined, the collector writes its
+// rows from the next block on) is neither online nor offline: it is left out
+// of the total, so a high-VP joiner cannot raise a false alert.
+func TestEvaluateBFT_JoinerWithoutHistoryIsIgnored(t *testing.T) {
+	for _, blocks := range []int64{0, 3, 49} {
+		w := bftWindow(append(repeat(10, 4), 40), append(repeat(100, 4), 0))
+		w.Entries[4].Blocks = blocks
 
-	ev := evaluateBFT(w, bftTestThresholds())
+		ev := evaluateBFT(w, bftTestThresholds(), bftTestNow)
 
+		require.True(t, ev.Evaluated)
+		assert.Equal(t, bftOK, ev.Severity, "blocks=%d", blocks)
+		assert.Equal(t, int64(40), ev.Live.TotalVP, "blocks=%d", blocks)
+		assert.Empty(t, ev.Offline, "blocks=%d", blocks)
+	}
+
+	// With rows for half of the collected heights it counts.
+	w := bftWindow(append(repeat(10, 4), 40), append(repeat(100, 4), 0))
+	w.Entries[4].Blocks = 50
+	ev := evaluateBFT(w, bftTestThresholds(), bftTestNow)
+	assert.Equal(t, int64(80), ev.Live.TotalVP)
 	assert.Equal(t, bftCritical, ev.Severity)
-	require.Len(t, ev.Offline, 1)
-	assert.Equal(t, "v3", ev.Offline[0].Moniker)
+}
+
+func TestEvaluateBFT_PoorCoverageIsNotEvaluated(t *testing.T) {
+	w := bftWindow(repeat(10, 4), []int64{100, 100, 100, 0})
+	w.Heights = 49
+	for i := range w.Entries {
+		w.Entries[i].Blocks = 49
+	}
+
+	assert.False(t, evaluateBFT(w, bftTestThresholds(), bftTestNow).Evaluated,
+		"fewer than half of the window's heights collected")
+}
+
+// A halted chain freezes the window on its last blocks; drawing a verdict
+// from it could resolve an alert in the middle of the outage.
+func TestEvaluateBFT_StaleWindowIsNotEvaluated(t *testing.T) {
+	th := bftTestThresholds()
+	w := bftWindow(repeat(10, 4), repeat(100, 4))
+
+	w.LastBlockTime = bftTestNow.Add(-2 * th.BFTAlertCheckInterval())
+	assert.True(t, evaluateBFT(w, th, bftTestNow).Evaluated, "exactly two intervals old is still fresh")
+
+	w.LastBlockTime = bftTestNow.Add(-2*th.BFTAlertCheckInterval() - time.Second)
+	assert.False(t, evaluateBFT(w, th, bftTestNow).Evaluated)
 }
 
 func TestDecideBFT(t *testing.T) {
@@ -174,7 +215,8 @@ func TestDecideBFT(t *testing.T) {
 		{"critical inside resend window", bftCritical, open(bftLevelCritical, 23*time.Hour), 0, "", 0},
 		{"critical after resend window", bftCritical, open(bftLevelCritical, 24*time.Hour), 0, bftLevelCritical, 0},
 		{"escalation is immediate", bftCritical, open(bftLevelWarning, time.Minute), 0, bftLevelCritical, 0},
-		{"de-escalation is immediate", bftWarning, open(bftLevelCritical, time.Minute), 0, bftLevelWarning, 0},
+		{"de-escalation waits for the open level's resend window", bftWarning, open(bftLevelCritical, 23*time.Hour), 0, "", 0},
+		{"de-escalation after the open level's resend window", bftWarning, open(bftLevelCritical, 24*time.Hour), 0, bftLevelWarning, 0},
 		{"first healthy check holds", bftOK, open(bftLevelCritical, time.Hour), 0, "", 1},
 		{"second healthy check resolves", bftOK, open(bftLevelWarning, time.Hour), 1, bftLevelResolved, 0},
 		{"relapse resets the streak", bftWarning, open(bftLevelWarning, time.Hour), 1, "", 0},

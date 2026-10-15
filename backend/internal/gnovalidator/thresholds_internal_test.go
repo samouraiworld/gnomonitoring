@@ -63,3 +63,24 @@ func TestSanitizeLatencyThresholds_FallsBackOnNonPositive(t *testing.T) {
 		t.Fatalf("sanitizeLatencyThresholds(%+v) = %+v, want every non-positive value replaced by its default", in, got)
 	}
 }
+
+func TestSanitizeBFTThresholds(t *testing.T) {
+	def := Thresholds{
+		BFTAlertCheckMinutes: 5, BFTAlertWindowBlocks: 100, BFTAlertWarningLosses: 1,
+		BFTAlertWarningMarginPct: 10, BFTAlertCriticalMarginPct: 3,
+	}
+	for _, in := range []Thresholds{
+		{BFTAlertCheckMinutes: 0, BFTAlertWindowBlocks: 0, BFTAlertWarningLosses: -1, BFTAlertWarningMarginPct: -1, BFTAlertCriticalMarginPct: -1},
+		{BFTAlertCheckMinutes: 1441, BFTAlertWindowBlocks: 10001, BFTAlertWarningLosses: -5, BFTAlertWarningMarginPct: 34, BFTAlertCriticalMarginPct: 33.4},
+	} {
+		if got := sanitizeBFTThresholds(in); got != def {
+			t.Errorf("sanitizeBFTThresholds(%+v) = %+v, want defaults %+v", in, got, def)
+		}
+	}
+
+	ok := Thresholds{BFTAlertCheckMinutes: 1440, BFTAlertWindowBlocks: 10000, BFTAlertWarningLosses: 0,
+		BFTAlertWarningMarginPct: 33, BFTAlertCriticalMarginPct: 0}
+	if got := sanitizeBFTThresholds(ok); got != ok {
+		t.Errorf("sanitizeBFTThresholds(%+v) = %+v, want unchanged", ok, got)
+	}
+}
