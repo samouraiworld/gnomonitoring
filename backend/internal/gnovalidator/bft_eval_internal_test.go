@@ -12,7 +12,7 @@ import (
 
 func bftTestThresholds() Thresholds {
 	return Thresholds{
-		WarningThreshold: 5, AlertWarningResendHours: 6, AlertCriticalResendHours: 24,
+		CriticalThreshold: 30, AlertWarningResendHours: 6, AlertCriticalResendHours: 24,
 		BFTAlertEnabled: true, BFTAlertCheckMinutes: 5, BFTAlertWindowBlocks: 100,
 		BFTAlertWarningLosses: 1, BFTAlertWarningMarginPct: 10, BFTAlertCriticalMarginPct: 3,
 	}
@@ -184,24 +184,24 @@ func TestEvaluateBFT_JoinerStaysInTheTotal(t *testing.T) {
 	assert.Equal(t, bftOK, ev.Severity)
 }
 
-// A validator that just stopped is offline once it missed warning_threshold
+// A validator that just stopped is offline once it missed critical_threshold
 // blocks in a row at the tip, long before its window-wide rate drops under
-// 50%.
+// 50%; a shorter hiccup does not count.
 func TestEvaluateBFT_StoppedAtTheTipIsOffline(t *testing.T) {
 	w := bftWindow(repeat(10, 4), repeat(100, 4))
-	w.Entries[3].Signed, w.Entries[3].TrailingMissed = 95, 4
+	w.Entries[3].Signed, w.Entries[3].TrailingMissed = 71, 29
 
 	ev := evaluateBFT(w, bftTestThresholds(), bftTestNow)
-	assert.Equal(t, bftOK, ev.Severity, "4 misses in a row is not yet a stop")
+	assert.Equal(t, bftOK, ev.Severity, "29 misses in a row is not yet a stop")
 
-	w.Entries[3].TrailingMissed = 5
+	w.Entries[3].TrailingMissed = 30
 	ev = evaluateBFT(w, bftTestThresholds(), bftTestNow)
 	assert.Equal(t, bftCritical, ev.Severity)
 	require.Len(t, ev.Offline, 1)
 	assert.Equal(t, "v3", ev.Offline[0].Moniker)
 
 	th := bftTestThresholds()
-	th.WarningThreshold = 0
+	th.CriticalThreshold = 0
 	assert.Equal(t, bftOK, evaluateBFT(w, th, bftTestNow).Severity, "a zero threshold disables the tip rule")
 }
 

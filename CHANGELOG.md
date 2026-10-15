@@ -74,7 +74,7 @@ Entries are ordered newest-first within each section.
   every `bft_alert_check_minutes` (default 5) each chain's online voting power
   is checked over the last `bft_alert_window_blocks` (default 100). A
   validator is online when it signed at least 50% of its rows in the window
-  and did not miss its last `warning_threshold` (default 5) blocks in a row;
+  and did not miss its last `critical_threshold` (default 30) blocks in a row;
   every voting-power holder counts in the total, including one that just
   joined. CRITICAL when the margin above 2/3 drops under
   `bft_alert_critical_margin_pct` (default 3% of total VP), or when no further

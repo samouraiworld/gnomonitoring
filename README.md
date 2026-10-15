@@ -420,7 +420,7 @@ curl -L -X PUT '127.0.0.7:8989/webhooks/[govdao | validator]' \
   - checked every `bft_alert_check_minutes` (default 5) over the last
     `bft_alert_window_blocks` (default 100). Only voting power counts. A
     validator is online when it signed at least 50% of its rows in the window
-    and did not miss its last `warning_threshold` blocks in a row; a
+    and did not miss its last `critical_threshold` blocks in a row; a
     validator that just joined counts in the total, offline until seen signing.
   - CRITICAL when the online voting power is less than
     `bft_alert_critical_margin_pct` (default 3) points of total voting power

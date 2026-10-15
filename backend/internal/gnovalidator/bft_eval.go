@@ -67,10 +67,11 @@ type bftEval struct {
 // computeBFTMargin expects. Every voting-power holder stays in the total,
 // as it does for consensus: a validator that just joined and has no row
 // yet counts as offline until it is seen signing. A validator that missed
-// its last missedTip blocks in a row is offline too (sign rate forced to
-// 0), however well it signed earlier in the window: it stopped, and waiting
-// for its window-wide rate to fall under 50% would delay the alert by half
-// a window.
+// its last missedTip blocks in a row (critical_threshold, the missed-block
+// CRITICAL level: a short hiccup does not count) is offline too, sign rate
+// forced to 0, however well it signed earlier in the window: it stopped,
+// and waiting for its window-wide rate to fall under 50% would delay the
+// alert by half a window.
 func bftEntries(w database.BFTWindow, missedTip int) []database.ValidatorReportEntry {
 	entries := make([]database.ValidatorReportEntry, 0, len(w.Entries))
 	for _, e := range w.Entries {
@@ -145,7 +146,7 @@ func evaluateBFT(w database.BFTWindow, t Thresholds, now time.Time) bftEval {
 	if now.Sub(w.LastBlockTime) > bftStaleAfter(t) {
 		return bftEval{}
 	}
-	entries := bftEntries(w, t.WarningThreshold)
+	entries := bftEntries(w, t.CriticalThreshold)
 	live := computeBFTMargin(entries)
 	if !live.Available {
 		return bftEval{}
