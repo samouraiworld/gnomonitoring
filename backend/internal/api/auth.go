@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 
@@ -97,15 +98,23 @@ type tokenVerifier interface {
 //
 // A Keycloak token that verifies never reaches Clerk, so the fallback costs a
 // Keycloak-authenticated request nothing. While the Keycloak issuer has not
-// been discovered yet, every token goes to Clerk, so Clerk callers keep
-// working.
+// been discovered yet, a token issued by it gets 503 and every other token
+// goes to Clerk, so Clerk callers keep working.
 func dualAccept(verifier tokenVerifier, clerkProtect func(http.Handler) http.Handler) middleware {
 	return func(next http.Handler) http.Handler {
 		clerkChain := clerkProtect(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if rawToken, ok := keycloakauth.BearerToken(r); ok {
-				if claims, err := verifier.VerifyToken(r.Context(), rawToken); err == nil {
+				claims, err := verifier.VerifyToken(r.Context(), rawToken)
+				if err == nil {
 					next.ServeHTTP(w, r.WithContext(keycloakauth.NewClaimsContext(r.Context(), claims)))
+					return
+				}
+				// A Keycloak token that cannot be checked yet is neither valid
+				// nor invalid: Clerk would answer 401, and a Keycloak client
+				// would take that for a bad session.
+				if errors.Is(err, keycloakauth.ErrNotReady) {
+					keycloakauth.WriteUnavailable(w)
 					return
 				}
 			}

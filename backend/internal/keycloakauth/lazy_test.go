@@ -63,7 +63,13 @@ func TestDiscover_UnreachableIssuerDegradesThenRecovers(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "an unchecked token is not an invalid one: 503, not 401")
 	assert.NotEmpty(t, w.Header().Get("Retry-After"))
 	_, err := l.VerifyToken(context.Background(), token)
-	assert.True(t, errors.Is(err, keycloakauth.ErrNotReady))
+	assert.True(t, errors.Is(err, keycloakauth.ErrNotReady), "a token from the issuer cannot be checked yet")
+	_, err = l.VerifyToken(context.Background(), realm.TokenWithIssuer(t, "https://clerk.example.com", "user_1"))
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, keycloakauth.ErrNotReady), "a token from another issuer can be handed on at once")
+	_, err = l.VerifyToken(context.Background(), "not-a-jwt")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, keycloakauth.ErrNotReady))
 
 	realm.SetDown(false)
 
@@ -74,8 +80,10 @@ func TestDiscover_UnreachableIssuerDegradesThenRecovers(t *testing.T) {
 	assert.Equal(t, "kc-sub-1", claims.Subject)
 }
 
-// An empty issuer is a configuration mistake no retry can fix.
-func TestDiscover_EmptyIssuerIsAnError(t *testing.T) {
-	_, err := keycloakauth.Discover(context.Background(), "  ", nil, fastBackoff)
-	assert.Error(t, err)
+// An empty or malformed issuer is a configuration mistake no retry can fix.
+func TestDiscover_InvalidIssuerIsAnError(t *testing.T) {
+	for _, issuer := range []string{"  ", "auth.example.com/realms/gno-world", "ftp://auth.example.com", "https://"} {
+		_, err := keycloakauth.Discover(context.Background(), issuer, nil, fastBackoff)
+		assert.Error(t, err, "issuer %q", issuer)
+	}
 }

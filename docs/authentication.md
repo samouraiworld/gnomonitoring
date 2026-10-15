@@ -46,12 +46,15 @@ attempts. Until one attempt succeeds:
 
 - `/admin/*` and, with the Clerk fallback off, the general routes answer
   `503` with `Retry-After`, not `401`: the token was never checked.
-- With the Clerk fallback on, the general routes hand every token to Clerk, so
-  Clerk callers keep working.
+- With the Clerk fallback on, the general routes answer `503` to a token whose
+  `iss` claim names the Keycloak issuer, and hand every other token to Clerk,
+  so Clerk callers keep working. The `iss` claim is read without checking the
+  signature: it only picks between `503` and Clerk, it authenticates nothing.
 
-The log line `Keycloak issuer discovery succeeded on attempt N` marks the
-return to normal. An empty `keycloak_issuer` in keycloak mode is still a
-configuration error that stops startup.
+Every request to the issuer (discovery and JWKS) times out after 15 s. The log
+line `Keycloak issuer discovery succeeded on attempt N` marks the return to
+normal. An empty or malformed `keycloak_issuer` (not an `http(s)://host` URL)
+in keycloak mode is still a configuration error that stops startup.
 
 ## Why the admin role is client-scoped
 

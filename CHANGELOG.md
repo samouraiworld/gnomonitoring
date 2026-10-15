@@ -186,9 +186,10 @@ Entries are ordered newest-first within each section.
   mode, a failed OIDC discovery at boot used to exit the process, taking
   monitoring and alerting down with it. The backend now starts, retries
   discovery in the background with backoff (5 s up to 5 min), and answers
-  `503` with `Retry-After` on Keycloak-protected routes until it succeeds.
-  With the Clerk fallback on, the general routes keep accepting Clerk tokens
-  meanwhile. See `docs/authentication.md`.
+  `503` with `Retry-After` to Keycloak tokens until it succeeds. With the
+  Clerk fallback on, the general routes keep accepting Clerk tokens
+  meanwhile. Requests to the issuer now time out after 15 s, and a malformed
+  `keycloak_issuer` still stops startup. See `docs/authentication.md`.
 
 - **GovDAO status checks skip disabled chains** — `CheckProposalStatus` only
   polls proposals of enabled chains. It used to poll every stored proposal and

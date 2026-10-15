@@ -259,30 +259,47 @@ func TestBuildAuthSetup_KeycloakModeDegradesOnUnreachableIssuer(t *testing.T) {
 	}
 }
 
-// With the Clerk fallback on, the general routes keep handing tokens to Clerk
-// while the Keycloak issuer is unreachable, so Clerk callers keep working.
-func TestDualAccept_FallsBackToClerkWhileIssuerUnreachable(t *testing.T) {
+// With the Clerk fallback on, the general routes keep handing non-Keycloak
+// tokens to Clerk while the Keycloak issuer is unreachable, so Clerk callers
+// keep working. A Keycloak token gets 503: Clerk would answer 401, which a
+// Keycloak client would take for a bad session.
+func TestDualAccept_WhileIssuerUnreachable(t *testing.T) {
+	realm := kctest.NewRealm(t)
+	keycloakToken := realm.Token(t, "kc-sub-1", nil)
+	realm.SetDown(true)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	verifier, err := keycloakauth.Discover(ctx, "http://127.0.0.1:1/realms/gno-world", nil, keycloakauth.DefaultBackoff)
+	verifier, err := keycloakauth.Discover(ctx, realm.Issuer, nil, keycloakauth.DefaultBackoff)
 	require.NoError(t, err)
 	require.False(t, verifier.Ready())
 
-	reachedClerk := false
-	clerkProtect := func(http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			reachedClerk = true
-			w.WriteHeader(http.StatusOK)
+	for name, tc := range map[string]struct {
+		token        string
+		wantCode     int
+		reachesClerk bool
+	}{
+		"clerk token goes to Clerk": {"some.clerk.token", http.StatusOK, true},
+		"keycloak token gets 503":   {keycloakToken, http.StatusServiceUnavailable, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reachedClerk := false
+			clerkProtect := func(http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					reachedClerk = true
+					w.WriteHeader(http.StatusOK)
+				})
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/users", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			w := httptest.NewRecorder()
+			dualAccept(verifier, clerkProtect)(dummyOKHandler).ServeHTTP(w, req)
+
+			assert.Equal(t, tc.reachesClerk, reachedClerk)
+			assert.Equal(t, tc.wantCode, w.Code)
 		})
 	}
-
-	req := httptest.NewRequest(http.MethodGet, "/users", nil)
-	req.Header.Set("Authorization", "Bearer some.clerk.token")
-	w := httptest.NewRecorder()
-	dualAccept(verifier, clerkProtect)(dummyOKHandler).ServeHTTP(w, req)
-
-	assert.True(t, reachedClerk, "the token must be handed to Clerk")
-	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestBuildAuthSetup_KeycloakMode(t *testing.T) {
