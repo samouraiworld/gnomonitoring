@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -432,7 +433,19 @@ var (
 
 	// notifyProposalStatus announces a proposal reaching a terminal status.
 	notifyProposalStatus = sendProposalStatusNotification
+
+	// pollableChains lists the chains CheckProposalStatus polls.
+	pollableChains = enabledChainsSnapshot
 )
+
+// enabledChainsSnapshot returns a copy of internal.EnabledChains. The admin API
+// can rewrite that slice at runtime under internal.ConfigMu, so it is read
+// under the same lock and never retained.
+func enabledChainsSnapshot() []string {
+	internal.ConfigMu.Lock()
+	defer internal.ConfigMu.Unlock()
+	return slices.Clone(internal.EnabledChains)
+}
 
 // chainProposalStatus reads proposalID's current status from chainID's pooled
 // RPC client.
@@ -641,8 +654,8 @@ func storeProposalStatus(db *gorm.DB, p database.Govdao, status string) {
 	}
 }
 
-// CheckProposalStatus polls every known proposal's on-chain status and
-// announces the ones that just reached a terminal outcome.
+// CheckProposalStatus polls the on-chain status of every known proposal of an
+// enabled chain and announces the ones that just reached a terminal outcome.
 //
 // A proposal whose stored status was never confirmed against the chain by the
 // current parser (status_synced = false) is reconciled silently: its status is
@@ -651,8 +664,14 @@ func storeProposalStatus(db *gorm.DB, p database.Govdao, status string) {
 // "IN PROGRESS" — announcing those would flood every channel with rejections
 // of months-old proposals on the first run after deploy.
 func CheckProposalStatus(db *gorm.DB) {
+	// Only enabled chains have an RPC pool to query. Proposals of a disabled
+	// chain stay in the DB untouched until that chain is enabled again.
+	chains := pollableChains()
+	if len(chains) == 0 {
+		return
+	}
 	var govdao []database.Govdao
-	if err := db.Find(&govdao).Error; err != nil {
+	if err := db.Where("chain_id IN ?", chains).Find(&govdao).Error; err != nil {
 		log.Printf("[govdao] error fetching proposals: %v", err)
 		return
 	}

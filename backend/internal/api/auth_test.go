@@ -228,15 +228,78 @@ func TestBuildAuthSetup_ClerkModeIsUnchanged(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, w.Code)
 }
 
-func TestBuildAuthSetup_KeycloakModeRejectsUnreachableIssuer(t *testing.T) {
+// An unreachable issuer must not stop startup (monitoring and alerting would go
+// down with it), and must never serve a protected route unauthenticated: the
+// Keycloak-protected routes answer 503 until discovery succeeds.
+func TestBuildAuthSetup_KeycloakModeDegradesOnUnreachableIssuer(t *testing.T) {
 	prev := internal.Config
 	defer func() { internal.Config = prev }()
 	internal.Config.AuthProvider = internal.AuthProviderKeycloak
 	internal.Config.KeycloakIssuer = "http://127.0.0.1:1/realms/gno-world"
+	internal.Config.ClerkSecretKey = "sk_test_dummy"
+	fallbackOff := false
+	internal.Config.KeycloakClerkFallback = &fallbackOff
 
-	_, err := buildAuthSetup(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	auth, err := buildAuthSetup(ctx)
+	require.NoError(t, err, "an unreachable issuer must not fail startup")
 
-	assert.Error(t, err, "startup must fail loudly rather than silently serving unauthenticated")
+	for name, chain := range map[string]http.Handler{
+		"admin":   auth.admin(auth.adminRole(dummyOKHandler)),
+		"general": auth.general(dummyOKHandler),
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/users", nil)
+			req.Header.Set("Authorization", "Bearer some.unchecked.token")
+			w := httptest.NewRecorder()
+			chain.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+		})
+	}
+}
+
+// With the Clerk fallback on, the general routes keep handing non-Keycloak
+// tokens to Clerk while the Keycloak issuer is unreachable, so Clerk callers
+// keep working. A Keycloak token gets 503: Clerk would answer 401, which a
+// Keycloak client would take for a bad session.
+func TestDualAccept_WhileIssuerUnreachable(t *testing.T) {
+	realm := kctest.NewRealm(t)
+	keycloakToken := realm.Token(t, "kc-sub-1", nil)
+	realm.SetDown(true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	verifier, err := keycloakauth.Discover(ctx, realm.Issuer, nil, keycloakauth.DefaultBackoff)
+	require.NoError(t, err)
+	require.False(t, verifier.Ready())
+
+	for name, tc := range map[string]struct {
+		token        string
+		wantCode     int
+		reachesClerk bool
+	}{
+		"clerk token goes to Clerk": {"some.clerk.token", http.StatusOK, true},
+		"keycloak token gets 503":   {keycloakToken, http.StatusServiceUnavailable, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reachedClerk := false
+			clerkProtect := func(http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					reachedClerk = true
+					w.WriteHeader(http.StatusOK)
+				})
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/users", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			w := httptest.NewRecorder()
+			dualAccept(verifier, clerkProtect)(dummyOKHandler).ServeHTTP(w, req)
+
+			assert.Equal(t, tc.reachesClerk, reachedClerk)
+			assert.Equal(t, tc.wantCode, w.Code)
+		})
+	}
 }
 
 func TestBuildAuthSetup_KeycloakMode(t *testing.T) {

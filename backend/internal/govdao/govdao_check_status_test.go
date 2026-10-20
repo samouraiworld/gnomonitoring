@@ -31,10 +31,14 @@ type notification struct {
 func stubStatusWatcher(t *testing.T, statuses map[string]string) *[]notification {
 	t.Helper()
 
-	origFetch, origNotify := fetchChainProposalStatus, notifyProposalStatus
+	origFetch, origNotify, origChains := fetchChainProposalStatus, notifyProposalStatus, pollableChains
 	t.Cleanup(func() {
-		fetchChainProposalStatus, notifyProposalStatus = origFetch, origNotify
+		fetchChainProposalStatus, notifyProposalStatus, pollableChains = origFetch, origNotify, origChains
 	})
+
+	// Every chain these tests store proposals on is enabled unless a test
+	// narrows it with stubEnabledChains.
+	stubEnabledChains("dev", "betanet")
 
 	fetchChainProposalStatus = func(chainID string, _ int) (string, error) {
 		status, ok := statuses[chainID]
@@ -50,6 +54,12 @@ func stubStatusWatcher(t *testing.T, statuses map[string]string) *[]notification
 	}
 
 	return &sent
+}
+
+// stubEnabledChains sets the chains CheckProposalStatus polls. Call it after
+// stubStatusWatcher, which restores the seam when the test ends.
+func stubEnabledChains(chains ...string) {
+	pollableChains = func() []string { return chains }
 }
 
 // insertProposal writes one govdaos row with full control over status and
@@ -242,4 +252,49 @@ func proposalCreatedTx(height int, id string) Transaction {
 			}},
 		},
 	}
+}
+
+// Only enabled chains have an RPC pool. A proposal stored for a disabled chain
+// must not be polled at all (each poll used to log "no RPC pool registered"
+// every cycle), and its row must stay untouched.
+func TestCheckProposalStatusSkipsDisabledChains(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sent := stubStatusWatcher(t, map[string]string{"dev": StatusRejected})
+	stubEnabledChains("dev")
+
+	var polled []string
+	fetch := fetchChainProposalStatus
+	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
+		polled = append(polled, chainID)
+		return fetch(chainID, id)
+	}
+
+	insertProposal(t, db, 7, "dev", StatusInProgress, true)
+	insertProposal(t, db, 7, "gnoland1", StatusInProgress, false)
+
+	CheckProposalStatus(db)
+
+	assert.Equal(t, []string{"dev"}, polled, "a disabled chain's proposals must not be polled")
+	disabled := loadProposal(t, db, 7, "gnoland1")
+	assert.Equal(t, StatusInProgress, disabled.Status)
+	assert.False(t, disabled.StatusSynced, "a disabled chain's row must stay untouched")
+	require.Len(t, *sent, 1)
+	assert.Equal(t, "dev", (*sent)[0].chainID)
+}
+
+// With no enabled chain there is nothing to poll.
+func TestCheckProposalStatusWithNoEnabledChainPollsNothing(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	stubStatusWatcher(t, map[string]string{"dev": StatusRejected})
+	stubEnabledChains()
+	fetchChainProposalStatus = func(chainID string, _ int) (string, error) {
+		t.Fatalf("unexpected poll of chain %q", chainID)
+		return "", nil
+	}
+
+	insertProposal(t, db, 7, "dev", StatusInProgress, true)
+
+	CheckProposalStatus(db)
+
+	assert.Equal(t, StatusInProgress, loadProposal(t, db, 7, "dev").Status)
 }
