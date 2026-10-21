@@ -117,8 +117,8 @@ type ValidatorIdentity struct {
 }
 
 // GetChainValidators returns the distinct set of validators that participated
-// on the chain during the current calendar year, with monikers resolved from
-// addr_monikers (falling back to the moniker stored on the participation rows).
+// on the chain during the current calendar year, with monikers resolved by
+// MonikerSQL.
 // It unions the aggregated and raw participation tables so validators whose raw
 // rows have been pruned are still included. Scoped to chain_id.
 func GetChainValidators(db *gorm.DB, chainID string) ([]ValidatorIdentity, error) {
@@ -127,18 +127,17 @@ func GetChainValidators(db *gorm.DB, chainID string) ([]ValidatorIdentity, error
 	var rows []ValidatorIdentity
 	err := db.Raw(`
 		SELECT combined.addr AS addr,
-		       COALESCE(MAX(am.moniker), MAX(combined.moniker), '') AS moniker
+		       `+MonikerSQL("combined.chain_id", "combined.addr", MonikerFallbackEmpty)+` AS moniker
 		FROM (
-			SELECT chain_id, addr, moniker
+			SELECT chain_id, addr
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date >= ?
 			UNION ALL
-			SELECT chain_id, addr, moniker
+			SELECT chain_id, addr
 			FROM daily_participations
 			WHERE chain_id = ? AND date >= ?
 		) combined
-		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
-		GROUP BY combined.addr
+		GROUP BY combined.chain_id, combined.addr
 		ORDER BY combined.addr
 	`, chainID, yearStart, chainID, yearStart).Scan(&rows).Error
 	if err != nil {
@@ -328,7 +327,7 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 			GROUP BY addr
 		)
 		SELECT al.addr AS addr,
-		       COALESCE(MAX(am.moniker), MAX(al.moniker), '') AS moniker,
+		       `+MonikerSQL("al.chain_id", "al.addr", MonikerFallbackEmpty)+` AS moniker,
 		       COUNT(*) FILTER (WHERE al.level = 'CRITICAL') AS critical_count,
 		       COUNT(*) FILTER (WHERE al.level = 'WARNING')  AS warning_count,
 		       COALESCE(SUM(
@@ -337,13 +336,12 @@ func GetValidatorScores(db *gorm.DB, chainID, period string) ([]ValidatorScoreRa
 		       ), 0) AS downtime_blocks,
 		       COALESCE(MAX(incidents.incident_count), 0) AS incident_count
 		FROM alert_logs al
-		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
 		LEFT JOIN incidents ON incidents.addr = al.addr
 		WHERE al.chain_id = ?
 		  AND al.level IN ('CRITICAL','WARNING')
 		  AND al.addr NOT IN ('all', 'rpc')
 		  AND al.sent_at >= ? AND al.sent_at < ?
-		GROUP BY al.addr
+		GROUP BY al.chain_id, al.addr
 		ORDER BY al.addr
 	`, chainID, start, end, chainID, start, start, end, chainID, start, end).Scan(&rows).Error
 	if err != nil {

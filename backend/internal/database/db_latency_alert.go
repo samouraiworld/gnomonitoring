@@ -30,7 +30,7 @@ func GetLatencyAlertStats(db *gorm.DB, chainID string, windowMinutes int) ([]Lat
 	query := `
 		SELECT
 			dp.addr,
-			MAX(COALESCE(am.moniker, dp.addr)) AS moniker,
+			` + MonikerSQL("dp.chain_id", "dp.addr", MonikerFallbackAddr) + ` AS moniker,
 			COUNT(*) AS samples,
 			percentile_cont(0.5) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) AS p50,
 			percentile_cont(0.9) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) AS p90,
@@ -39,11 +39,10 @@ func GetLatencyAlertStats(db *gorm.DB, chainID string, windowMinutes int) ([]Lat
 			MIN(dp.block_height) AS min_height,
 			MAX(dp.block_height) AS max_height
 		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ?
 		  AND dp.date >= NOW() - ?::interval
 		  AND dp.precommit_lag_ms IS NOT NULL
-		GROUP BY dp.addr`
+		GROUP BY dp.chain_id, dp.addr`
 	if err := db.Raw(query, chainID, window).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("GetLatencyAlertStats(%s): %w", chainID, err)
 	}

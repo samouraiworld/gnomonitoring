@@ -199,8 +199,13 @@ func TestUpdatePrometheusMetricsFromDB_NewValidatorMetrics(t *testing.T) {
 	assert.LessOrEqual(t, uptime, 100.0, "ValidatorUptime should be <= 100%")
 
 	// Test ValidatorOperationTime (days since last down)
+	// The fixture's last signed block is on day 10 of the month and its last
+	// missed block on day 18, so last_up - last_down is -8 days. This label was
+	// never populated before the moniker resolved from the frozen rows (the
+	// series carried the address instead), so the old ">= 0" check read an
+	// unset series and passed vacuously.
 	operationTime := testutil.ToFloat64(gnovalidator.ValidatorOperationTime.WithLabelValues(testChain, testAddr, testMoniker))
-	assert.GreaterOrEqual(t, operationTime, 0.0, "ValidatorOperationTime should be >= 0")
+	assert.InDelta(t, -8.0, operationTime, 0.001, "ValidatorOperationTime is last_up - last_down")
 
 	// Test ValidatorTxContribution (current month)
 	txContrib := testutil.ToFloat64(gnovalidator.ValidatorTxContribution.WithLabelValues(testChain, testAddr, testMoniker))
@@ -514,7 +519,7 @@ func TestUpdatePrometheusMetricsFromDB_PrecommitLatency(t *testing.T) {
 
 	require.NoError(t, gnovalidator.UpdatePrometheusMetricsFromDB(db, chainID))
 
-	assert.InDelta(t, 20.0, testutil.ToFloat64(gnovalidator.ValidatorPrecommitLagMs.WithLabelValues(chainID, "g1lat", "g1lat", "1h", "0.5")), 0.001)
-	assert.InDelta(t, 28.0, testutil.ToFloat64(gnovalidator.ValidatorPrecommitLagMs.WithLabelValues(chainID, "g1lat", "g1lat", "7d", "0.9")), 0.001)
-	assert.InDelta(t, 0.5, testutil.ToFloat64(gnovalidator.ValidatorLateForQuorumRatio.WithLabelValues(chainID, "g1lat", "g1lat", "24h")), 0.001)
+	assert.InDelta(t, 20.0, testutil.ToFloat64(gnovalidator.ValidatorPrecommitLagMs.WithLabelValues(chainID, "g1lat", "Lat", "1h", "0.5")), 0.001)
+	assert.InDelta(t, 28.0, testutil.ToFloat64(gnovalidator.ValidatorPrecommitLagMs.WithLabelValues(chainID, "g1lat", "Lat", "7d", "0.9")), 0.001)
+	assert.InDelta(t, 0.5, testutil.ToFloat64(gnovalidator.ValidatorLateForQuorumRatio.WithLabelValues(chainID, "g1lat", "Lat", "24h")), 0.001)
 }
