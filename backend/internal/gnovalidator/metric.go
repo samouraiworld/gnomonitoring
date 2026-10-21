@@ -1,6 +1,7 @@
 package gnovalidator
 
 import (
+	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
 
@@ -15,13 +16,12 @@ func CalculateMissedBlocks(db *gorm.DB, chainID string) ([]MissedBlockStat, erro
 
 	query := `
 		SELECT dp.addr,
-		       COALESCE(MAX(am.moniker), MAX(dp.moniker)) AS moniker,
+		       ` + database.MonikerSQL("dp.chain_id", "dp.addr", database.MonikerFallbackEmpty) + ` AS moniker,
 		       SUM(CASE WHEN dp.participated = false THEN 1 ELSE 0 END) AS missed
 		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ?
 		  AND dp.date >= CURRENT_DATE
-		GROUP BY dp.addr`
+		GROUP BY dp.chain_id, dp.addr`
 
 	err := db.Raw(query, chainID).Scan(&results).Error
 	if err != nil {
@@ -63,17 +63,29 @@ func CalculateConsecutiveMissedBlocks(db *gorm.DB, chainID string) ([]Consecutiv
 	}
 	var rows []row
 
+	// Resolve each validator's moniker once, not once per (validator, block)
+	// row: MATERIALIZED keeps the planner from inlining the CTE and evaluating
+	// MonikerSQL's subqueries for every joined row.
 	query := `
+		WITH names AS MATERIALIZED (
+			SELECT v.addr,
+			       ` + database.MonikerSQL("v.chain_id", "v.addr", database.MonikerFallbackEmpty) + ` AS moniker
+			FROM (
+				SELECT DISTINCT chain_id, addr
+				FROM daily_participations
+				WHERE chain_id = ? AND block_height > ?
+			) v
+		)
 		SELECT dp.addr,
-		       COALESCE(am.moniker, dp.moniker) AS moniker,
+		       names.moniker,
 		       dp.participated
 		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
+		JOIN names ON names.addr = dp.addr
 		WHERE dp.chain_id = ?
 		  AND dp.block_height > ?
 		ORDER BY dp.addr, dp.block_height ASC`
 
-	err = db.Raw(query, chainID, maxHeight-200).Scan(&rows).Error
+	err = db.Raw(query, chainID, maxHeight-200, chainID, maxHeight-200).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}

@@ -471,16 +471,15 @@ func CalculateRecentValidatorStatus(db *gorm.DB, chainID string, lastNBlocks int
 	var rows []row
 	err := db.Raw(`
 		SELECT dp.addr,
-			COALESCE(MAX(am.moniker), MAX(dp.moniker), '') AS moniker,
+			`+database.MonikerSQL("dp.chain_id", "dp.addr", database.MonikerFallbackEmpty)+` AS moniker,
 			COUNT(*) AS total_blocks,
 			SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END) AS participated_count,
 			MIN(dp.block_height) AS first_block,
 			MAX(dp.block_height) AS last_block
 		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ?
 		  AND dp.block_height >= (SELECT MAX(block_height) FROM daily_participations WHERE chain_id = ?) - ?
-		GROUP BY dp.addr
+		GROUP BY dp.chain_id, dp.addr
 	`, chainID, chainID, lastNBlocks).Scan(&rows).Error
 	if err != nil {
 		return nil, 0, 0, err
@@ -517,16 +516,15 @@ func CalculateValidatorStatusLast24h(db *gorm.DB, chainID string) (map[string]Va
 	var rows []row
 	err := db.Raw(`
 		SELECT dp.addr,
-			COALESCE(MAX(am.moniker), MAX(dp.moniker), '') AS moniker,
+			`+database.MonikerSQL("dp.chain_id", "dp.addr", database.MonikerFallbackEmpty)+` AS moniker,
 			COUNT(*) AS total_blocks,
 			SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END) AS participated_count,
 			MIN(dp.block_height) AS first_block,
 			MAX(dp.block_height) AS last_block
 		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ?
 		  AND dp.date >= NOW() - INTERVAL '24 hours'
-		GROUP BY dp.addr
+		GROUP BY dp.chain_id, dp.addr
 	`, chainID).Scan(&rows).Error
 	if err != nil {
 		return nil, 0, 0, err

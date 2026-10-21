@@ -710,11 +710,10 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 	err := db.Raw(`
 		SELECT DISTINCT ON (al.addr)
 		       al.addr,
-		       COALESCE(am.moniker, al.moniker, '') AS moniker,
+		       `+database.MonikerSQL("al.chain_id", "al.addr", database.MonikerFallbackEmpty)+` AS moniker,
 		       al.start_height,
 		       al.end_height
 		FROM alert_logs al
-		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
 		WHERE al.chain_id = ?
 		  AND al.level IN ('WARNING', 'CRITICAL')
 		  AND al.skipped = true

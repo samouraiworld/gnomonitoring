@@ -91,9 +91,8 @@ func GetAlertLogFiltered(db *gorm.DB, chainID, period string, q AlertLogQuery) (
 		return nil, fmt.Errorf("invalid period: %s", period)
 	}
 
-	// Resolve the moniker from addr_monikers (kept current) and fall back to the
-	// value frozen into alert_logs when the alert fired, mirroring the other
-	// moniker-bearing queries. sent_at is a timestamptz column, so pass the
+	// The moniker is resolved by MonikerSQL, like every other moniker-bearing
+	// query. sent_at is a timestamptz column, so pass the
 	// time.Time bounds directly (the pgx driver handles the conversion) rather
 	// than formatting to strings.
 	limit := q.Limit
@@ -106,10 +105,9 @@ func GetAlertLogFiltered(db *gorm.DB, chainID, period string, q AlertLogQuery) (
 
 	query := `
 		SELECT DISTINCT
-		       COALESCE(NULLIF(am.moniker, 'unknown'), al.moniker, '') AS moniker,
+		       ` + MonikerSQL("al.chain_id", "al.addr", MonikerFallbackEmpty) + ` AS moniker,
 		       al.level, al.addr, al.start_height, al.end_height, al.msg, al.sent_at
 		FROM alert_logs al
-		LEFT JOIN addr_monikers am ON am.chain_id = al.chain_id AND am.addr = al.addr
 		WHERE al.chain_id = ?` + timeFilter
 	args := append([]any{chainID}, timeArgs...)
 	if q.Addr != "" {
@@ -142,17 +140,17 @@ type MissedWindow struct {
 
 // GetMissedWindows returns each contiguous missed-block sequence (>= threshold
 // misses) for the given chain within the last 30 minutes. The moniker is
-// resolved from addr_monikers, falling back to the value frozen into
-// daily_participations. Sequences are grouped by addr only — never by moniker —
-// so a streak is not fragmented when a validator's moniker is resolved partway
-// through it. Sequences already covered by a RESOLVED alert are excluded.
+// resolved by MonikerSQL. Sequences are grouped by addr only — never by
+// moniker — so a streak is not fragmented when a validator's moniker is
+// resolved partway through it. Sequences already covered by a RESOLVED alert
+// are excluded.
 func GetMissedWindows(db *gorm.DB, chainID string, threshold int) ([]MissedWindow, error) {
 	var windows []MissedWindow
 	err := db.Raw(`
 		WITH ranked AS (
 			SELECT
+				chain_id,
 				addr,
-				moniker,
 				block_height,
 				participated,
 				CASE
@@ -165,8 +163,8 @@ func GetMissedWindows(db *gorm.DB, chainID string, threshold int) ([]MissedWindo
 		),
 		grouped AS (
 			SELECT
+				chain_id,
 				addr,
-				moniker,
 				block_height,
 				participated,
 				SUM(new_seq) OVER (PARTITION BY addr ORDER BY block_height) AS seq_id
@@ -174,22 +172,21 @@ func GetMissedWindows(db *gorm.DB, chainID string, threshold int) ([]MissedWindo
 		),
 		sequences AS (
 			SELECT
+				chain_id,
 				addr,
-				MAX(moniker)      AS dp_moniker,
 				MIN(block_height) AS start_height,
 				MAX(block_height) AS end_height,
 				COUNT(*)          AS missed
 			FROM grouped
 			WHERE participated = false
-			GROUP BY addr, seq_id
+			GROUP BY chain_id, addr, seq_id
 		)
 		SELECT s.addr,
-		       COALESCE(NULLIF(am.moniker, 'unknown'), s.dp_moniker, '') AS moniker,
+		       `+MonikerSQL("s.chain_id", "s.addr", MonikerFallbackEmpty)+` AS moniker,
 		       s.start_height,
 		       s.end_height,
 		       s.missed
 		FROM sequences s
-		LEFT JOIN addr_monikers am ON am.chain_id = ? AND am.addr = s.addr
 		WHERE s.missed >= ?
 		  AND NOT EXISTS (
 		      SELECT 1 FROM alert_logs r
@@ -199,7 +196,7 @@ func GetMissedWindows(db *gorm.DB, chainID string, threshold int) ([]MissedWindo
 		        AND r.end_height >= s.end_height
 		  )
 		ORDER BY s.addr, s.start_height
-	`, chainID, chainID, threshold, chainID).Scan(&windows).Error
+	`, chainID, threshold, chainID).Scan(&windows).Error
 	return windows, err
 }
 
@@ -240,23 +237,17 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string, aggr
 	//      Bounded to the chain's aggregation watermark via fallbackRawWindowStart
 	//      — see that function's doc comment for why.
 	//   3. Raw today — current day always from raw (never aggregated yet)
-	// Moniker fallback chain (symmetric with the streak query): live
-	// addr_monikers ('unknown' placeholder excluded) → the moniker frozen into
-	// the participation rows themselves → the address only as a last resort.
-	// The old MAX(COALESCE(am.moniker, addr)) collapsed EVERY name to a bare
-	// address whenever addr_monikers was empty/stale for the chain, even though
-	// the correct name was sitting in daily_participation(_agrega)s.
+	// The moniker is resolved by MonikerSQL, the address as a last resort.
 	query := `
 		SELECT combined.addr,
-			MAX(COALESCE(NULLIF(am.moniker, 'unknown'), NULLIF(combined.moniker, ''), combined.addr)) AS moniker,
+			` + MonikerSQL("combined.chain_id", "combined.addr", MonikerFallbackAddr) + ` AS moniker,
 			ROUND(SUM(combined.participated_count) * 100.0 / NULLIF(SUM(combined.total_blocks), 0), 1) AS participation_rate
 		FROM (
-			SELECT chain_id, addr, moniker, participated_count, total_blocks
+			SELECT chain_id, addr, participated_count, total_blocks
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date >= ? AND block_date::date < CURRENT_DATE
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
-				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END),
 				COUNT(*)
 			FROM daily_participations dp
@@ -266,15 +257,13 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string, aggr
 			GROUP BY dp.chain_id, dp.addr
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
-				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END),
 				COUNT(*)
 			FROM daily_participations dp
 			WHERE dp.chain_id = ? AND dp.date >= CURRENT_DATE AND dp.date < CURRENT_DATE + INTERVAL '1 day'
 			GROUP BY dp.chain_id, dp.addr
 		) combined
-		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
-		GROUP BY combined.addr
+		GROUP BY combined.chain_id, combined.addr
 		ORDER BY participation_rate ASC`
 
 	err = db.Raw(query, chainID, startStr, chainID, fallbackStart, chainID).Scan(&results).Error
@@ -320,24 +309,15 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough tim
 			) GROUP BY chain_id, addr
 		)
 		SELECT
-			COALESCE(NULLIF(am.moniker, 'unknown'), fm.moniker, ld.addr) AS moniker,
+			` + MonikerSQL("ld.chain_id", "ld.addr", MonikerFallbackAddr) + ` AS moniker,
 			ld.addr,
 			ld.last_down_date,
 			lu.last_up_date,
 			ROUND(EXTRACT(EPOCH FROM (lu.last_up_date::timestamp - ld.last_down_date::timestamp)) / 86400.0, 1) AS days_diff
 		FROM last_down ld
-		LEFT JOIN last_up lu ON lu.chain_id = ld.chain_id AND lu.addr = ld.addr
-		LEFT JOIN addr_monikers am ON am.chain_id = ld.chain_id AND am.addr = ld.addr
-		LEFT JOIN (
-			-- Frozen-moniker fallback (symmetric with the other metric queries):
-			-- the aggregate table is small, so this stays cheap.
-			SELECT addr, MAX(NULLIF(moniker, '')) AS moniker
-			FROM daily_participation_agregas
-			WHERE chain_id = ?
-			GROUP BY addr
-		) fm ON fm.addr = ld.addr`
+		LEFT JOIN last_up lu ON lu.chain_id = ld.chain_id AND lu.addr = ld.addr`
 
-	if err := db.Raw(query, chainID, chainID, fallbackStart, chainID, chainID, fallbackStart, chainID).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, chainID, fallbackStart, chainID, chainID, fallbackStart).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
 
@@ -357,19 +337,17 @@ func UptimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough time.Time)
 	thirtyDaysAgo := time.Now().UTC().AddDate(0, 0, -30).Format("2006-01-02")
 	fallbackStart := fallbackRawWindowStart(aggregatedThrough, thirtyDaysAgo)
 
-	// Same symmetric moniker fallback as the participation query: live
-	// addr_monikers → frozen row moniker → address last.
+	// The moniker is resolved by MonikerSQL, the address as a last resort.
 	query := `
 		SELECT combined.addr,
-			MAX(COALESCE(NULLIF(am.moniker, 'unknown'), NULLIF(combined.moniker, ''), combined.addr)) AS moniker,
+			` + MonikerSQL("combined.chain_id", "combined.addr", MonikerFallbackAddr) + ` AS moniker,
 			100.0 * SUM(combined.participated_count) / NULLIF(SUM(combined.total_blocks), 0) AS uptime
 		FROM (
-			SELECT chain_id, addr, moniker, participated_count, total_blocks
+			SELECT chain_id, addr, participated_count, total_blocks
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date::date >= ? AND block_date::date < CURRENT_DATE
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
-				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END),
 				COUNT(*)
 			FROM daily_participations dp
@@ -380,15 +358,13 @@ func UptimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough time.Time)
 			GROUP BY dp.chain_id, dp.addr
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
-				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated THEN 1 ELSE 0 END),
 				COUNT(*)
 			FROM daily_participations dp
 			WHERE dp.chain_id = ? AND dp.date >= CURRENT_DATE AND dp.date < CURRENT_DATE + INTERVAL '1 day'
 			GROUP BY dp.chain_id, dp.addr
 		) combined
-		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
-		GROUP BY combined.addr
+		GROUP BY combined.chain_id, combined.addr
 		ORDER BY uptime ASC`
 	if err := db.Raw(query, chainID, thirtyDaysAgo, chainID, fallbackStart, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
@@ -408,16 +384,16 @@ func TxContrib(db *gorm.DB, chainID, period string, aggregatedThrough time.Time)
 	}
 	fallbackStart := fallbackRawWindowStart(aggregatedThrough, startStr)
 
-	// Same symmetric moniker fallback as the participation query. Raw-fallback
-	// branch bound via fallbackRawWindowStart — see that function's doc comment.
+	// The moniker is resolved by MonikerSQL, the address as a last resort.
+	// Raw-fallback branch bound via fallbackRawWindowStart — see that
+	// function's doc comment.
 	query := `
 		WITH combined AS (
-			SELECT chain_id, addr, moniker, tx_contribution_count
+			SELECT chain_id, addr, tx_contribution_count
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date >= ? AND block_date::date < CURRENT_DATE
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
-				MAX(dp.moniker),
 				SUM(CASE WHEN dp.tx_contribution THEN 1 ELSE 0 END)
 			FROM daily_participations dp
 			LEFT JOIN daily_participation_agregas dpa
@@ -426,7 +402,6 @@ func TxContrib(db *gorm.DB, chainID, period string, aggregatedThrough time.Time)
 			GROUP BY dp.chain_id, dp.addr
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
-				MAX(dp.moniker),
 				SUM(CASE WHEN dp.tx_contribution THEN 1 ELSE 0 END)
 			FROM daily_participations dp
 			WHERE dp.chain_id = ? AND dp.date >= CURRENT_DATE AND dp.date < CURRENT_DATE + INTERVAL '1 day'
@@ -434,11 +409,10 @@ func TxContrib(db *gorm.DB, chainID, period string, aggregatedThrough time.Time)
 		),
 		total AS (SELECT NULLIF(SUM(tx_contribution_count), 0) AS total_tx FROM combined)
 		SELECT combined.addr,
-			MAX(COALESCE(NULLIF(am.moniker, 'unknown'), NULLIF(combined.moniker, ''), combined.addr)) AS moniker,
+			` + MonikerSQL("combined.chain_id", "combined.addr", MonikerFallbackAddr) + ` AS moniker,
 			ROUND(SUM(combined.tx_contribution_count) * 100.0 / (SELECT total_tx FROM total), 1) AS tx_contrib
 		FROM combined
-		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
-		GROUP BY combined.addr`
+		GROUP BY combined.chain_id, combined.addr`
 
 	if err := db.Raw(query, chainID, startStr, chainID, fallbackStart, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request TxContrib: %s", err)
@@ -460,19 +434,19 @@ func MissingBlock(db *gorm.DB, chainID, period string, aggregatedThrough time.Ti
 	}
 	fallbackStart := fallbackRawWindowStart(aggregatedThrough, startStr)
 
-	// Same symmetric moniker fallback as the participation query. Raw-fallback
-	// branch bound via fallbackRawWindowStart — see that function's doc comment.
+	// The moniker is resolved by MonikerSQL, the address as a last resort.
+	// Raw-fallback branch bound via fallbackRawWindowStart — see that
+	// function's doc comment.
 	query := `
 		SELECT combined.addr,
-			MAX(COALESCE(NULLIF(am.moniker, 'unknown'), NULLIF(combined.moniker, ''), combined.addr)) AS moniker,
+			` + MonikerSQL("combined.chain_id", "combined.addr", MonikerFallbackAddr) + ` AS moniker,
 			SUM(combined.missed_count) AS missing_block
 		FROM (
-			SELECT chain_id, addr, moniker, missed_count
+			SELECT chain_id, addr, missed_count
 			FROM daily_participation_agregas
 			WHERE chain_id = ? AND block_date >= ? AND block_date::date < CURRENT_DATE
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
-				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated = false THEN 1 ELSE 0 END)
 			FROM daily_participations dp
 			LEFT JOIN daily_participation_agregas dpa
@@ -481,14 +455,12 @@ func MissingBlock(db *gorm.DB, chainID, period string, aggregatedThrough time.Ti
 			GROUP BY dp.chain_id, dp.addr
 			UNION ALL
 			SELECT dp.chain_id, dp.addr,
-				MAX(dp.moniker),
 				SUM(CASE WHEN dp.participated = false THEN 1 ELSE 0 END)
 			FROM daily_participations dp
 			WHERE dp.chain_id = ? AND dp.date >= CURRENT_DATE AND dp.date < CURRENT_DATE + INTERVAL '1 day'
 			GROUP BY dp.chain_id, dp.addr
 		) combined
-		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
-		GROUP BY combined.addr`
+		GROUP BY combined.chain_id, combined.addr`
 
 	if err := db.Raw(query, chainID, startStr, chainID, fallbackStart, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request MissingBlock: %s", err)
@@ -505,14 +477,13 @@ func GetMissedBlocksWindow(db *gorm.DB, chainID string, since time.Time) ([]Miss
 	// than formatting to a string.
 	query := `
 		SELECT
-			MAX(COALESCE(am.moniker, dp.addr)) AS moniker,
+			` + MonikerSQL("dp.chain_id", "dp.addr", MonikerFallbackAddr) + ` AS moniker,
 			dp.addr,
 			SUM(CASE WHEN dp.participated = false THEN 1 ELSE 0 END) AS missing_block
 		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ?
 		  AND dp.date >= ?
-		GROUP BY dp.addr`
+		GROUP BY dp.chain_id, dp.addr`
 	if err := db.Raw(query, chainID, since.UTC()).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in GetMissedBlocksWindow: %w", err)
 	}
@@ -538,14 +509,13 @@ func GetMissedBlocksMultiWindow(db *gorm.DB, chainID string) ([]MissedMultiWindo
 	query := `
 		SELECT
 			dp.addr,
-			MAX(COALESCE(am.moniker, dp.addr)) AS moniker,
+			` + MonikerSQL("dp.chain_id", "dp.addr", MonikerFallbackAddr) + ` AS moniker,
 			COUNT(*) FILTER (WHERE dp.participated = false AND dp.date >= NOW() - INTERVAL '1 hour')   AS missed_1h,
 			COUNT(*) FILTER (WHERE dp.participated = false AND dp.date >= NOW() - INTERVAL '24 hours') AS missed_24h,
 			COUNT(*) FILTER (WHERE dp.participated = false AND dp.date >= NOW() - INTERVAL '7 days')   AS missed_7d
 		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ? AND dp.date >= NOW() - INTERVAL '7 days'
-		GROUP BY dp.addr`
+		GROUP BY dp.chain_id, dp.addr`
 	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in GetMissedBlocksMultiWindow: %w", err)
 	}
@@ -577,7 +547,7 @@ func GetPrecommitLatencyMultiWindow(db *gorm.DB, chainID string) ([]PrecommitLat
 	query := `
 		SELECT
 			dp.addr,
-			MAX(COALESCE(am.moniker, dp.addr)) AS moniker,
+			` + MonikerSQL("dp.chain_id", "dp.addr", MonikerFallbackAddr) + ` AS moniker,
 			percentile_cont(0.5) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) FILTER (WHERE dp.date >= NOW() - INTERVAL '1 hour')   AS lag_p50_1h,
 			percentile_cont(0.9) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) FILTER (WHERE dp.date >= NOW() - INTERVAL '1 hour')   AS lag_p90_1h,
 			percentile_cont(0.5) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) FILTER (WHERE dp.date >= NOW() - INTERVAL '24 hours') AS lag_p50_24h,
@@ -591,9 +561,8 @@ func GetPrecommitLatencyMultiWindow(db *gorm.DB, chainID string) ([]PrecommitLat
 			(COUNT(*) FILTER (WHERE dp.late_for_quorum))::float8
 				/ NULLIF(COUNT(dp.late_for_quorum), 0)                                                     AS late_ratio_7d
 		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ? AND dp.date >= NOW() - INTERVAL '7 days' AND dp.precommit_lag_ms IS NOT NULL
-		GROUP BY dp.addr`
+		GROUP BY dp.chain_id, dp.addr`
 	if err := db.Raw(query, chainID).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in GetPrecommitLatencyMultiWindow: %w", err)
 	}
@@ -726,7 +695,7 @@ func GetFirstSeen(db *gorm.DB, chainID string, aggregatedThrough time.Time) ([]F
 
 	query := `
 		SELECT combined.addr,
-			MAX(COALESCE(am.moniker, combined.addr)) AS moniker,
+			` + MonikerSQL("combined.chain_id", "combined.addr", MonikerFallbackAddr) + ` AS moniker,
 			MIN(combined.first_seen) AS first_seen
 		FROM (
 			SELECT chain_id, addr, block_date::date AS first_seen
@@ -739,8 +708,7 @@ func GetFirstSeen(db *gorm.DB, chainID string, aggregatedThrough time.Time) ([]F
 				ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date::date = dp.date::date
 			WHERE dp.chain_id = ? AND dp.date >= ? AND dp.participated = true AND dpa.block_date IS NULL
 		) combined
-		LEFT JOIN addr_monikers am ON am.chain_id = combined.chain_id AND am.addr = combined.addr
-		GROUP BY combined.addr
+		GROUP BY combined.chain_id, combined.addr
 		ORDER BY first_seen ASC`
 
 	if err := db.Raw(query, chainID, chainID, fallbackStart).Scan(&results).Error; err != nil {
@@ -901,22 +869,17 @@ type MissedBlockCount struct {
 // last 24 hours for the given chain, ordered by missed count descending.
 func GetMissedBlocksLast24h(db *gorm.DB, chainID string) ([]MissedBlockCount, error) {
 	var result []MissedBlockCount
-	// Resolve the moniker from addr_monikers (kept current by the metrics
-	// updater) and only fall back to the moniker frozen into the
-	// daily_participations row when no override exists, mirroring the sibling
-	// queries (CalculateValidatorStatusLast24h, CalculateRate). Without this
-	// join a validator named "unknown" when its blocks were recorded keeps
-	// showing "unknown" even after its moniker is later resolved.
+	// The moniker is resolved by MonikerSQL: a validator named "unknown" when
+	// its blocks were recorded shows its current name once it is resolved.
 	err := db.Raw(`
 		SELECT dp.addr,
-		       COALESCE(MAX(am.moniker), MAX(dp.moniker), '') AS moniker,
+		       `+MonikerSQL("dp.chain_id", "dp.addr", MonikerFallbackEmpty)+` AS moniker,
 		       COUNT(*) AS missed
 		FROM daily_participations dp
-		LEFT JOIN addr_monikers am ON am.chain_id = dp.chain_id AND am.addr = dp.addr
 		WHERE dp.chain_id = ?
 		  AND dp.participated = false
 		  AND dp.date >= NOW() - INTERVAL '24 hours'
-		GROUP BY dp.addr
+		GROUP BY dp.chain_id, dp.addr
 		ORDER BY missed DESC
 	`, chainID).Scan(&result).Error
 	return result, err

@@ -253,14 +253,12 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64, chainID string) ([]Valida
 	// even after raw data is pruned beyond the retention window.
 	query := `
 		WITH v AS (
-			SELECT DISTINCT addr, COALESCE(
-				(SELECT moniker FROM addr_monikers am WHERE am.chain_id = ? AND am.addr = all_addrs.addr),
-				addr
-			) AS moniker
+			SELECT all_addrs.addr,
+				` + MonikerSQL("all_addrs.chain_id", "all_addrs.addr", MonikerFallbackAddr) + ` AS moniker
 			FROM (
-				SELECT dp.addr FROM daily_participations dp WHERE dp.chain_id = ?
+				SELECT dp.chain_id, dp.addr FROM daily_participations dp WHERE dp.chain_id = ?
 				UNION
-				SELECT dpa.addr FROM daily_participation_agregas dpa WHERE dpa.chain_id = ?
+				SELECT dpa.chain_id, dpa.addr FROM daily_participation_agregas dpa WHERE dpa.chain_id = ?
 			) all_addrs
 		)
 		SELECT
@@ -278,7 +276,7 @@ func GetValidatorStatusList(db *gorm.DB, chatID int64, chainID string) ([]Valida
 		ORDER BY status DESC;
 	`
 
-	err := db.Raw(query, chainID, chainID, chainID, chainID, chatID).Scan(&results).Error
+	err := db.Raw(query, chainID, chainID, chainID, chatID).Scan(&results).Error
 	if err != nil {
 		return nil, err
 	}
@@ -292,15 +290,15 @@ func GetAllValidators(db *gorm.DB, chainID string) ([]AddrMoniker, error) {
 
 	// UNION raw + agrega so validators pruned from raw remain visible.
 	query := `
-		SELECT DISTINCT all_addrs.addr, COALESCE(am.moniker, all_addrs.addr) AS moniker
+		SELECT all_addrs.addr,
+			` + MonikerSQL("all_addrs.chain_id", "all_addrs.addr", MonikerFallbackAddr) + ` AS moniker
 		FROM (
-			SELECT dp.addr FROM daily_participations dp WHERE dp.chain_id = ?
+			SELECT dp.chain_id, dp.addr FROM daily_participations dp WHERE dp.chain_id = ?
 			UNION
-			SELECT dpa.addr FROM daily_participation_agregas dpa WHERE dpa.chain_id = ?
-		) all_addrs
-		LEFT JOIN addr_monikers am ON am.chain_id = ? AND am.addr = all_addrs.addr;`
+			SELECT dpa.chain_id, dpa.addr FROM daily_participation_agregas dpa WHERE dpa.chain_id = ?
+		) all_addrs;`
 
-	err := db.Raw(query, chainID, chainID, chainID).Scan(&results).Error
+	err := db.Raw(query, chainID, chainID).Scan(&results).Error
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +310,8 @@ func ResolveAddrs(db *gorm.DB, chainID string, addrs []string) ([]AddrMoniker, e
 	var results []AddrMoniker
 
 	err := db.Raw(`
-		SELECT DISTINCT am.addr, COALESCE(am.moniker, am.addr) AS moniker
+		SELECT am.addr,
+			`+MonikerSQL("am.chain_id", "am.addr", MonikerFallbackAddr)+` AS moniker
 		FROM addr_monikers am
 		WHERE am.chain_id = ? AND am.addr IN ?
 	`, chainID, addrs).Scan(&results).Error
