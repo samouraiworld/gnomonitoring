@@ -103,12 +103,18 @@ func GetAlertLogFiltered(db *gorm.DB, chainID, period string, q AlertLogQuery) (
 		limit = MaxAlertLogLimit
 	}
 
+	// DISTINCT, ORDER BY and LIMIT run on the raw columns first; the moniker
+	// is resolved afterwards, for the returned rows only. Resolving it inside
+	// the DISTINCT would evaluate MonikerSQL for every alert row of the period.
+	// The moniker is a function of (chain_id, addr), so it neither splits nor
+	// merges DISTINCT rows.
 	query := `
-		SELECT DISTINCT
-		       ` + MonikerSQL("al.chain_id", "al.addr", MonikerFallbackEmpty) + ` AS moniker,
+		SELECT ` + MonikerSQL("al.chain_id", "al.addr", MonikerFallbackEmpty) + ` AS moniker,
 		       al.level, al.addr, al.start_height, al.end_height, al.msg, al.sent_at
-		FROM alert_logs al
-		WHERE al.chain_id = ?` + timeFilter
+		FROM (
+			SELECT DISTINCT al.chain_id, al.level, al.addr, al.start_height, al.end_height, al.msg, al.sent_at
+			FROM alert_logs al
+			WHERE al.chain_id = ?` + timeFilter
 	args := append([]any{chainID}, timeArgs...)
 	if q.Addr != "" {
 		query += ` AND al.addr = ?`
@@ -116,12 +122,15 @@ func GetAlertLogFiltered(db *gorm.DB, chainID, period string, q AlertLogQuery) (
 	}
 	// end_height is not unique (a RESOLVED row repeats the heights of the alert
 	// it closes, RPC rows all have end_height 0), so break ties on sent_at, then
-	// on every remaining projected column. DISTINCT forbids ordering on al.id,
-	// and the projection identifies a DISTINCT row, so the order is total.
+	// on every remaining projected column. DISTINCT forbids ordering on id, and
+	// the projection identifies a DISTINCT row, so the order is total. The
+	// outer query repeats it: a subquery's order is not guaranteed to survive.
+	const order = `end_height DESC, sent_at DESC, addr, level, start_height DESC, msg`
 	query += `
-		ORDER BY al.end_height DESC, al.sent_at DESC, al.addr, al.level,
-		         al.start_height DESC, al.msg, moniker
-		LIMIT ?`
+			ORDER BY ` + order + `
+			LIMIT ?
+		) al
+		ORDER BY ` + order
 	args = append(args, limit)
 
 	err := db.Raw(query, args...).Scan(&alerts).Error

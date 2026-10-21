@@ -103,3 +103,19 @@ func TestGetMissedBlocksLast24h_UsesMostRecentFrozenName(t *testing.T) {
 	assert.Equal(t, "alpha-new", rows[0].Moniker)
 	assert.Equal(t, 2, rows[0].Missed)
 }
+
+// Step 4: an address that only exists in alert_logs (the chain-wide 'all' and
+// 'rpc' rows) takes its latest named alert row, and latency rows, which
+// record the address itself when the name was unresolved, never count.
+func TestMonikerSQL_AlertLogsStep(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain = "chain-moniker-alertlogs"
+	now := time.Now()
+
+	require.NoError(t, database.InsertAlertlog(db, chain, "rpc", "rpc-old", "CRITICAL", 0, 0, false, now.Add(-time.Hour), ""))
+	require.NoError(t, database.InsertAlertlog(db, chain, "rpc", "rpc", "RESOLVED", 0, 1, false, now, ""))
+	assert.Equal(t, "rpc", resolveMoniker(t, db, chain, "rpc", database.MonikerFallbackEmpty))
+
+	require.NoError(t, database.InsertAlertlog(db, chain, "g1lat", "g1lat", "LATENCY_RESOLVED", 0, 0, false, now, ""))
+	assert.Equal(t, "", resolveMoniker(t, db, chain, "g1lat", database.MonikerFallbackEmpty))
+}
