@@ -9,6 +9,23 @@ Entries are ordered newest-first within each section.
 
 ### Changed
 
+- **Validator monikers resolve through one shared rule** — every query that
+  returns a moniker (alerts, health and daily reports, score report,
+  Prometheus labels, REST API, Telegram lists) now uses
+  `database.MonikerSQL` instead of its own `LEFT JOIN addr_monikers` +
+  `COALESCE`/`MAX` variant. Order: `addr_monikers`, then the moniker of the
+  validator's latest `daily_participations` row, then its latest named
+  `daily_participation_agregas` day, then its latest named non-latency
+  `alert_logs` row, then `''` or the address (each query keeps its previous
+  last resort). Empty and `unknown` names never count at any step. The frozen
+  fallback is now the most recent name, not the lexically largest one
+  `MAX(moniker)` returned (#110). When `addr_monikers` has a name, nothing
+  changes. Without one, queries that used to fall back to the address
+  (latency alerts, the 1h/24h/7d missed-block and precommit-latency metrics,
+  first-seen, Telegram validator lists) now show the frozen name first. The
+  `/latest_incidents` query resolves monikers only for the rows it returns.
+  No schema change; the frozen moniker columns are still written (#108).
+
 - **Periodic background jobs run on fixed, separate phases to flatten
   Postgres CPU spikes** — the 5-minute jobs used to start at boot and sleep
   after each run, so they fired together and drifted together. They now run on
