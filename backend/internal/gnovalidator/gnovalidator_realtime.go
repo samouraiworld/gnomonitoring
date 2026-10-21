@@ -707,25 +707,31 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 	}
 
 	var pending []pendingAlert
+	// DISTINCT ON and LIMIT pick the alerts first; the moniker is resolved
+	// afterwards, once per returned validator rather than once per pending row.
 	err := db.Raw(`
-		SELECT DISTINCT ON (al.addr)
-		       al.addr,
-		       `+database.MonikerSQL("al.chain_id", "al.addr", database.MonikerFallbackEmpty)+` AS moniker,
-		       al.start_height,
-		       al.end_height
-		FROM alert_logs al
-		WHERE al.chain_id = ?
-		  AND al.level IN ('WARNING', 'CRITICAL')
-		  AND al.skipped = true
-		  AND NOT EXISTS (
-		      SELECT 1 FROM alert_logs r
-		      WHERE r.chain_id = al.chain_id
-		        AND r.addr     = al.addr
-		        AND r.level    = 'RESOLVED'
-		        AND r.end_height >= al.end_height
-		  )
-		ORDER BY al.addr, al.end_height DESC
-		LIMIT 50
+		SELECT p.addr,
+		       `+database.MonikerSQL("p.chain_id", "p.addr", database.MonikerFallbackEmpty)+` AS moniker,
+		       p.start_height,
+		       p.end_height
+		FROM (
+			SELECT DISTINCT ON (al.addr)
+			       al.chain_id, al.addr, al.start_height, al.end_height
+			FROM alert_logs al
+			WHERE al.chain_id = ?
+			  AND al.level IN ('WARNING', 'CRITICAL')
+			  AND al.skipped = true
+			  AND NOT EXISTS (
+			      SELECT 1 FROM alert_logs r
+			      WHERE r.chain_id = al.chain_id
+			        AND r.addr     = al.addr
+			        AND r.level    = 'RESOLVED'
+			        AND r.end_height >= al.end_height
+			  )
+			ORDER BY al.addr, al.end_height DESC
+			LIMIT 50
+		) p
+		ORDER BY p.addr
 	`, chainID).Scan(&pending).Error
 	if err != nil {
 		log.Printf("[validator][%s] SendResolveAlerts query error: %v", chainID, err)

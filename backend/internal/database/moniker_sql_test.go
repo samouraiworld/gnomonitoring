@@ -133,3 +133,28 @@ func TestMonikerSQL_FrozenSourcesAreChainScoped(t *testing.T) {
 	assert.Equal(t, "", resolveMoniker(t, db, chain, "g1val", database.MonikerFallbackEmpty))
 	assert.Equal(t, "g1val", resolveMoniker(t, db, chain, "g1val", database.MonikerFallbackAddr))
 }
+
+// ResolveAddrs feeds Telegram subscribe/unsubscribe: it returns only the
+// requested addresses known to addr_monikers, named by MonikerSQL.
+func TestResolveAddrs_UsesResolvedMoniker(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain = "chain-resolve-addrs"
+
+	require.NoError(t, database.UpsertAddrMoniker(db, chain, "g1live", "live-name"))
+	require.NoError(t, database.UpsertAddrMoniker(db, chain, "g1unk", "unknown"))
+	seedFrozenParticipation(t, db, chain, "g1unk", "frozen-name", 10)
+	require.NoError(t, database.UpsertAddrMoniker(db, chain, "g1none", "unknown"))
+	require.NoError(t, database.UpsertAddrMoniker(db, "other-chain", "g1other", "other-name"))
+
+	got, err := database.ResolveAddrs(db, chain, []string{"g1live", "g1unk", "g1none", "g1other"})
+	require.NoError(t, err)
+	byAddr := map[string]string{}
+	for _, r := range got {
+		byAddr[r.Addr] = r.Moniker
+	}
+	assert.Equal(t, map[string]string{
+		"g1live": "live-name",
+		"g1unk":  "frozen-name",
+		"g1none": "g1none", // address as the last resort
+	}, byAddr)
+}
