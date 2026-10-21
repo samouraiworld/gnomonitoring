@@ -62,6 +62,6 @@ func MonikerSQL(chainCol, addrCol string, fallback MonikerFallback) string {
 			  AND mr_al.moniker NOT IN ('', 'unknown')
 			  AND mr_al.level NOT IN ('LATENCY', 'LATENCY_RESOLVED')
 			  AND mr_al.sent_at IS NOT NULL
-			ORDER BY mr_al.sent_at DESC LIMIT 1),
+			ORDER BY mr_al.sent_at DESC, mr_al.id DESC LIMIT 1),
 		%[3]s)`, chainCol, addrCol, last)
 }

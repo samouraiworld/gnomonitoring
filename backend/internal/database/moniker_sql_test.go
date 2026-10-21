@@ -119,3 +119,17 @@ func TestMonikerSQL_AlertLogsStep(t *testing.T) {
 	require.NoError(t, database.InsertAlertlog(db, chain, "g1lat", "g1lat", "LATENCY_RESOLVED", 0, 0, false, now, ""))
 	assert.Equal(t, "", resolveMoniker(t, db, chain, "g1lat", database.MonikerFallbackEmpty))
 }
+
+// Every frozen source is read for the enclosing row's chain only: names
+// recorded for the same address on another chain never leak.
+func TestMonikerSQL_FrozenSourcesAreChainScoped(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain, other = "chain-moniker-scoped", "chain-moniker-other"
+
+	seedFrozenParticipation(t, db, other, "g1val", "other-raw", 10)
+	seedFrozenAgrega(t, db, other, "g1val", "other-agg", "2026-01-01")
+	require.NoError(t, database.InsertAlertlog(db, other, "g1val", "other-alert", "WARNING", 1, 5, true, time.Now(), ""))
+
+	assert.Equal(t, "", resolveMoniker(t, db, chain, "g1val", database.MonikerFallbackEmpty))
+	assert.Equal(t, "g1val", resolveMoniker(t, db, chain, "g1val", database.MonikerFallbackAddr))
+}
