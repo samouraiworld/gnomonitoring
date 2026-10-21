@@ -36,6 +36,12 @@ type Thresholds struct {
 	LatencyAlertPeerFactor           float64
 	LatencyAlertMinSamples           int
 	LatencyAlertResendHours          int
+	BFTAlertEnabled                  bool
+	BFTAlertCheckMinutes             int
+	BFTAlertWindowBlocks             int
+	BFTAlertWarningLosses            int
+	BFTAlertWarningMarginPct         float64
+	BFTAlertCriticalMarginPct        float64
 }
 
 var (
@@ -63,6 +69,12 @@ var (
 		LatencyAlertPeerFactor:           3,
 		LatencyAlertMinSamples:           300,
 		LatencyAlertResendHours:          24,
+		BFTAlertEnabled:                  true,
+		BFTAlertCheckMinutes:             5,
+		BFTAlertWindowBlocks:             100,
+		BFTAlertWarningLosses:            1,
+		BFTAlertWarningMarginPct:         10,
+		BFTAlertCriticalMarginPct:        3,
 	}
 	thresholdsMu sync.RWMutex
 )
@@ -96,8 +108,14 @@ func LoadThresholds(db *gorm.DB) {
 		LatencyAlertPeerFactor:           database.GetAdminConfigFloat(db, "latency_alert_peer_factor", 3),
 		LatencyAlertMinSamples:           database.GetAdminConfigInt(db, "latency_alert_min_samples", 300),
 		LatencyAlertResendHours:          database.GetAdminConfigInt(db, "latency_alert_resend_hours", 24),
+		BFTAlertEnabled:                  database.GetAdminConfigBool(db, "bft_alert_enabled", true),
+		BFTAlertCheckMinutes:             database.GetAdminConfigInt(db, "bft_alert_check_minutes", 5),
+		BFTAlertWindowBlocks:             database.GetAdminConfigInt(db, "bft_alert_window_blocks", 100),
+		BFTAlertWarningLosses:            database.GetAdminConfigInt(db, "bft_alert_warning_losses", 1),
+		BFTAlertWarningMarginPct:         database.GetAdminConfigFloat(db, "bft_alert_warning_margin_pct", 10),
+		BFTAlertCriticalMarginPct:        database.GetAdminConfigFloat(db, "bft_alert_critical_margin_pct", 3),
 	}
-	activeThresholds = sanitizeLatencyThresholds(loaded)
+	activeThresholds = sanitizeBFTThresholds(sanitizeLatencyThresholds(loaded))
 	log.Printf("[thresholds] loaded: warning=%d critical=%d resend_critical=%dh resend_warning=%dh stagnation_first=%ds stagnation_repeat=%dmin",
 		activeThresholds.WarningThreshold,
 		activeThresholds.CriticalThreshold,
@@ -202,4 +220,43 @@ func sanitizeLatencyThresholds(t Thresholds) Thresholds {
 // the next one.
 func (t Thresholds) LatencyAlertCheckInterval() time.Duration {
 	return time.Duration(t.LatencyAlertCheckMinutes) * time.Minute
+}
+
+// sanitizeBFTThresholds replaces any out-of-range BFT-alert value with its
+// default. A zero window would hold no block, a huge window or a huge
+// interval turns the check into a full-table scan or (once the duration
+// overflows) a hot loop, and a negative threshold has no meaning. A warning margin
+// below the critical one is kept: the critical check runs first, so the
+// warning band is then simply empty.
+func sanitizeBFTThresholds(t Thresholds) Thresholds {
+	if t.BFTAlertCheckMinutes <= 0 || t.BFTAlertCheckMinutes > 1440 {
+		log.Printf("[thresholds] bft_alert_check_minutes outside 1..1440, using default 5")
+		t.BFTAlertCheckMinutes = 5
+	}
+	if t.BFTAlertWindowBlocks <= 0 || t.BFTAlertWindowBlocks > 10000 {
+		log.Printf("[thresholds] bft_alert_window_blocks outside 1..10000, using default 100")
+		t.BFTAlertWindowBlocks = 100
+	}
+	if t.BFTAlertWarningLosses < 0 {
+		log.Printf("[thresholds] bft_alert_warning_losses < 0, using default 1")
+		t.BFTAlertWarningLosses = 1
+	}
+	// The margin above 2/3 never exceeds 100/3 (every validator online): a
+	// threshold above that would keep a fully healthy chain in alert.
+	if t.BFTAlertWarningMarginPct < 0 || t.BFTAlertWarningMarginPct > 100.0/3 {
+		log.Printf("[thresholds] bft_alert_warning_margin_pct outside 0..33.3, using default 10")
+		t.BFTAlertWarningMarginPct = 10
+	}
+	if t.BFTAlertCriticalMarginPct < 0 || t.BFTAlertCriticalMarginPct > 100.0/3 {
+		log.Printf("[thresholds] bft_alert_critical_margin_pct outside 0..33.3, using default 3")
+		t.BFTAlertCriticalMarginPct = 3
+	}
+	return t
+}
+
+// BFTAlertCheckInterval is how often WatchBFTAlerts evaluates the BFT
+// margin. Read at the start of every cycle, so an admin edit takes effect on
+// the next one.
+func (t Thresholds) BFTAlertCheckInterval() time.Duration {
+	return time.Duration(t.BFTAlertCheckMinutes) * time.Minute
 }

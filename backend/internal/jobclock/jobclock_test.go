@@ -84,6 +84,23 @@ func checkPhasePlan(t *testing.T, chains []string) {
 	}
 }
 
+func TestBFTOffset_AfterOwnValsetInMinuteZero(t *testing.T) {
+	for n := 1; n <= 8; n++ {
+		chains := make([]string, n)
+		for i := range chains {
+			chains[i] = string(rune('a' + i))
+		}
+		seen := map[time.Duration]bool{}
+		for _, c := range chains {
+			b := BFTOffset(c, chains)
+			require.False(t, seen[b], "two chains share the BFT offset %v", b)
+			seen[b] = true
+			require.Equal(t, 0, minuteOf(b), "BFT check of %s leaves minute 0", c)
+			require.Greater(t, b, ValsetOffset(c, chains), "BFT check of %s starts before its valset refresh", c)
+		}
+	}
+}
+
 func TestAlertOffset_SpreadsChains(t *testing.T) {
 	chains := []string{"a", "b", "c"}
 	interval := 30 * time.Second

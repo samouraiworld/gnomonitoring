@@ -929,12 +929,13 @@ func isAlertLogAddr(s string) bool {
 }
 
 // isReservedAlertLogAddr reports the pseudo-addresses `alert_logs` uses for
-// chain-wide rows: `all` (chain stagnation) and `rpc` (RPC outage/recovery).
-// Their messages embed raw client errors and endpoint names, so a
-// per-validator query must not be able to page through them. Every
-// validator-scoped query in db_score.go excludes them for the same reason.
+// chain-wide rows: `all` (chain stagnation), `rpc` (RPC outage/recovery) and
+// `bft` (BFT margin). The first two embed raw client errors and endpoint
+// names, so a per-validator query must not be able to page through them;
+// none of them is a validator. Every validator-scoped query in db_score.go
+// excludes them for the same reason.
 func isReservedAlertLogAddr(s string) bool {
-	return s == "all" || s == "rpc"
+	return s == "all" || s == "rpc" || s == "bft"
 }
 
 // ============================ Participation Rate ========================
