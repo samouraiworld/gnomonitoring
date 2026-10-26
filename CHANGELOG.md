@@ -247,6 +247,10 @@ Entries are ordered newest-first within each section.
   sequence the validator recovered from before a check saw it used to send a
   WARNING or CRITICAL immediately followed by its RESOLVED. It is now recorded
   in `alert_logs` (score, incident history) without any notification.
+- **A RESOLVED now covers the whole missed sequence** — it was stored with
+  the sequence end seen when the alert went out. About 30 minutes after a
+  recovery, the rest of the sequence was taken for a new incident and sent
+  a spurious WARNING. The RESOLVED now ends where the sequence really ended.
 - **Telegram validator lists no longer reorder the shared cache** — the
   participation, uptime, operation time, tx contribution and missing blocks
   lists sorted the slice cached in `metricsCache` in place when no filter

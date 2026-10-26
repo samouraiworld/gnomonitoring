@@ -188,9 +188,55 @@ func TestRunValidatorAlertCycle_ClosedAfterWarningRecordsCritical(t *testing.T) 
 	rows := alertRows(t, db, chainID, "g1val")
 	require.Len(t, rows, 3)
 	assert.Equal(t, "CRITICAL", rows[1].Level)
-	assert.True(t, rows[1].Skipped, "joins the dispatched WARNING so SendResolveAlerts announces the recovery")
+	assert.False(t, rows[1].Skipped, "a CRITICAL never notified must not count as dispatched")
 	assert.Equal(t, "RESOLVED", rows[2].Level)
-	assert.EqualValues(t, 135, rows[2].EndHeight)
+	assert.EqualValues(t, 135, rows[2].EndHeight, "the RESOLVED covers the whole sequence")
+
+	// The next cycle neither records the sequence again nor notifies it.
+	runValidatorAlertCycle(db, chainID, th)
+	assert.Len(t, alertRows(t, db, chainID, "g1val"), 3)
+	assert.Equal(t, []string{"WARNING"}, *sent)
+}
+
+// The RESOLVED of an incident that went on after its alert ends at the real
+// end of the sequence: once the 30-minute window no longer holds the alert's
+// blocks, the rest of the sequence is not taken for a new incident.
+func TestRunValidatorAlertCycle_NoPhantomIncidentAfterWindowSlides(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chainID = "alert-cycle-no-phantom"
+	sent := captureValidatorAlertDispatch(t)
+	th := alertCycleTestThresholds()
+	old := time.Now().UTC().Add(-40 * time.Minute)
+	now := time.Now().UTC()
+
+	seedParticipationRows(t, db, chainID, "g1val", 1, 50, true, old)
+	seedParticipationRows(t, db, chainID, "g1val", 100, 104, false, old)
+	require.NoError(t, database.InsertAlertlog(db, chainID, "g1val", "val", "WARNING", 100, 104, true, old, ""))
+	seedParticipationRows(t, db, chainID, "g1val", 105, 119, false, now)
+	seedParticipationRows(t, db, chainID, "g1val", 120, 120, true, now)
+	SendResolveAlerts(db, chainID)
+
+	runValidatorAlertCycle(db, chainID, th)
+
+	assert.Empty(t, *sent)
+	assert.Equal(t, []string{"WARNING", "RESOLVED"}, alertLevels(t, db, chainID, "g1val"))
+}
+
+// A closed incident's RESOLVED is its validator's latest row, so it is not
+// counted as an active alert.
+func TestRunValidatorAlertCycle_ClosedIncidentNotActive(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chainID = "alert-cycle-closed-active"
+	captureValidatorAlertDispatch(t)
+	now := time.Now().UTC()
+
+	seedParticipationRows(t, db, chainID, "g1blip", 100, 110, false, now)
+	seedParticipationRows(t, db, chainID, "g1blip", 111, 111, true, now)
+	runValidatorAlertCycle(db, chainID, alertCycleTestThresholds())
+
+	n, err := database.GetActiveAlertCount(db, chainID, "WARNING")
+	require.NoError(t, err)
+	assert.Zero(t, n)
 }
 
 // A repeat validator silenced as dead while down is not notified when it

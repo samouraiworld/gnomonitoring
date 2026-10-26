@@ -777,46 +777,59 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 		if err := internal.SendResolveValidator(chainID, a.Addr, a.Moniker, resumeHeight, db); err != nil {
 			log.Printf("[validator][%s] SendResolveValidator error: %v", chainID, err)
 		}
-		if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, a.EndHeight, false, time.Now(), ""); err != nil {
+		// The RESOLVED ends where the sequence really ended, not where it had
+		// reached when the alert was dispatched, so it covers the whole
+		// sequence in GetMissedWindows and in the resend dedup.
+		if err := database.InsertAlertlog(db, chainID, a.Addr, a.Moniker, "RESOLVED", a.StartHeight, resumeHeight-1, false, time.Now(), ""); err != nil {
 			log.Printf("[monitor][%s] InsertAlertlog RESOLVED error: %v", chainID, err)
 		}
 	}
 }
 
 // recordClosedIncident writes the alert_logs rows of a missed sequence the
-// validator already recovered from, without notifying anyone. When an alert
-// of the same incident was dispatched and still awaits its RESOLVED, the row
-// joins it (skipped=true) and SendResolveAlerts announces the recovery.
-// Otherwise nothing was ever announced: the alert and its RESOLVED are both
-// stored with skipped=false, so neither the resend dedup nor SendResolveAlerts
-// treats them as dispatched.
+// validator already recovered from, without notifying anyone. Both rows are
+// stored with skipped=false: nothing was dispatched, so neither the resend
+// dedup, SendResolveAlerts nor HasPriorAlert treats them as notified. When an
+// alert dispatched earlier still awaits its RESOLVED, SendResolveAlerts
+// announces the recovery and its RESOLVED, stored at the real end of the
+// sequence, covers this row too. Otherwise the row gets its own RESOLVED.
 func recordClosedIncident(db *gorm.DB, chainID, addr, moniker, level string, startHeight, endHeight int64) error {
-	var pending int64
+	var state struct {
+		Recorded int64
+		Pending  int64
+	}
 	err := db.Raw(`
-		SELECT COUNT(*) FROM alert_logs al
+		SELECT
+			COUNT(*) FILTER (WHERE al.level = ? AND al.end_height >= ?) AS recorded,
+			COUNT(*) FILTER (WHERE al.skipped = true AND NOT EXISTS (
+				SELECT 1 FROM alert_logs r
+				WHERE r.chain_id   = al.chain_id
+				  AND r.addr       = al.addr
+				  AND r.level      = 'RESOLVED'
+				  AND r.end_height >= al.end_height
+			)) AS pending
+		FROM alert_logs al
 		WHERE al.chain_id = ? AND al.addr = ?
 		  AND al.level IN ('WARNING', 'CRITICAL')
-		  AND al.skipped = true
-		  AND NOT EXISTS (
-		      SELECT 1 FROM alert_logs r
-		      WHERE r.chain_id   = al.chain_id
-		        AND r.addr       = al.addr
-		        AND r.level      = 'RESOLVED'
-		        AND r.end_height >= al.end_height
-		  )
-	`, chainID, addr).Scan(&pending).Error
+	`, level, endHeight, chainID, addr).Scan(&state).Error
 	if err != nil {
-		return fmt.Errorf("checking pending alerts: %w", err)
+		return fmt.Errorf("checking existing alerts: %w", err)
+	}
+	if state.Recorded > 0 {
+		// Already recorded by an earlier cycle whose RESOLVED is still to come.
+		return nil
 	}
 	now := time.Now()
-	if pending > 0 {
-		return database.InsertAlertlog(db, chainID, addr, moniker, level, startHeight, endHeight, true, now, "")
+	if state.Pending > 0 {
+		return database.InsertAlertlog(db, chainID, addr, moniker, level, startHeight, endHeight, false, now, "")
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := database.InsertAlertlog(tx, chainID, addr, moniker, level, startHeight, endHeight, false, now, ""); err != nil {
 			return err
 		}
-		return database.InsertAlertlog(tx, chainID, addr, moniker, "RESOLVED", startHeight, endHeight, false, now, "")
+		// One microsecond later (the precision Postgres keeps) so that queries
+		// picking a validator's latest row by sent_at see the RESOLVED last.
+		return database.InsertAlertlog(tx, chainID, addr, moniker, "RESOLVED", startHeight, endHeight, false, now.Add(time.Microsecond), "")
 	})
 }
 
