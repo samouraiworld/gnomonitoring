@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -51,6 +52,16 @@ type update struct {
 	Message       *message       `json:"message,omitempty"`
 	ChannelPost   *message       `json:"channel_post,omitempty"`
 	CallbackQuery *callbackQuery `json:"callback_query,omitempty"`
+	MyChatMember  *chatMemberUpd `json:"my_chat_member,omitempty"`
+}
+
+// chatMemberUpd is the bot's own membership change in a chat: blocked or
+// unblocked by a user, removed from or added to a group.
+type chatMemberUpd struct {
+	Chat          chat `json:"chat"`
+	NewChatMember struct {
+		Status string `json:"status"`
+	} `json:"new_chat_member"`
 }
 type updatesResp struct {
 	Ok     bool     `json:"ok"`
@@ -110,49 +121,10 @@ func SendMessageTelegramChunked(botToken string, chatID int64, text string) erro
 }
 
 func SendMessageTelegram(botToken string, chatID int64, text string) error {
-	apiURL := fmt.Sprintf("%s/bot%s/sendMessage", telegramAPIBaseURL, botToken)
-
-	body := map[string]any{
-		"chat_id":                  chatID,
-		"text":                     text,
-		"parse_mode":               "HTML",
-		"disable_web_page_preview": true,
-	}
-
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-
-	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-
-	resp, err := telegramHTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var res struct {
-		Ok          bool   `json:"ok"`
-		Description string `json:"description"`
-	}
-	// always decode (even if 400) to retrieve Description
-	_ = json.NewDecoder(resp.Body).Decode(&res)
-
-	if resp.StatusCode/100 != 2 || !res.Ok {
-		return fmt.Errorf("telegram http %d: %s", resp.StatusCode, res.Description)
-	}
-	return nil
+	return SendMessageTelegramWithMarkup(botToken, chatID, text, nil)
 }
 
 func SendMessageTelegramWithMarkup(botToken string, chatID int64, text string, markup *InlineKeyboardMarkup) error {
-	apiURL := fmt.Sprintf("%s/bot%s/sendMessage", telegramAPIBaseURL, botToken)
-
 	body := map[string]any{
 		"chat_id":                  chatID,
 		"text":                     text,
@@ -162,34 +134,7 @@ func SendMessageTelegramWithMarkup(botToken string, chatID int64, text string, m
 	if markup != nil {
 		body["reply_markup"] = markup
 	}
-
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-
-	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-
-	resp, err := telegramHTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var res struct {
-		Ok          bool   `json:"ok"`
-		Description string `json:"description"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&res)
-	if resp.StatusCode/100 != 2 || !res.Ok {
-		return fmt.Errorf("telegram http %d: %s", resp.StatusCode, res.Description)
-	}
-	return nil
+	return callTelegram(context.Background(), botToken, "sendMessage", chatID, true, body)
 }
 
 // SendMessageTelegramWithLinkButton sends a message with a single inline
@@ -208,9 +153,9 @@ func SendMessageTelegramWithLinkButton(botToken string, chatID int64, text, butt
 	return SendMessageTelegramWithMarkup(botToken, chatID, text, markup)
 }
 
+// EditMessageTelegramWithMarkup edits a message in place. Edits answer a
+// user's tap, so they are not paced; a 429 is still retried.
 func EditMessageTelegramWithMarkup(botToken string, chatID int64, messageID int, text string, markup *InlineKeyboardMarkup) error {
-	apiURL := fmt.Sprintf("%s/bot%s/editMessageText", telegramAPIBaseURL, botToken)
-
 	body := map[string]any{
 		"chat_id":                  chatID,
 		"message_id":               messageID,
@@ -221,58 +166,150 @@ func EditMessageTelegramWithMarkup(botToken string, chatID int64, messageID int,
 	if markup != nil {
 		body["reply_markup"] = markup
 	}
+	return callTelegram(context.Background(), botToken, "editMessageText", chatID, false, body)
+}
+
+func AnswerCallbackQuery(botToken, callbackID string) error {
+	body := map[string]any{
+		"callback_query_id": callbackID,
+	}
+	return callTelegram(context.Background(), botToken, "answerCallbackQuery", 0, false, body)
+}
+
+// telegramResponse is the part of a Bot API answer the send path reads.
+type telegramResponse struct {
+	Ok          bool   `json:"ok"`
+	Description string `json:"description"`
+	Parameters  struct {
+		RetryAfter int `json:"retry_after"`
+	} `json:"parameters"`
+}
+
+// callTelegram posts body to the Bot API method and handles Telegram's
+// limits. chatID is the target chat, or 0 when the call targets none.
+//   - A chat known to have blocked the bot fails at once with ErrChatBlocked.
+//   - paced calls wait for their slot in telegramPacer first.
+//   - 429: holds every call of the bot for retry_after, including calls
+//     already waiting for their slot, then retries (retry_after bounded by
+//     telegramMaxRetryAfter, at most telegramMaxAttempts sends in all), else
+//     ErrRateLimited.
+//   - 403: marks the chat blocked (logged once) and returns ErrChatBlocked.
+func callTelegram(ctx context.Context, botToken, method string, chatID int64, paced bool, body map[string]any) error {
+	if chatID != 0 && isChatBlocked(botToken, chatID) {
+		return fmt.Errorf("%w: chat_id=%d", ErrChatBlocked, chatID)
+	}
 
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
+	apiURL := fmt.Sprintf("%s/bot%s/%s", telegramAPIBaseURL, botToken, method)
 
-	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+	for attempt := 1; ; attempt++ {
+		if err := waitSendTurn(ctx, botToken, method, chatID, paced); err != nil {
+			return err
+		}
+
+		status, res, err := postTelegram(ctx, apiURL, jsonBody)
+		if err != nil {
+			return err
+		}
+
+		switch {
+		case status/100 == 2 && res.Ok:
+			return nil
+		case status == http.StatusForbidden && chatID != 0:
+			markChatBlocked(botToken, chatID, res.Description)
+			return fmt.Errorf("%w: chat_id=%d: %s", ErrChatBlocked, chatID, res.Description)
+		case status == http.StatusTooManyRequests:
+			wait := time.Duration(res.Parameters.RetryAfter) * time.Second
+			if wait <= 0 {
+				wait = time.Second
+			}
+			telegramPacer.backoff(botToken, telegramNow().Add(wait))
+			if wait > telegramMaxQueueWait {
+				log.Printf("⛔ telegram bot rate limited for %s: its sends fail until then", wait)
+			}
+			if attempt >= telegramMaxAttempts || wait > telegramMaxRetryAfter {
+				return fmt.Errorf("%w: %s chat_id=%d retry_after=%s: %s", ErrRateLimited, method, chatID, wait, res.Description)
+			}
+			// The next attempt waits for the cooldown before sending.
+			log.Printf("⏳ telegram %s rate limited (chat_id=%d), retrying in %s", method, chatID, wait)
+		default:
+			return fmt.Errorf("telegram http %d: %s", status, res.Description)
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
+}
 
-
-	resp, err := telegramHTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("do request: %w", err)
+// waitSendTurn waits until the call may be sent: its paced slot when paced,
+// then the end of the bot's 429 cooldown, re-checked after every wait since
+// another call may extend it meanwhile. A paced call released by a cooldown
+// books a fresh slot, so calls queued behind the same cooldown stay spaced
+// instead of all sending at its end. Fails with ErrRateLimited when a wait
+// would end after the call's queue deadline (telegramMaxQueueWait after it
+// started waiting, however often the cooldown is extended), and with
+// ErrChatBlocked when the chat was found blocked while waiting.
+func waitSendTurn(ctx context.Context, botToken, method string, chatID int64, paced bool) error {
+	pacer := telegramPacer
+	deadline := pacer.queueDeadline(telegramNow())
+	for {
+		now := telegramNow()
+		if paced {
+			at, ok := pacer.reserve(now, botToken, chatID, deadline)
+			if !ok {
+				return fmt.Errorf("%w: %s chat_id=%d: send queue full, next slot in %s",
+					ErrRateLimited, method, chatID, at.Sub(now).Round(time.Second))
+			}
+			if err := telegramSleep(ctx, at.Sub(now)); err != nil {
+				return err
+			}
+			now = telegramNow()
+		}
+		until := pacer.cooldownUntil(botToken)
+		if !until.After(now) {
+			break
+		}
+		wait := until.Sub(now)
+		if until.After(deadline) {
+			return fmt.Errorf("%w: %s chat_id=%d: bot cooling down for %s",
+				ErrRateLimited, method, chatID, wait.Round(time.Second))
+		}
+		if !paced {
+			if err := telegramSleep(ctx, wait); err != nil {
+				return err
+			}
+		}
+		// A paced call's next reservation starts after the cooldown.
 	}
-	defer resp.Body.Close()
-
-	var res struct {
-		Ok          bool   `json:"ok"`
-		Description string `json:"description"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&res)
-	if resp.StatusCode/100 != 2 || !res.Ok {
-		return fmt.Errorf("telegram http %d: %s", resp.StatusCode, res.Description)
+	if chatID != 0 && isChatBlocked(botToken, chatID) {
+		return fmt.Errorf("%w: chat_id=%d", ErrChatBlocked, chatID)
 	}
 	return nil
 }
 
-func AnswerCallbackQuery(botToken, callbackID string) error {
-	apiURL := fmt.Sprintf("%s/bot%s/answerCallbackQuery", telegramAPIBaseURL, botToken)
-	body := map[string]any{
-		"callback_query_id": callbackID,
-	}
-	jsonBody, err := json.Marshal(body)
+// postTelegram sends one request. A transport error is returned without its
+// *url.Error wrapper, whose message carries the URL and so the bot token.
+func postTelegram(ctx context.Context, apiURL string, jsonBody []byte) (int, telegramResponse, error) {
+	var res telegramResponse
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(jsonBody))
 	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(jsonBody))
-	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return 0, res, errors.New("build request: invalid Telegram API URL")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-
 	resp, err := telegramHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("do request: %w", err)
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
+		return 0, res, fmt.Errorf("do request: %w", err)
 	}
 	defer resp.Body.Close()
-	return nil
+
+	// always decode (even if 400) to retrieve Description
+	_ = json.NewDecoder(resp.Body).Decode(&res)
+	return resp.StatusCode, res, nil
 }
 
 // MsgTelegramAlert sends msg to every chat that has an active subscription for
@@ -294,7 +331,9 @@ func MsgTelegramChain(msg, chainID, token, typeChatid string, db *gorm.DB) error
 	}
 
 	for _, chatID := range ids {
-		if err := SendMessageTelegram(token, chatID, msg); err != nil {
+		if err := SendMessageTelegram(token, chatID, msg); errors.Is(err, ErrChatBlocked) {
+			continue // logged once when the chat was found blocked
+		} else if err != nil {
 			log.Printf("❌ MsgTelegramChain send failed for chat_id=%d: %v", chatID, err)
 		} else {
 			log.Printf("✅ MsgTelegramChain sent to chat_id=%d (chain=%s)", chatID, chainID)
@@ -318,7 +357,9 @@ func MsgTelegramGovdao(msg, chainID, token, defaultChainID string, enabledChains
 	}
 
 	for _, chatID := range govdaoChatIDsForChain(prefs, chainID, defaultChainID, enabledChains) {
-		if err := SendMessageTelegram(token, chatID, msg); err != nil {
+		if err := SendMessageTelegram(token, chatID, msg); errors.Is(err, ErrChatBlocked) {
+			continue // logged once when the chat was found blocked
+		} else if err != nil {
 			log.Printf("❌ MsgTelegramGovdao send failed for chat_id=%d: %v", chatID, err)
 		} else {
 			log.Printf("✅ MsgTelegramGovdao sent to chat_id=%d (chain=%s)", chatID, chainID)
@@ -360,6 +401,9 @@ func MsgTelegramAlert(msg string, addr, chainID, token, typeChatid string, db *g
 	}
 
 	for _, chatID := range ids {
+		if isChatBlocked(token, chatID) {
+			continue // logged once when the chat was found blocked
+		}
 		// check sub scoped to the chain that produced the alert
 		subs, err := database.GetTelegramValidatorSub(db, chatID, chainID, true)
 		if err != nil {
@@ -376,7 +420,9 @@ func MsgTelegramAlert(msg string, addr, chainID, token, typeChatid string, db *g
 		for _, s := range subs {
 			if s.Addr == addr {
 				matched = true
-				if err := SendMessageTelegram(token, chatID, msg); err != nil {
+				if err := SendMessageTelegram(token, chatID, msg); errors.Is(err, ErrChatBlocked) {
+					break // logged once when the chat was found blocked
+				} else if err != nil {
 					log.Printf("❌ send failed for chat_id=%d: %v", chatID, err)
 				} else {
 					log.Printf("✅ message sent to chat_id=%d (validator=%s)", chatID, addr)
@@ -461,6 +507,12 @@ func fetchBotUsername(token string) (string, error) {
 // - token: ton bot token
 // - stopCtx: to shut down properly (SIGINT/SIGTERM)
 
+// allowedUpdatesParam lists the update types the loop reads. Telegram keeps
+// the last allowed_updates a bot asked for, so it is always sent: without
+// it, a list set earlier without my_chat_member would silently drop the
+// membership updates that lift a chat's block.
+var allowedUpdatesParam = url.QueryEscape(`["message","channel_post","callback_query","my_chat_member"]`)
+
 // StartCommandLoop continuously reads getUpdates and calls the handlers.
 // chainID is used when creating the hour-report row for a new validator chat.
 // Pass an empty string for bots that do not need chain-scoped hour reports
@@ -516,7 +568,7 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 		default:
 		}
 
-		url := base + "?timeout=30"
+		url := base + "?timeout=30&allowed_updates=" + allowedUpdatesParam
 		if offset > 0 {
 			url += fmt.Sprintf("&offset=%d", offset)
 		}
@@ -542,11 +594,17 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 			if up.UpdateID >= offset {
 				offset = up.UpdateID + 1
 			}
+			if up.MyChatMember != nil {
+				trackBotMembership(token, up.MyChatMember)
+				continue
+			}
 			if up.CallbackQuery != nil {
 				if up.CallbackQuery.Message == nil || up.CallbackQuery.Message.Chat.ID == 0 {
 					continue
 				}
-				_ = AnswerCallbackQuery(token, up.CallbackQuery.ID)
+				unblockChat(token, up.CallbackQuery.Message.Chat.ID)
+				// Not inline: a 429 retry would stall the update loop.
+				go func(id string) { _ = AnswerCallbackQuery(token, id) }(up.CallbackQuery.ID)
 				if callbackHandler != nil {
 					go callbackHandler(
 						up.CallbackQuery.Message.Chat.ID,
@@ -559,6 +617,7 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 			if up.Message == nil || up.Message.Chat.ID == 0 {
 				continue
 			}
+			unblockChat(token, up.Message.Chat.ID)
 			// Register the chat (idempotent upsert) before dispatching its
 			// command. Registering in a goroutine raced a first /setchain:
 			// its UPDATE could run before the INSERT, match no row, and leave
@@ -605,6 +664,21 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 				go h(up.Message.Chat.ID, cmd+" "+args)
 			}
 		}
+	}
+}
+
+// trackBotMembership keeps the blocked-chat set in step with the bot's own
+// membership: a chat that blocks or removes the bot is skipped at once, one
+// that unblocks or re-adds it is reachable again.
+func trackBotMembership(token string, upd *chatMemberUpd) {
+	if upd.Chat.ID == 0 {
+		return
+	}
+	switch upd.NewChatMember.Status {
+	case "member", "administrator", "creator":
+		unblockChat(token, upd.Chat.ID)
+	case "kicked", "left":
+		markChatBlocked(token, upd.Chat.ID, "bot "+upd.NewChatMember.Status)
 	}
 }
 

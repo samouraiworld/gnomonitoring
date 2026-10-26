@@ -353,6 +353,10 @@ func BuildTelegramHandlers(token string, db *gorm.DB, defaultChainID string, ena
 			_ = SendMessageTelegram(token, chatID, fmt.Sprintf("Chain set to <code>%s</code>.", html.EscapeString(requested)))
 		},
 
+		"/validator": func(chatID int64, args string) {
+			sendValidatorCard(token, db, chatID, getActiveChain(chatID, defaultChainID), args)
+		},
+
 		"/help": func(chatID int64, _ string) {
 			_ = SendMessageTelegram(token, chatID, formatHelp())
 		},
@@ -1408,14 +1412,20 @@ func HandleSearchInput(token string, db *gorm.DB, botType string, chatID int64, 
 	if t == "" {
 		return true
 	}
+	// The replies run in goroutines: this is called inline by the update
+	// loop, and a paced send may wait for its slot.
 	if strings.EqualFold(t, "/cancel") {
-		_ = SendMessageTelegram(token, chatID, "❌ Search cancelled.")
+		go func() { _ = SendMessageTelegram(token, chatID, "❌ Search cancelled.") }()
 		return true
 	}
 	if strings.HasPrefix(t, "/") {
 		return false
 	}
-	sendPaginatedMessage(token, chatID, db, state.ChainID, state.Cmd, state.Period, t, 1, state.Limit, state.SortOrder)
+	if state.Cmd == validatorCardSearchCmd {
+		go sendValidatorCard(token, db, chatID, state.ChainID, t)
+		return true
+	}
+	go sendPaginatedMessage(token, chatID, db, state.ChainID, state.Cmd, state.Period, t, 1, state.Limit, state.SortOrder)
 	return true
 }
 
@@ -2034,6 +2044,18 @@ func handleCmdMenuCallback(
 				return
 			}
 			_ = EditMessageTelegramWithMarkup(token, chatID, messageID, msg, markup)
+		case "card":
+			// The card needs a moniker or address: ask for it as free text,
+			// answered through HandleSearchInput.
+			deleteCmdState(chatID)
+			setSearchState(chatID, SearchState{
+				BotType:   "validator",
+				ChainID:   state.ChainID,
+				Cmd:       validatorCardSearchCmd,
+				ExpiresAt: time.Now().Add(cmdStateTTL),
+			})
+			_ = EditMessageTelegramWithMarkup(token, chatID, messageID,
+				"🪪 Send a moniker or address (or /cancel).", nil)
 		case "uptime", "rate", "missing", "operation_time", "tx_contrib":
 			// Period-aware commands: show period picker before confirm.
 			state.Action = action
@@ -2109,7 +2131,10 @@ func buildActionMarkup(command string, enabledChains []string) *InlineKeyboardMa
 				{Text: "Operation time", CallbackData: encodeCmdCallback("a", "operation_time")},
 				{Text: "TX Contrib",     CallbackData: encodeCmdCallback("a", "tx_contrib")},
 			},
-			{cancelBtn},
+			{
+				{Text: "Validator card", CallbackData: encodeCmdCallback("a", "card")},
+				cancelBtn,
+			},
 		}}
 	case "chain":
 		var rows [][]InlineKeyboardButton
@@ -2305,6 +2330,10 @@ func formatHelp() string {
 
 	b.WriteString("<code>🚦 /status</code>\n")
 	b.WriteString("Chain health: last block age, consensus round, validator vote count.\n\n")
+
+	b.WriteString("<code>🪪 /validator &lt;moniker or address&gt;</code>\n")
+	b.WriteString("One validator on the active chain: score, tier, sign rate, proposer reliability, voting power, precommit lag, last alert.\n")
+	b.WriteString("Example: <code>/validator samourai</code>\n\n")
 
 	b.WriteString("<code>📊 /rate [period=...] [limit=N]</code>\n")
 	b.WriteString("Shows the historical participation rate of validators for a given period.\n")
