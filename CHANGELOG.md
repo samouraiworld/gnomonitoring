@@ -236,6 +236,12 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **Telegram validator lists no longer reorder the shared cache** — the
+  participation, uptime, operation time, tx contribution and missing blocks
+  lists sorted the slice cached in `metricsCache` in place when no filter
+  was given. Two chats asking at the same time raced on the same array, and
+  one could read a half-sorted list. The `filter*` helpers now always return
+  a new slice.
 - **Validator operation time is never negative** — `gnoland_validator_operation_time`,
   the REST `/operation_time` field `operationTime` and the Telegram
   operation-time list now report the time from a validator's latest missed
