@@ -236,6 +236,21 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **Validator operation time is never negative** — `gnoland_validator_operation_time`,
+  the REST `/operation_time` field `operationTime` and the Telegram
+  operation-time list now report the time from a validator's latest missed
+  block to its latest recorded block, in days. It is `0` while the validator
+  is down, where it used to go negative (last signed day minus last missed
+  day, for example `-8` after eight days down). A validator that never
+  missed a block now gets a value, measured from its first recorded block,
+  instead of no series at all; its `lastDownDate` is empty. Days not
+  aggregated yet use exact block timestamps instead of whole days;
+  aggregated days still use day bounds, each off by less than a day. Validators not seen within a day of
+  the chain's latest block have left the valset and are no longer listed.
+  `lastUpDate` is now the latest recorded block, not the latest day with a
+  signed block, and both dates are RFC 3339 in UTC with a time. Telegram
+  shows the value with one decimal, as computed (#159).
+
 - **Telegram sends respect the Bot API limits** — every send goes through one
   path that handles Telegram's answers. On 429 every message of that bot,
   including those already queued, waits `retry_after`, and the call is

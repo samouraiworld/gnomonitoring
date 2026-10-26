@@ -530,7 +530,7 @@ func formatOperationTime(db *gorm.DB, chainID string, page, limit int, filter st
 	for _, r := range results[start:end] {
 
 		builder.WriteString(fmt.Sprintf(
-			" <b> %s </b> \n addr: %s \n Operation Time : %.2f days\n\n",
+			" <b> %s </b> \n addr: %s \n Operation Time : %.1f days\n\n",
 			html.EscapeString(r.Moniker), html.EscapeString(r.Addr), r.DaysDiff,
 		))
 

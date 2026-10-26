@@ -88,7 +88,7 @@ var (
 	ValidatorOperationTime = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "gnoland_validator_operation_time",
-			Help: "Days since last validator downtime event",
+			Help: "Days since the validator's last missed block, up to its latest block (0 while down, since first seen if it never missed one)",
 		},
 		[]string{"chain", "validator_address", "moniker"},
 	)
@@ -396,7 +396,7 @@ func UpdatePrometheusMetricsFromDB(db *gorm.DB, chainID string, ctxOpts ...conte
 		}
 	})
 
-	// ValidatorOperationTime (days since last down)
+	// ValidatorOperationTime (last_seen - last_down, in days)
 	run(func() {
 		operationStats, err := database.OperationTimeMetricsaddr(db, chainID, aggregatedThrough)
 		if err != nil {
