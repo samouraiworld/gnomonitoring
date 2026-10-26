@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,12 @@ func TestFormatValidatorCard_NoMatchIsScopedToChain(t *testing.T) {
 	msg, err = formatValidatorCard(db, "card-a", "<x>", time.Now())
 	require.NoError(t, err)
 	assert.Contains(t, msg, "<code>&lt;x&gt;</code>", "the query is escaped too")
+
+	long := strings.Repeat("q", 5000)
+	msg, err = formatValidatorCard(db, "card-a", long, time.Now())
+	require.NoError(t, err)
+	assert.Contains(t, msg, "<code>"+strings.Repeat("q", validatorCardMaxQueryLen)+"</code>", "the echoed query is truncated")
+	assert.Less(t, len(msg), 1000)
 }
 
 func TestFormatValidatorCard_EmptyQueryShowsUsage(t *testing.T) {
@@ -151,9 +158,9 @@ func TestHandleSearchInput_CardStateSendsCard(t *testing.T) {
 	})
 
 	require.True(t, HandleSearchInput("tok", db, "validator", 556, "searched"))
-	got := sent()
-	require.Len(t, got, 1)
-	assert.Contains(t, got[0], "🪪 <b>searched</b>")
+	require.Eventually(t, func() bool { return len(sent()) == 1 }, 5*time.Second, 10*time.Millisecond,
+		"the card is sent from a goroutine")
+	assert.Contains(t, sent()[0], "🪪 <b>searched</b>")
 }
 
 func TestHelpListsValidatorCommand(t *testing.T) {

@@ -16,6 +16,11 @@ const (
 	// validatorCardLatencyTTL caches the chain-wide precommit-lag query, a
 	// 7-day scan of daily_participations, between two /validator calls.
 	validatorCardLatencyTTL = 5 * time.Minute
+	// validatorCardReportTTL caches the chain's last-24h report and last
+	// alert times, so repeated /validator calls do not rebuild them.
+	validatorCardReportTTL = time.Minute
+	// validatorCardMaxQueryLen bounds the query echoed back in a reply.
+	validatorCardMaxQueryLen = 64
 	// validatorCardMaxMatches is how many candidates an ambiguous query lists.
 	validatorCardMaxMatches = 10
 	// validatorCardSearchCmd is the SearchState command of the /cmd "Validator
@@ -76,6 +81,39 @@ func chainPrecommitLatency(db *gorm.DB, chainID string) (map[string]database.Pre
 	return byAddr, nil
 }
 
+// validatorCardReport is the cached chain-wide part of a /validator answer.
+type validatorCardReport struct {
+	entries    []database.ValidatorReportEntry
+	lastAlerts map[string]time.Time
+	alertsErr  error
+}
+
+// chainValidatorCardReport returns chainID's last-24h validator report (the
+// active set, as /status uses) and last alert times, cached for
+// validatorCardReportTTL.
+func chainValidatorCardReport(db *gorm.DB, chainID string) (validatorCardReport, error) {
+	cacheKey := "validator_card_report:" + chainID
+	if cached, ok := getCached(cacheKey); ok {
+		if report, ok := cached.(validatorCardReport); ok {
+			return report, nil
+		}
+	}
+	ctx, err := database.LoadValidatorReportContext(db, chainID)
+	if err != nil {
+		return validatorCardReport{}, fmt.Errorf("load report context: %w", err)
+	}
+	entries, err := database.BuildChainValidatorReport(db, ctx, chainID, "last_24h", "")
+	if err != nil {
+		return validatorCardReport{}, fmt.Errorf("build validator report: %w", err)
+	}
+	report := validatorCardReport{entries: entries}
+	report.lastAlerts, report.alertsErr = database.GetLastAlertTimes(db, chainID)
+	if report.alertsErr == nil {
+		setCached(cacheKey, report, validatorCardReportTTL)
+	}
+	return report, nil
+}
+
 // formatValidatorCard answers /validator <query> on chainID: the card of the
 // one active-valset validator query designates, the candidates when several
 // match, or a "no match" message.
@@ -85,25 +123,22 @@ func formatValidatorCard(db *gorm.DB, chainID, query string, now time.Time) (str
 		return validatorCardUsage(), nil
 	}
 
-	ctx, err := database.LoadValidatorReportContext(db, chainID)
+	report, err := chainValidatorCardReport(db, chainID)
 	if err != nil {
-		return "", fmt.Errorf("load report context: %w", err)
-	}
-	entries, err := database.BuildChainValidatorReport(db, ctx, chainID, "last_24h", "")
-	if err != nil {
-		return "", fmt.Errorf("build validator report: %w", err)
+		return "", err
 	}
 
 	esc := html.EscapeString
-	matches := matchValidators(entries, query)
+	matches := matchValidators(report.entries, query)
+	shown := truncateRunes(query, validatorCardMaxQueryLen)
 	switch {
 	case len(matches) == 0:
 		return fmt.Sprintf("🔍 No validator of the active set on <code>%s</code> matches <code>%s</code>.\n%s",
-			esc(chainID), esc(query), validatorCardUsage()), nil
+			esc(chainID), esc(shown), validatorCardUsage()), nil
 	case len(matches) > 1:
 		var b strings.Builder
 		fmt.Fprintf(&b, "🔍 %d validators on <code>%s</code> match <code>%s</code>:\n",
-			len(matches), esc(chainID), esc(query))
+			len(matches), esc(chainID), esc(shown))
 		for i, m := range matches {
 			if i == validatorCardMaxMatches {
 				fmt.Fprintf(&b, "… and %d more\n", len(matches)-i)
@@ -139,10 +174,9 @@ func formatValidatorCard(db *gorm.DB, chainID, query string, now time.Time) (str
 	fmt.Fprintf(&b, "⏱️ Precommit lag 24h: %s\n", formatLagPair(haveLat, lat.LagP50_24h, lat.LagP90_24h))
 	fmt.Fprintf(&b, "⏱️ Precommit lag 7d: %s\n", formatLagPair(haveLat, lat.LagP50_7d, lat.LagP90_7d))
 
-	lastAlerts, err := database.GetLastAlertTimes(db, chainID)
-	switch last, ok := lastAlerts[e.Addr]; {
-	case err != nil:
-		log.Printf("[telegram] /validator last alert chain=%s: %v", chainID, err)
+	switch last, ok := report.lastAlerts[e.Addr]; {
+	case report.alertsErr != nil:
+		log.Printf("[telegram] /validator last alert chain=%s: %v", chainID, report.alertsErr)
 		b.WriteString("🚨 Last alert: n/a\n")
 	case ok:
 		fmt.Fprintf(&b, "🚨 Last alert: %s UTC (%s ago)\n",

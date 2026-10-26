@@ -1412,18 +1412,20 @@ func HandleSearchInput(token string, db *gorm.DB, botType string, chatID int64, 
 	if t == "" {
 		return true
 	}
+	// The replies run in goroutines: this is called inline by the update
+	// loop, and a paced send may wait for its slot.
 	if strings.EqualFold(t, "/cancel") {
-		_ = SendMessageTelegram(token, chatID, "❌ Search cancelled.")
+		go func() { _ = SendMessageTelegram(token, chatID, "❌ Search cancelled.") }()
 		return true
 	}
 	if strings.HasPrefix(t, "/") {
 		return false
 	}
 	if state.Cmd == validatorCardSearchCmd {
-		sendValidatorCard(token, db, chatID, state.ChainID, t)
+		go sendValidatorCard(token, db, chatID, state.ChainID, t)
 		return true
 	}
-	sendPaginatedMessage(token, chatID, db, state.ChainID, state.Cmd, state.Period, t, 1, state.Limit, state.SortOrder)
+	go sendPaginatedMessage(token, chatID, db, state.ChainID, state.Cmd, state.Period, t, 1, state.Limit, state.SortOrder)
 	return true
 }
 

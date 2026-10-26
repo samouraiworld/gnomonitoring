@@ -237,15 +237,20 @@ Entries are ordered newest-first within each section.
 ### Fixed
 
 - **Telegram sends respect the Bot API limits** — every send goes through one
-  path that handles Telegram's answers. On 429 it waits `retry_after` (at most
-  30 s) and retries, three attempts in all. On 403 (bot blocked by the user,
-  or removed from the group) the chat is skipped in memory for that bot,
-  logged once, until it writes to the bot again, re-adds or unblocks it, or
-  the process restarts; nothing is changed in the database. `sendMessage`
-  calls are paced to about 30 per second overall, one per second per private
-  chat and one every 3 seconds per group, so alert, GovDAO and daily-report
-  broadcasts no longer trip the flood limits. Transport errors no longer
-  carry the request URL, which contained the bot token.
+  path that handles Telegram's answers. On 429 every message of that bot
+  waits `retry_after` (at most 30 s), and the call is retried, three attempts
+  in all. On 403 (bot blocked by the user, or removed from the group) the
+  chat is skipped in memory for that bot, logged once, until it writes to the
+  bot again, re-adds or unblocks it, or the process restarts; nothing is
+  changed in the database. `sendMessage` calls are paced per bot to about 30
+  per second overall, one per second per private chat and one every 3
+  seconds per group, so alert, GovDAO and daily-report broadcasts no longer
+  trip the flood limits; a send that would queue more than a minute fails at
+  once instead of piling up. Replies to search input and callback
+  acknowledgements no longer run inline in the update loop, so a wait cannot
+  stall it. `getUpdates` now always names the update types it reads,
+  including `my_chat_member`. Transport errors no longer carry the request
+  URL, which contained the bot token.
 
 - **Unreachable Keycloak issuer no longer stops the backend** — in keycloak
   mode, a failed OIDC discovery at boot used to exit the process, taking

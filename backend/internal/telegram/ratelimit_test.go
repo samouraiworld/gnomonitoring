@@ -22,7 +22,7 @@ import (
 // would wait a second between two messages to the same chat. Pacing tests
 // install their own pacer.
 func TestMain(m *testing.M) {
-	telegramPacer = newSendPacer(0, 0, 0)
+	telegramPacer = newSendPacer(0, 0, 0, time.Minute)
 	os.Exit(m.Run())
 }
 
@@ -113,7 +113,7 @@ func resetBlockedChats(t *testing.T) {
 	t.Helper()
 	clear := func() {
 		blockedChatsMu.Lock()
-		blockedChats = map[blockedChatKey]struct{}{}
+		blockedChats = map[chatKey]struct{}{}
 		blockedChatsMu.Unlock()
 	}
 	clear()
@@ -124,8 +124,16 @@ func resetBlockedChats(t *testing.T) {
 // 429: retry_after
 // -------------------------------------------------------------------------
 
+// freshPacer installs an unpaced pacer, so a 429 cooldown set by one test
+// cannot leak into the next.
+func freshPacer(t *testing.T) {
+	t.Helper()
+	usePacer(t, newSendPacer(0, 0, 0, time.Minute))
+}
+
 func TestSendMessage_429WaitsRetryAfterThenRetries(t *testing.T) {
 	waits := recordSleeps(t)
+	freshPacer(t)
 	calls := scriptedTelegram(t, func(n int, _ int64) (int, string) {
 		if n == 1 {
 			return http.StatusTooManyRequests, tooManyAnswer(2)
@@ -135,11 +143,14 @@ func TestSendMessage_429WaitsRetryAfterThenRetries(t *testing.T) {
 
 	require.NoError(t, SendMessageTelegram("tok", 42, "hello"))
 	assert.Len(t, calls(), 2)
-	assert.Equal(t, []time.Duration{2 * time.Second}, waits())
+	got := waits()
+	require.Len(t, got, 1)
+	assert.InDelta(t, float64(2*time.Second), float64(got[0]), float64(200*time.Millisecond))
 }
 
 func TestSendMessage_429GivesUpAfterMaxAttempts(t *testing.T) {
 	waits := recordSleeps(t)
+	freshPacer(t)
 	calls := scriptedTelegram(t, func(int, int64) (int, string) {
 		return http.StatusTooManyRequests, tooManyAnswer(1)
 	})
@@ -152,6 +163,7 @@ func TestSendMessage_429GivesUpAfterMaxAttempts(t *testing.T) {
 
 func TestSendMessage_429RetryAfterTooLongFailsAtOnce(t *testing.T) {
 	waits := recordSleeps(t)
+	freshPacer(t)
 	calls := scriptedTelegram(t, func(int, int64) (int, string) {
 		return http.StatusTooManyRequests, tooManyAnswer(int(telegramMaxRetryAfter/time.Second) + 1)
 	})
@@ -163,6 +175,7 @@ func TestSendMessage_429RetryAfterTooLongFailsAtOnce(t *testing.T) {
 }
 
 func TestSendMessage_429WaitStopsWithContext(t *testing.T) {
+	freshPacer(t)
 	scriptedTelegram(t, func(int, int64) (int, string) {
 		return http.StatusTooManyRequests, tooManyAnswer(5)
 	})
@@ -269,32 +282,101 @@ func TestMsgTelegramAlert_SkipsBlockedChat(t *testing.T) {
 // -------------------------------------------------------------------------
 
 func TestSendPacer_Reserve(t *testing.T) {
-	p := newSendPacer(10*time.Millisecond, time.Second, 3*time.Second)
+	p := newSendPacer(10*time.Millisecond, time.Second, 3*time.Second, time.Minute)
 	now := time.Unix(1_700_000_000, 0)
+	slot := func(token string, chatID int64) time.Time {
+		at, ok := p.reserve(now, token, chatID)
+		require.True(t, ok)
+		return at
+	}
 
-	assert.Equal(t, now, p.reserve(now, 1), "first send goes at once")
-	assert.Equal(t, now.Add(10*time.Millisecond), p.reserve(now, 2), "another chat waits the global interval")
-	assert.Equal(t, now.Add(time.Second), p.reserve(now, 1), "same private chat waits one second")
-	assert.Equal(t, now.Add(time.Second+10*time.Millisecond), p.reserve(now, -5), "global slot after the previous send")
-	assert.Equal(t, now.Add(4*time.Second+10*time.Millisecond), p.reserve(now, -5), "a group waits three seconds")
+	assert.Equal(t, now, slot("bot", 1), "first send goes at once")
+	assert.Equal(t, now.Add(10*time.Millisecond), slot("bot", 2), "another chat waits the global interval")
+	assert.Equal(t, now.Add(time.Second), slot("bot", 1), "same private chat waits one second")
+	assert.Equal(t, now.Add(time.Second+10*time.Millisecond), slot("bot", -5), "global slot after the previous send")
+	assert.Equal(t, now.Add(4*time.Second+10*time.Millisecond), slot("bot", -5), "a group waits three seconds")
+	assert.Equal(t, now, slot("other-bot", 1), "another bot has its own limits")
 
 	later := now.Add(time.Minute)
-	assert.Equal(t, later, p.reserve(later, 1), "past slots do not delay")
+	at, ok := p.reserve(later, "bot", 1)
+	assert.True(t, ok)
+	assert.Equal(t, later, at, "past slots do not delay")
+}
+
+func TestSendPacer_QueueFullBooksNothing(t *testing.T) {
+	p := newSendPacer(0, time.Second, time.Second, 2*time.Second)
+	now := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 3; i++ {
+		_, ok := p.reserve(now, "bot", 1)
+		require.True(t, ok, "slot %d", i)
+	}
+	at, ok := p.reserve(now, "bot", 1)
+	assert.False(t, ok, "a fourth message would wait 3s, over the 2s cap")
+	assert.Equal(t, now.Add(3*time.Second), at)
+	_, ok = p.reserve(now, "bot", 2)
+	assert.True(t, ok, "other chats are not held by one chat's backlog")
+}
+
+func TestSendPacer_BackoffHoldsWholeBot(t *testing.T) {
+	p := newSendPacer(0, 0, 0, time.Minute)
+	now := time.Unix(1_700_000_000, 0)
+	p.backoff("bot", now.Add(5*time.Second))
+
+	at, ok := p.reserve(now, "bot", 99)
+	require.True(t, ok)
+	assert.Equal(t, now.Add(5*time.Second), at)
+	at, _ = p.reserve(now, "other-bot", 99)
+	assert.Equal(t, now, at)
+
+	p.backoff("bot", now.Add(time.Second))
+	at, _ = p.reserve(now, "bot", 98)
+	assert.Equal(t, now.Add(5*time.Second), at, "a shorter backoff does not shorten the cooldown")
 }
 
 func TestSendPacer_PrunesStaleChats(t *testing.T) {
-	p := newSendPacer(0, time.Second, time.Second)
+	p := newSendPacer(0, time.Second, time.Second, time.Minute)
 	now := time.Unix(1_700_000_000, 0)
 	for i := int64(1); i <= pacerPruneThreshold; i++ {
-		p.reserve(now, i)
+		p.reserve(now, "bot", i)
 	}
-	p.reserve(now.Add(time.Hour), 0)
+	p.reserve(now.Add(time.Hour), "bot", 0)
 	assert.Len(t, p.nextChat, 1)
+}
+
+func TestSendMessage_429HoldsOtherChatsOfTheBot(t *testing.T) {
+	waits := recordSleeps(t)
+	freshPacer(t)
+	scriptedTelegram(t, func(n int, _ int64) (int, string) {
+		if n == 1 {
+			return http.StatusTooManyRequests, tooManyAnswer(4)
+		}
+		return http.StatusOK, okAnswer
+	})
+
+	require.NoError(t, SendMessageTelegram("tok", 1, "a"))
+	require.NoError(t, SendMessageTelegram("tok", 2, "b"))
+
+	got := waits()
+	require.Len(t, got, 2, "the retry and the next chat's send both wait the cooldown")
+	for _, w := range got {
+		assert.InDelta(t, float64(4*time.Second), float64(w), float64(200*time.Millisecond))
+	}
+}
+
+func TestSendMessage_QueueFullFailsFast(t *testing.T) {
+	recordSleeps(t)
+	usePacer(t, newSendPacer(0, time.Minute, time.Minute, time.Second))
+	calls := scriptedTelegram(t, func(int, int64) (int, string) { return http.StatusOK, okAnswer })
+
+	require.NoError(t, SendMessageTelegram("tok", 3, "a"))
+	err := SendMessageTelegram("tok", 3, "b")
+	require.ErrorIs(t, err, ErrRateLimited)
+	assert.Len(t, calls(), 1)
 }
 
 func TestMsgTelegramGovdao_BroadcastIsPaced(t *testing.T) {
 	db := testoutils.NewTestDB(t)
-	usePacer(t, newSendPacer(30*time.Millisecond, time.Second, time.Second))
+	usePacer(t, newSendPacer(30*time.Millisecond, time.Second, time.Second, time.Minute))
 	calls := scriptedTelegram(t, func(int, int64) (int, string) { return http.StatusOK, okAnswer })
 	for _, chatID := range []int64{301, 302, 303} {
 		_, err := database.InsertChatID(db, chatID, "govdao", "gnoland1")
@@ -313,7 +395,7 @@ func TestMsgTelegramGovdao_BroadcastIsPaced(t *testing.T) {
 
 func TestSendMessage_SameChatIsPaced(t *testing.T) {
 	waits := recordSleeps(t)
-	usePacer(t, newSendPacer(0, time.Second, 3*time.Second))
+	usePacer(t, newSendPacer(0, time.Second, 3*time.Second, time.Minute))
 	scriptedTelegram(t, func(int, int64) (int, string) { return http.StatusOK, okAnswer })
 
 	require.NoError(t, SendMessageTelegram("tok", 9, "a"))

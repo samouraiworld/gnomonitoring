@@ -189,8 +189,9 @@ type telegramResponse struct {
 // limits. chatID is the target chat, or 0 when the call targets none.
 //   - A chat known to have blocked the bot fails at once with ErrChatBlocked.
 //   - paced calls wait for their slot in telegramPacer first.
-//   - 429: waits retry_after (bounded by telegramMaxRetryAfter and ctx) and
-//     retries, at most telegramMaxAttempts sends in all, then ErrRateLimited.
+//   - 429: holds the whole bot's paced sends for retry_after, waits it
+//     (bounded by telegramMaxRetryAfter and ctx) and retries, at most
+//     telegramMaxAttempts sends in all, then ErrRateLimited.
 //   - 403: marks the chat blocked (logged once) and returns ErrChatBlocked.
 func callTelegram(ctx context.Context, botToken, method string, chatID int64, paced bool, body map[string]any) error {
 	if chatID != 0 && isChatBlocked(botToken, chatID) {
@@ -205,7 +206,12 @@ func callTelegram(ctx context.Context, botToken, method string, chatID int64, pa
 
 	for attempt := 1; ; attempt++ {
 		if paced {
-			if err := telegramSleep(ctx, time.Until(telegramPacer.reserve(time.Now(), chatID))); err != nil {
+			at, ok := telegramPacer.reserve(time.Now(), botToken, chatID)
+			if !ok {
+				return fmt.Errorf("%w: %s chat_id=%d: send queue full, next slot in %s",
+					ErrRateLimited, method, chatID, time.Until(at).Round(time.Second))
+			}
+			if err := telegramSleep(ctx, time.Until(at)); err != nil {
 				return err
 			}
 		}
@@ -226,12 +232,16 @@ func callTelegram(ctx context.Context, botToken, method string, chatID int64, pa
 			if wait <= 0 {
 				wait = time.Second
 			}
+			telegramPacer.backoff(botToken, time.Now().Add(wait))
 			if attempt >= telegramMaxAttempts || wait > telegramMaxRetryAfter {
 				return fmt.Errorf("%w: %s chat_id=%d retry_after=%s: %s", ErrRateLimited, method, chatID, wait, res.Description)
 			}
 			log.Printf("⏳ telegram %s rate limited (chat_id=%d), retrying in %s", method, chatID, wait)
-			if err := telegramSleep(ctx, wait); err != nil {
-				return err
+			if !paced {
+				// A paced retry waits for the cooldown through its next slot.
+				if err := telegramSleep(ctx, wait); err != nil {
+					return err
+				}
 			}
 		default:
 			return fmt.Errorf("telegram http %d: %s", status, res.Description)
@@ -459,6 +469,12 @@ func fetchBotUsername(token string) (string, error) {
 // - token: ton bot token
 // - stopCtx: to shut down properly (SIGINT/SIGTERM)
 
+// allowedUpdatesParam lists the update types the loop reads. Telegram keeps
+// the last allowed_updates a bot asked for, so it is always sent: without
+// it, a list set earlier without my_chat_member would silently drop the
+// membership updates that lift a chat's block.
+var allowedUpdatesParam = url.QueryEscape(`["message","channel_post","callback_query","my_chat_member"]`)
+
 // StartCommandLoop continuously reads getUpdates and calls the handlers.
 // chainID is used when creating the hour-report row for a new validator chat.
 // Pass an empty string for bots that do not need chain-scoped hour reports
@@ -514,7 +530,7 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 		default:
 		}
 
-		url := base + "?timeout=30"
+		url := base + "?timeout=30&allowed_updates=" + allowedUpdatesParam
 		if offset > 0 {
 			url += fmt.Sprintf("&offset=%d", offset)
 		}
@@ -549,7 +565,8 @@ func StartCommandLoop(stopCtx context.Context, token string, handlers map[string
 					continue
 				}
 				unblockChat(token, up.CallbackQuery.Message.Chat.ID)
-				_ = AnswerCallbackQuery(token, up.CallbackQuery.ID)
+				// Not inline: a 429 retry would stall the update loop.
+				go func(id string) { _ = AnswerCallbackQuery(token, id) }(up.CallbackQuery.ID)
 				if callbackHandler != nil {
 					go callbackHandler(
 						up.CallbackQuery.Message.Chat.ID,

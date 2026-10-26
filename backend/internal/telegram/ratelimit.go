@@ -26,6 +26,11 @@ const (
 	// telegramMaxRetryAfter is the longest retry_after we wait for. A longer
 	// one fails the call at once instead of stalling a broadcast loop.
 	telegramMaxRetryAfter = 30 * time.Second
+	// telegramMaxQueueWait is the longest a paced send may queue for its
+	// slot. A send that would wait longer fails at once, so a chat flooding
+	// the bot with commands, or a long flood-control cooldown, cannot pile
+	// up sleeping goroutines.
+	telegramMaxQueueWait = time.Minute
 	// pacerPruneThreshold is the per-chat map size above which stale entries
 	// are dropped.
 	pacerPruneThreshold = 1024
@@ -38,55 +43,84 @@ const (
 var ErrChatBlocked = errors.New("telegram: bot blocked or removed from chat")
 
 // ErrRateLimited is returned when Telegram still answers 429 after
-// telegramMaxAttempts, or asks for a wait longer than telegramMaxRetryAfter.
+// telegramMaxAttempts, asks for a wait longer than telegramMaxRetryAfter, or
+// when a paced send would queue longer than telegramMaxQueueWait.
 var ErrRateLimited = errors.New("telegram: rate limited")
 
-// sendPacer spaces sendMessage calls so the bot stays under Telegram's
+// chatKey scopes per-chat state to one bot: the validator and GovDAO bots
+// have their own Telegram limits, and blocking one says nothing of the other.
+type chatKey struct {
+	token  string
+	chatID int64
+}
+
+// sendPacer spaces sendMessage calls so each bot stays under Telegram's
 // global and per-chat limits, across every goroutine that sends.
 type sendPacer struct {
 	mu       sync.Mutex
 	global   time.Duration
 	private  time.Duration
 	group    time.Duration
-	nextAny  time.Time
-	nextChat map[int64]time.Time
+	maxWait  time.Duration
+	nextBot  map[string]time.Time
+	nextChat map[chatKey]time.Time
 }
 
-func newSendPacer(global, private, group time.Duration) *sendPacer {
-	return &sendPacer{global: global, private: private, group: group, nextChat: map[int64]time.Time{}}
+func newSendPacer(global, private, group, maxWait time.Duration) *sendPacer {
+	return &sendPacer{
+		global: global, private: private, group: group, maxWait: maxWait,
+		nextBot: map[string]time.Time{}, nextChat: map[chatKey]time.Time{},
+	}
 }
 
 // telegramPacer paces every sendMessage call of the package.
-var telegramPacer = newSendPacer(telegramGlobalInterval, telegramPrivateInterval, telegramGroupInterval)
+var telegramPacer = newSendPacer(telegramGlobalInterval, telegramPrivateInterval, telegramGroupInterval, telegramMaxQueueWait)
 
-// reserve books the earliest send slot for chatID at or after now and returns
-// it. Group and channel chat IDs are negative and get the slower group pace.
-func (p *sendPacer) reserve(now time.Time, chatID int64) time.Time {
+// reserve books the earliest send slot of token's bot for chatID at or after
+// now and returns it. Group and channel chat IDs are negative and get the
+// slower group pace. When that slot is more than maxWait away nothing is
+// booked and ok is false.
+func (p *sendPacer) reserve(now time.Time, token string, chatID int64) (at time.Time, ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	at := now
-	if p.nextAny.After(at) {
-		at = p.nextAny
-	}
-	if next, ok := p.nextChat[chatID]; ok && next.After(at) {
+	key := chatKey{token, chatID}
+	at = now
+	if next := p.nextBot[token]; next.After(at) {
 		at = next
 	}
-	p.nextAny = at.Add(p.global)
+	if next := p.nextChat[key]; next.After(at) {
+		at = next
+	}
+	if at.Sub(now) > p.maxWait {
+		return at, false
+	}
+	p.nextBot[token] = at.Add(p.global)
 	interval := p.private
 	if chatID < 0 {
 		interval = p.group
 	}
-	p.nextChat[chatID] = at.Add(interval)
+	p.nextChat[key] = at.Add(interval)
 
 	if len(p.nextChat) > pacerPruneThreshold {
-		for id, next := range p.nextChat {
+		for k, next := range p.nextChat {
 			if !next.After(now) {
-				delete(p.nextChat, id)
+				delete(p.nextChat, k)
 			}
 		}
 	}
-	return at
+	return at, true
+}
+
+// backoff holds every paced send of token's bot until at least until, after
+// a 429. Telegram does not say whether the limit hit was the chat's or the
+// bot's, so the whole bot waits.
+func (p *sendPacer) backoff(token string, until time.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.nextBot[token].Before(until) {
+		p.nextBot[token] = until
+	}
 }
 
 // telegramSleep waits for d or until ctx is done. Tests replace it to record
@@ -105,22 +139,15 @@ var telegramSleep = func(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// blockedChatKey scopes a blocked chat to one bot: blocking the validator bot
-// says nothing about the GovDAO bot.
-type blockedChatKey struct {
-	token  string
-	chatID int64
-}
-
 var (
 	blockedChatsMu sync.RWMutex
-	blockedChats   = map[blockedChatKey]struct{}{}
+	blockedChats   = map[chatKey]struct{}{}
 )
 
 func isChatBlocked(token string, chatID int64) bool {
 	blockedChatsMu.RLock()
 	defer blockedChatsMu.RUnlock()
-	_, ok := blockedChats[blockedChatKey{token, chatID}]
+	_, ok := blockedChats[chatKey{token, chatID}]
 	return ok
 }
 
@@ -129,7 +156,7 @@ func isChatBlocked(token string, chatID int64) bool {
 func markChatBlocked(token string, chatID int64, reason string) {
 	blockedChatsMu.Lock()
 	defer blockedChatsMu.Unlock()
-	key := blockedChatKey{token, chatID}
+	key := chatKey{token, chatID}
 	if _, ok := blockedChats[key]; ok {
 		return
 	}
@@ -141,7 +168,7 @@ func markChatBlocked(token string, chatID int64, reason string) {
 func unblockChat(token string, chatID int64) {
 	blockedChatsMu.Lock()
 	defer blockedChatsMu.Unlock()
-	key := blockedChatKey{token, chatID}
+	key := chatKey{token, chatID}
 	if _, ok := blockedChats[key]; !ok {
 		return
 	}
