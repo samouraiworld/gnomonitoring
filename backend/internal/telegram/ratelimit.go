@@ -80,11 +80,17 @@ func newSendPacer(global, private, group, maxWait time.Duration) *sendPacer {
 // telegramPacer paces every sendMessage call of the package.
 var telegramPacer = newSendPacer(telegramGlobalInterval, telegramPrivateInterval, telegramGroupInterval, telegramMaxQueueWait)
 
+// queueDeadline is the latest time a call that starts waiting at now may be
+// sent: its whole wait, across slots and cooldowns, is bounded by maxWait.
+func (p *sendPacer) queueDeadline(now time.Time) time.Time {
+	return now.Add(p.maxWait)
+}
+
 // reserve books the earliest send slot of token's bot for chatID at or after
 // now and returns it. Group and channel chat IDs are negative and get the
-// slower group pace. When that slot is more than maxWait away nothing is
-// booked and ok is false.
-func (p *sendPacer) reserve(now time.Time, token string, chatID int64) (at time.Time, ok bool) {
+// slower group pace. When that slot is after deadline nothing is booked and
+// ok is false.
+func (p *sendPacer) reserve(now time.Time, token string, chatID int64, deadline time.Time) (at time.Time, ok bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -96,7 +102,7 @@ func (p *sendPacer) reserve(now time.Time, token string, chatID int64) (at time.
 	if next := p.nextChat[key]; next.After(at) {
 		at = next
 	}
-	if at.Sub(now) > p.maxWait {
+	if at.After(deadline) {
 		return at, false
 	}
 	p.nextBot[token] = at.Add(p.global)

@@ -295,7 +295,7 @@ func TestSendPacer_Reserve(t *testing.T) {
 	p := newSendPacer(10*time.Millisecond, time.Second, 3*time.Second, time.Minute)
 	now := time.Unix(1_700_000_000, 0)
 	slot := func(token string, chatID int64) time.Time {
-		at, ok := p.reserve(now, token, chatID)
+		at, ok := p.reserve(now, token, chatID, p.queueDeadline(now))
 		require.True(t, ok)
 		return at
 	}
@@ -308,7 +308,7 @@ func TestSendPacer_Reserve(t *testing.T) {
 	assert.Equal(t, now, slot("other-bot", 1), "another bot has its own limits")
 
 	later := now.Add(time.Minute)
-	at, ok := p.reserve(later, "bot", 1)
+	at, ok := p.reserve(later, "bot", 1, p.queueDeadline(later))
 	assert.True(t, ok)
 	assert.Equal(t, later, at, "past slots do not delay")
 }
@@ -317,13 +317,13 @@ func TestSendPacer_QueueFullBooksNothing(t *testing.T) {
 	p := newSendPacer(0, time.Second, time.Second, 2*time.Second)
 	now := time.Unix(1_700_000_000, 0)
 	for i := 0; i < 3; i++ {
-		_, ok := p.reserve(now, "bot", 1)
+		_, ok := p.reserve(now, "bot", 1, p.queueDeadline(now))
 		require.True(t, ok, "slot %d", i)
 	}
-	at, ok := p.reserve(now, "bot", 1)
+	at, ok := p.reserve(now, "bot", 1, p.queueDeadline(now))
 	assert.False(t, ok, "a fourth message would wait 3s, over the 2s cap")
 	assert.Equal(t, now.Add(3*time.Second), at)
-	_, ok = p.reserve(now, "bot", 2)
+	_, ok = p.reserve(now, "bot", 2, p.queueDeadline(now))
 	assert.True(t, ok, "other chats are not held by one chat's backlog")
 }
 
@@ -332,14 +332,14 @@ func TestSendPacer_BackoffHoldsWholeBot(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	p.backoff("bot", now.Add(5*time.Second))
 
-	at, ok := p.reserve(now, "bot", 99)
+	at, ok := p.reserve(now, "bot", 99, p.queueDeadline(now))
 	require.True(t, ok)
 	assert.Equal(t, now.Add(5*time.Second), at)
-	at, _ = p.reserve(now, "other-bot", 99)
+	at, _ = p.reserve(now, "other-bot", 99, p.queueDeadline(now))
 	assert.Equal(t, now, at)
 
 	p.backoff("bot", now.Add(time.Second))
-	at, _ = p.reserve(now, "bot", 98)
+	at, _ = p.reserve(now, "bot", 98, p.queueDeadline(now))
 	assert.Equal(t, now.Add(5*time.Second), at, "a shorter backoff does not shorten the cooldown")
 }
 
@@ -347,9 +347,10 @@ func TestSendPacer_PrunesStaleChats(t *testing.T) {
 	p := newSendPacer(0, time.Second, time.Second, time.Minute)
 	now := time.Unix(1_700_000_000, 0)
 	for i := int64(1); i <= pacerPruneThreshold; i++ {
-		p.reserve(now, "bot", i)
+		p.reserve(now, "bot", i, p.queueDeadline(now))
 	}
-	p.reserve(now.Add(time.Hour), "bot", 0)
+	later := now.Add(time.Hour)
+	p.reserve(later, "bot", 0, p.queueDeadline(later))
 	assert.Len(t, p.nextChat, 1)
 }
 
@@ -415,6 +416,21 @@ func TestSendMessage_CallsReleasedByCooldownStaySpaced(t *testing.T) {
 	assert.Equal(t, []time.Duration{5 * time.Second, time.Second}, waits())
 	got := calls()
 	require.Len(t, got, 2)
+}
+
+func TestEditMessage_RepeatedCooldownExtensionsAreBounded(t *testing.T) {
+	waits := recordSleeps(t, func() {
+		telegramPacer.backoff("tok", telegramNow().Add(20*time.Second))
+	})
+	freshPacer(t)
+	calls := scriptedTelegram(t, func(int, int64) (int, string) { return http.StatusOK, okAnswer })
+	telegramPacer.backoff("tok", telegramNow().Add(20*time.Second))
+
+	err := EditMessageTelegramWithMarkup("tok", 5, 1, "x", nil)
+	require.ErrorIs(t, err, ErrRateLimited)
+	assert.Equal(t, []time.Duration{20 * time.Second, 20 * time.Second, 20 * time.Second}, waits(),
+		"the whole wait stays within the one-minute queue budget")
+	assert.Empty(t, calls())
 }
 
 func TestSendMessage_BlockWhileWaitingStopsTheSend(t *testing.T) {

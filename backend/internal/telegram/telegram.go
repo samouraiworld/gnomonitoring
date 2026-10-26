@@ -246,13 +246,16 @@ func callTelegram(ctx context.Context, botToken, method string, chatID int64, pa
 // another call may extend it meanwhile. A paced call released by a cooldown
 // books a fresh slot, so calls queued behind the same cooldown stay spaced
 // instead of all sending at its end. Fails with ErrRateLimited when a wait
-// would exceed telegramMaxQueueWait, and with ErrChatBlocked when the chat
-// was found blocked while waiting.
+// would end after the call's queue deadline (telegramMaxQueueWait after it
+// started waiting, however often the cooldown is extended), and with
+// ErrChatBlocked when the chat was found blocked while waiting.
 func waitSendTurn(ctx context.Context, botToken, method string, chatID int64, paced bool) error {
+	pacer := telegramPacer
+	deadline := pacer.queueDeadline(telegramNow())
 	for {
 		now := telegramNow()
 		if paced {
-			at, ok := telegramPacer.reserve(now, botToken, chatID)
+			at, ok := pacer.reserve(now, botToken, chatID, deadline)
 			if !ok {
 				return fmt.Errorf("%w: %s chat_id=%d: send queue full, next slot in %s",
 					ErrRateLimited, method, chatID, at.Sub(now).Round(time.Second))
@@ -262,12 +265,12 @@ func waitSendTurn(ctx context.Context, botToken, method string, chatID int64, pa
 			}
 			now = telegramNow()
 		}
-		until := telegramPacer.cooldownUntil(botToken)
+		until := pacer.cooldownUntil(botToken)
 		if !until.After(now) {
 			break
 		}
 		wait := until.Sub(now)
-		if wait > telegramMaxQueueWait {
+		if until.After(deadline) {
 			return fmt.Errorf("%w: %s chat_id=%d: bot cooling down for %s",
 				ErrRateLimited, method, chatID, wait.Round(time.Second))
 		}
