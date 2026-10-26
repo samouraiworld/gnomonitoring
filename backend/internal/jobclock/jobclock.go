@@ -11,6 +11,7 @@
 // The 5-minute plan:
 //
 //	minute 0      GovDAO proposal watcher (+0s), valset refresh (chains spread over +20s..+60s)
+//	              BFT margin alert check (chains spread over +45s..+60s, a small query)
 //	minutes 1-2   Prometheus metrics updater (+60s, chains run one after another)
 //	minutes 3-4   latency alert check (chains spread over +180s..+300s)
 //
@@ -27,7 +28,7 @@ package jobclock
 import "time"
 
 // Cycle is the period of the GovDAO watcher and the metrics updater, and the
-// default period of the valset refresh and the latency alert check.
+// default period of the valset refresh and the latency and BFT alert checks.
 const Cycle = 5 * time.Minute
 
 const (
@@ -37,6 +38,8 @@ const (
 	metricsPhase  = 60 * time.Second
 	latencyPhase  = 180 * time.Second
 	latencyWindow = 120 * time.Second // latency checks stay inside minutes 3-4
+	bftPhase      = 45 * time.Second
+	bftWindow     = 15 * time.Second // BFT checks stay inside minute 0
 	// alertPhase is not a multiple of 5s, so with the usual intervals and
 	// chain counts the alert checks avoid the round seconds the other jobs use.
 	alertPhase = 7 * time.Second
@@ -86,6 +89,13 @@ func ValsetOffset(chainID string, chains []string) time.Duration {
 // LatencyOffset is the phase of a chain's latency alert check.
 func LatencyOffset(chainID string, chains []string) time.Duration {
 	return latencyPhase + spread(chainID, chains, latencyWindow)
+}
+
+// BFTOffset is the phase of a chain's BFT margin alert check. It runs after
+// most valset refreshes, so it usually reads a voting-power snapshot taken in
+// the same cycle.
+func BFTOffset(chainID string, chains []string) time.Duration {
+	return bftPhase + spread(chainID, chains, bftWindow)
 }
 
 // spread gives each chain an even share of window, by its position in chains.

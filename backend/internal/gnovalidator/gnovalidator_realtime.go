@@ -839,6 +839,7 @@ func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, 
 	CollectParticipation(ctx, db, chainID, client)
 	WatchValidatorAlerts(ctx, db, chainID, t.AlertCheckInterval())
 	WatchLatencyAlerts(ctx, db, chainID)
+	WatchBFTAlerts(ctx, db, chainID)
 	ReconcileGaps(ctx, db, chainID, client, t.GapReconciliationInterval(), t.GapReconciliationLookbackDays)
 }
 

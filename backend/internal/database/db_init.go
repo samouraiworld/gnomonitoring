@@ -566,6 +566,12 @@ func SeedAdminConfig(db *gorm.DB) error {
 		"latency_alert_peer_factor":           "3",
 		"latency_alert_min_samples":           "300",
 		"latency_alert_resend_hours":          "24",
+		"bft_alert_enabled":                   "true",
+		"bft_alert_check_minutes":             "5",
+		"bft_alert_window_blocks":             "100",
+		"bft_alert_warning_losses":            "1",
+		"bft_alert_warning_margin_pct":        "10",
+		"bft_alert_critical_margin_pct":       "3",
 	}
 	for key, value := range defaults {
 		row := AdminConfig{Key: key, Value: value}
