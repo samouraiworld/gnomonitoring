@@ -570,120 +570,7 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 				continue
 			}
 
-			today := time.Now().Format("2006-01-02")
-
-			// Query returns one row per contiguous missed sequence within the
-			// recent window. The window is kept short (30 min) to avoid
-			// surfacing dozens of already-resolved historical sequences that
-			// would each trigger a dedup DB round-trip. Active incidents are
-			// always visible because new blocks are always within the window.
-			// The NOT EXISTS filter on alert_logs skips sequences already
-			// covered by a RESOLVED, eliminating the dedup check entirely for
-			// those sequences.
-			windows, err := database.GetMissedWindows(db, chainID, GetThresholds().WarningThreshold)
-			if err != nil {
-				log.Printf("[validator][%s] error executing missed blocks query: %v", chainID, err)
-				select {
-				case <-ctx.Done():
-					return
-				case <-nextCheck():
-				}
-				continue
-			}
-			log.Printf("[validator][%s] alert check: found %d missed-block window(s) above threshold=%d",
-				chainID, len(windows), GetThresholds().WarningThreshold)
-
-			// Snapshot thresholds once for the whole cycle to avoid TOCTOU
-			// between the SQL filter and the Go-level level classification.
-			t := GetThresholds()
-
-			for _, w := range windows {
-				addr := w.Addr
-				moniker := w.Moniker
-				start_height := w.StartHeight
-				end_height := w.EndHeight
-				missed := w.Missed
-
-				var level string
-				switch {
-				case missed >= t.CriticalThreshold:
-					level = "CRITICAL"
-				case missed >= t.WarningThreshold:
-					level = "WARNING"
-				default:
-					continue
-				}
-
-				// Time-based dedup: skip if an alert of this level was already sent recently,
-				// UNLESS a RESOLVED was dispatched after that alert AND the current missed
-				// sequence starts strictly after the resolved range (i.e. a genuinely new
-				// incident, not the same down-period being re-detected).
-				resendHours := t.ResendHoursForLevel(level)
-				window := fmt.Sprintf("%d hours", resendHours)
-				var recentCount int64
-				err := db.Raw(`
-					SELECT COUNT(*) FROM alert_logs al
-					WHERE al.chain_id = ? AND al.addr = ? AND al.level = ?
-					AND al.skipped = true
-					AND al.sent_at >= NOW() - ?::interval
-					AND NOT EXISTS (
-						SELECT 1 FROM alert_logs r
-						WHERE r.chain_id = al.chain_id
-						  AND r.addr = al.addr
-						  AND r.level = 'RESOLVED'
-						  AND r.sent_at > al.sent_at
-						  AND ? > r.end_height
-					)
-				`, chainID, addr, level, window, start_height).Scan(&recentCount).Error
-				if err != nil {
-					log.Printf("[validator][%s] DB error checking alert_logs: %v", chainID, err)
-					continue
-				}
-				if recentCount > 0 {
-					log.Printf("[validator][%s] dedup: skipping %s alert for %s (%s) start=%d end=%d missed=%d (recent alert within %dh window, no RESOLVED since)",
-						chainID, level, moniker, addr, start_height, end_height, missed, resendHours)
-					continue
-				}
-
-				// Silence permanently dead validators: skip if no participation in the
-				// last N days — but only for a REPEAT incident. A validator's very
-				// first-ever WARNING/CRITICAL must always go through regardless of this
-				// window, otherwise a validator that has never signed a single block
-				// since joining the valset (no participation in "last N days" is then
-				// trivially always true) would never generate a single alert, ever.
-				if t.DeadValidatorSilenceDays > 0 {
-					hasPrior, err := database.HasPriorAlert(db, chainID, addr)
-					if err != nil {
-						log.Printf("[validator][%s] DB error checking prior alerts: %v", chainID, err)
-						continue
-					}
-					if hasPrior {
-						silenceWindow := fmt.Sprintf("%d days", t.DeadValidatorSilenceDays)
-						var activeRecently int64
-						err = db.Raw(`
-							SELECT COUNT(*) FROM daily_participations
-							WHERE chain_id = ? AND addr = ? AND participated = true
-							AND date >= NOW() - ?::interval
-						`, chainID, addr, silenceWindow).Scan(&activeRecently).Error
-						if err != nil {
-							log.Printf("[validator][%s] DB error checking silence window: %v", chainID, err)
-							continue
-						}
-						if activeRecently == 0 {
-							log.Printf("[validator][%s] silence: skipping %s alert for %s (%s): no participation in last %d days",
-								chainID, level, moniker, addr, t.DeadValidatorSilenceDays)
-							continue
-						}
-					}
-				}
-
-				if err := internal.SendAllValidatorAlerts(chainID, missed, today, level, addr, moniker, start_height, end_height, db); err != nil {
-					log.Printf("[validator][%s] SendAllValidatorAlerts error: %v", chainID, err)
-				}
-				if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
-					log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
-				}
-			}
+			runValidatorAlertCycle(db, chainID, GetThresholds())
 
 			SendResolveAlerts(db, chainID)
 			select {
@@ -695,6 +582,137 @@ func WatchValidatorAlerts(ctx context.Context, db *gorm.DB, chainID string, chec
 		}
 	}()
 }
+
+// runValidatorAlertCycle runs one missed-block alert check for chainID:
+// it classifies each recent missed window, applies the resend dedup and the
+// dead-validator silence, then dispatches and records the alerts that remain.
+// t is snapshotted once per cycle by the caller, so the SQL filter and the
+// level classification below always agree on the thresholds.
+func runValidatorAlertCycle(db *gorm.DB, chainID string, t Thresholds) {
+	today := time.Now().Format("2006-01-02")
+
+	// Query returns one row per contiguous missed sequence within the
+	// recent window. The window is kept short (30 min) to avoid
+	// surfacing dozens of already-resolved historical sequences that
+	// would each trigger a dedup DB round-trip. Active incidents are
+	// always visible because new blocks are always within the window.
+	// The NOT EXISTS filter on alert_logs skips sequences already
+	// covered by a RESOLVED, eliminating the dedup check entirely for
+	// those sequences.
+	windows, err := database.GetMissedWindows(db, chainID, t.WarningThreshold)
+	if err != nil {
+		log.Printf("[validator][%s] error executing missed blocks query: %v", chainID, err)
+		return
+	}
+	log.Printf("[validator][%s] alert check: found %d missed-block window(s) above threshold=%d",
+		chainID, len(windows), t.WarningThreshold)
+
+	for _, w := range windows {
+		addr := w.Addr
+		moniker := w.Moniker
+		start_height := w.StartHeight
+		end_height := w.EndHeight
+		missed := w.Missed
+
+		var level string
+		switch {
+		case missed >= t.CriticalThreshold:
+			level = "CRITICAL"
+		case missed >= t.WarningThreshold:
+			level = "WARNING"
+		default:
+			continue
+		}
+
+		// Time-based dedup: skip if an alert of this level was already sent recently,
+		// UNLESS a RESOLVED was dispatched after that alert AND the current missed
+		// sequence starts strictly after the resolved range (i.e. a genuinely new
+		// incident, not the same down-period being re-detected).
+		resendHours := t.ResendHoursForLevel(level)
+		window := fmt.Sprintf("%d hours", resendHours)
+		var recentCount int64
+		err := db.Raw(`
+			SELECT COUNT(*) FROM alert_logs al
+			WHERE al.chain_id = ? AND al.addr = ? AND al.level = ?
+			AND al.skipped = true
+			AND al.sent_at >= NOW() - ?::interval
+			AND NOT EXISTS (
+				SELECT 1 FROM alert_logs r
+				WHERE r.chain_id = al.chain_id
+				  AND r.addr = al.addr
+				  AND r.level = 'RESOLVED'
+				  AND r.sent_at > al.sent_at
+				  AND ? > r.end_height
+			)
+		`, chainID, addr, level, window, start_height).Scan(&recentCount).Error
+		if err != nil {
+			log.Printf("[validator][%s] DB error checking alert_logs: %v", chainID, err)
+			continue
+		}
+		if recentCount > 0 {
+			log.Printf("[validator][%s] dedup: skipping %s alert for %s (%s) start=%d end=%d missed=%d (recent alert within %dh window, no RESOLVED since)",
+				chainID, level, moniker, addr, start_height, end_height, missed, resendHours)
+			continue
+		}
+
+		// A sequence the validator already recovered from is recorded for the
+		// score and the incident history, but never notified: a notification
+		// now would only be followed by an immediate RESOLVED.
+		resumeHeight, err := resumeHeightAfter(db, chainID, addr, end_height)
+		if err != nil {
+			log.Printf("[validator][%s] DB error checking participation: %v", chainID, err)
+			continue
+		}
+		if resumeHeight > 0 {
+			log.Printf("[validator][%s] closed: recording %s for %s (%s) without notification start=%d end=%d missed=%d (participated again at %d)",
+				chainID, level, moniker, addr, start_height, end_height, missed, resumeHeight)
+			if err := recordClosedIncident(db, chainID, addr, moniker, level, start_height, end_height); err != nil {
+				log.Printf("[validator][%s] recording closed incident: %v", chainID, err)
+			}
+			continue
+		}
+
+		// Silence permanently dead validators: skip if no participation in the
+		// last N days — but only for a REPEAT alert. A validator's very first
+		// WARNING and first CRITICAL must always go through regardless of this
+		// window, otherwise a validator that has never signed a single block
+		// since joining the valset (no participation in "last N days" is then
+		// trivially always true) would never generate a single alert, ever.
+		if t.DeadValidatorSilenceDays > 0 {
+			hasPrior, err := database.HasPriorAlert(db, chainID, addr, level)
+			if err != nil {
+				log.Printf("[validator][%s] DB error checking prior alerts: %v", chainID, err)
+				continue
+			}
+			if hasPrior {
+				silenceWindow := fmt.Sprintf("%d days", t.DeadValidatorSilenceDays)
+				var activeRecently int64
+				err = db.Raw(`
+					SELECT COUNT(*) FROM daily_participations
+					WHERE chain_id = ? AND addr = ? AND participated = true
+					AND date >= NOW() - ?::interval
+				`, chainID, addr, silenceWindow).Scan(&activeRecently).Error
+				if err != nil {
+					log.Printf("[validator][%s] DB error checking silence window: %v", chainID, err)
+					continue
+				}
+				if activeRecently == 0 {
+					log.Printf("[validator][%s] silence: skipping %s alert for %s (%s): no participation in last %d days",
+						chainID, level, moniker, addr, t.DeadValidatorSilenceDays)
+					continue
+				}
+			}
+		}
+
+		if err := getValidatorAlertDispatch()(chainID, missed, today, level, addr, moniker, start_height, end_height, db); err != nil {
+			log.Printf("[validator][%s] SendAllValidatorAlerts error: %v", chainID, err)
+		}
+		if err := database.InsertAlertlog(db, chainID, addr, moniker, level, start_height, end_height, true, time.Now(), ""); err != nil {
+			log.Printf("[monitor][%s] InsertAlertlog error: %v", chainID, err)
+		}
+	}
+}
+
 func SendResolveAlerts(db *gorm.DB, chainID string) {
 	// Source of truth: dispatched WARNING/CRITICAL alert_logs entries that have
 	// no corresponding RESOLVED yet. Avoids the rolling-window race where a
@@ -745,15 +763,7 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 		// (e.g. long maintenance). The dead-validator silence check in
 		// WatchValidatorAlerts already prevents perpetual alerts for truly dead
 		// validators; here we only need to know when they returned.
-		var resumeHeight int64
-		err := db.Raw(`
-			SELECT COALESCE(MIN(block_height), 0)
-			FROM daily_participations
-			WHERE chain_id    = ?
-			  AND addr        = ?
-			  AND block_height > ?
-			  AND participated = true
-		`, chainID, a.Addr, a.EndHeight).Scan(&resumeHeight).Error
+		resumeHeight, err := resumeHeightAfter(db, chainID, a.Addr, a.EndHeight)
 		if err != nil {
 			log.Printf("[validator][%s] DB error checking participation: %v", chainID, err)
 			continue
@@ -771,6 +781,82 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 			log.Printf("[monitor][%s] InsertAlertlog RESOLVED error: %v", chainID, err)
 		}
 	}
+}
+
+// recordClosedIncident writes the alert_logs rows of a missed sequence the
+// validator already recovered from, without notifying anyone. When an alert
+// of the same incident was dispatched and still awaits its RESOLVED, the row
+// joins it (skipped=true) and SendResolveAlerts announces the recovery.
+// Otherwise nothing was ever announced: the alert and its RESOLVED are both
+// stored with skipped=false, so neither the resend dedup nor SendResolveAlerts
+// treats them as dispatched.
+func recordClosedIncident(db *gorm.DB, chainID, addr, moniker, level string, startHeight, endHeight int64) error {
+	var pending int64
+	err := db.Raw(`
+		SELECT COUNT(*) FROM alert_logs al
+		WHERE al.chain_id = ? AND al.addr = ?
+		  AND al.level IN ('WARNING', 'CRITICAL')
+		  AND al.skipped = true
+		  AND NOT EXISTS (
+		      SELECT 1 FROM alert_logs r
+		      WHERE r.chain_id   = al.chain_id
+		        AND r.addr       = al.addr
+		        AND r.level      = 'RESOLVED'
+		        AND r.end_height >= al.end_height
+		  )
+	`, chainID, addr).Scan(&pending).Error
+	if err != nil {
+		return fmt.Errorf("checking pending alerts: %w", err)
+	}
+	now := time.Now()
+	if pending > 0 {
+		return database.InsertAlertlog(db, chainID, addr, moniker, level, startHeight, endHeight, true, now, "")
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := database.InsertAlertlog(tx, chainID, addr, moniker, level, startHeight, endHeight, false, now, ""); err != nil {
+			return err
+		}
+		return database.InsertAlertlog(tx, chainID, addr, moniker, "RESOLVED", startHeight, endHeight, false, now, "")
+	})
+}
+
+// validatorAlertDispatch notifies a WARNING/CRITICAL validator alert.
+// Swappable via setValidatorAlertDispatch so tests observe dispatches without
+// doing network I/O; guarded by a mutex like latencyDispatch.
+type validatorAlertDispatchFunc func(chainID string, missed int, today, level, addr, moniker string, startHeight, endHeight int64, db *gorm.DB) error
+
+var defaultValidatorAlertDispatch validatorAlertDispatchFunc = internal.SendAllValidatorAlerts
+
+var (
+	validatorAlertDispatchMu sync.RWMutex
+	validatorAlertDispatch   = defaultValidatorAlertDispatch
+)
+
+func getValidatorAlertDispatch() validatorAlertDispatchFunc {
+	validatorAlertDispatchMu.RLock()
+	defer validatorAlertDispatchMu.RUnlock()
+	return validatorAlertDispatch
+}
+
+func setValidatorAlertDispatch(fn validatorAlertDispatchFunc) {
+	validatorAlertDispatchMu.Lock()
+	defer validatorAlertDispatchMu.Unlock()
+	validatorAlertDispatch = fn
+}
+
+// resumeHeightAfter returns the first height above afterHeight at which addr
+// participated on chainID, or 0 when it has not participated again yet.
+func resumeHeightAfter(db *gorm.DB, chainID, addr string, afterHeight int64) (int64, error) {
+	var resumeHeight int64
+	err := db.Raw(`
+		SELECT COALESCE(MIN(block_height), 0)
+		FROM daily_participations
+		WHERE chain_id    = ?
+		  AND addr        = ?
+		  AND block_height > ?
+		  AND participated = true
+	`, chainID, addr, afterHeight).Scan(&resumeHeight).Error
+	return resumeHeight, err
 }
 
 func SaveParticipation(db *gorm.DB, chainID string, blockHeight int64, participating map[string]Participation, monikerMap map[string]string, timeStp time.Time) error {

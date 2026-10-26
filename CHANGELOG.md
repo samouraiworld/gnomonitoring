@@ -236,6 +236,17 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **A validator's first CRITICAL is no longer silenced by its own WARNING** —
+  the dead-validator silence treated any earlier WARNING/CRITICAL as a prior
+  incident, including the WARNING of the same incident. A validator that
+  stopped before its first signature had its CRITICAL silenced while down,
+  then sent at recovery a few seconds before the RESOLVED. The silence now
+  applies only to an alert of a level already dispatched for that validator,
+  so its first WARNING and first CRITICAL always go out.
+- **No alert is sent for an incident that is already over** — a missed
+  sequence the validator recovered from before a check saw it used to send a
+  WARNING or CRITICAL immediately followed by its RESOLVED. It is now recorded
+  in `alert_logs` (score, incident history) without any notification.
 - **Telegram validator lists no longer reorder the shared cache** — the
   participation, uptime, operation time, tx contribution and missing blocks
   lists sorted the slice cached in `metricsCache` in place when no filter
