@@ -603,11 +603,12 @@ recorded block (`lastUpDate`), in days with one decimal. It is `0` while the
 validator is down (its latest block is a miss) and never negative. A validator
 that never missed a block is measured from its first recorded block, with an
 empty `lastDownDate`. Days not aggregated yet use exact block timestamps;
-aggregated days only keep counts, so a past day with a missed block counts as
-down until its end (the dates then show that day's end bound), which can
-understate the value by less than a day. Validators not seen within a day of
-the chain's latest block have left the valset and are not listed. Dates are
-RFC 3339 in UTC.
+aggregated days only keep counts, so they use day bounds: a day is seen from
+its start until its end, and a day with a missed block counts as down until
+its end (the dates then show that bound). Each bound is off by less than a
+day. Validators not seen within a day of the chain's latest block (up to about
+two days when their last day is aggregated) have left the valset and are not
+listed. Dates are RFC 3339 in UTC.
 
 ```bash
 curl -X GET ‘localhost:8989/operation_time’

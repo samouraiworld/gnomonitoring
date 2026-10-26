@@ -136,11 +136,14 @@ func TestOperationTimeMetricsaddr(t *testing.T) {
 	// keeps the raw miss on aggregated day 03-03 out.
 	unbounded, err := database.OperationTimeMetricsaddr(db, chainA, time.Time{})
 	require.NoError(t, err)
-	for _, r := range unbounded {
-		if r.Addr == "g1recoveredagg" {
-			assert.Equal(t, a["g1recoveredagg"], r, "raw rows of an aggregated day must not override the agrega row")
+	var recoveredAgg *database.OperationTimeMetrics
+	for i := range unbounded {
+		if unbounded[i].Addr == "g1recoveredagg" {
+			recoveredAgg = &unbounded[i]
 		}
 	}
+	require.NotNil(t, recoveredAgg)
+	assert.Equal(t, a["g1recoveredagg"], *recoveredAgg, "raw rows of an aggregated day must not override the agrega row")
 
 	// Chain B: the same address is not down there, and chain A rows do not leak.
 	b := operationTimeByAddr(t, db, chainB)

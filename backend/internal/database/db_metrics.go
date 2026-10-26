@@ -292,14 +292,16 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string, aggr
 //     block instead, so it still gets a value.
 //
 // Days not aggregated yet use exact block timestamps. Aggregated days only
-// keep counts, so they use day bounds: a day is seen until its end, and a day
-// with a missed block counts as down until its end. That can only understate
-// the value, by less than a day. Day bounds follow the session TimeZone, like
-// the date::date bucketing that built the agrega rows.
+// keep counts, so they use day bounds: a day is seen from its start until its
+// end, and a day with a missed block counts as down until its end. Each bound
+// is off by less than a day, in either direction. Day bounds follow the
+// session TimeZone, like the date::date bucketing that built the agrega rows.
 //
 // Validators not seen within a day of the chain's latest recorded block have
-// left the valset and are dropped. A validator that is down keeps writing
-// missed rows, so it stays listed with 0.
+// left the valset and are dropped (up to about two days when their last day
+// is aggregated, since that day is seen until its end). A validator that is
+// down keeps writing missed rows, so it stays listed with 0. A validator that
+// left and came back with the same address is measured across its absence.
 //
 // LastDownDate is last_down ("" when the validator never missed a block) and
 // LastUpDate is last_seen, both RFC 3339 in UTC. For an aggregated day they

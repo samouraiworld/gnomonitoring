@@ -245,7 +245,7 @@ Entries are ordered newest-first within each section.
   missed a block now gets a value, measured from its first recorded block,
   instead of no series at all; its `lastDownDate` is empty. Days not
   aggregated yet use exact block timestamps instead of whole days;
-  aggregated days still use day bounds. Validators not seen within a day of
+  aggregated days still use day bounds, each off by less than a day. Validators not seen within a day of
   the chain's latest block have left the valset and are no longer listed.
   `lastUpDate` is now the latest recorded block, not the latest day with a
   signed block, and both dates are RFC 3339 in UTC with a time. Telegram
