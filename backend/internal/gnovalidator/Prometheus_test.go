@@ -198,14 +198,14 @@ func TestUpdatePrometheusMetricsFromDB_NewValidatorMetrics(t *testing.T) {
 	assert.GreaterOrEqual(t, uptime, 0.0, "ValidatorUptime should be >= 0")
 	assert.LessOrEqual(t, uptime, 100.0, "ValidatorUptime should be <= 100%")
 
-	// Test ValidatorOperationTime (days since last down)
-	// The fixture's last signed block is on day 10 of the month and its last
-	// missed block on day 18, so last_up - last_down is -8 days. This label was
-	// never populated before the moniker resolved from the frozen rows (the
-	// series carried the address instead), so the old ">= 0" check read an
-	// unset series and passed vacuously.
+	// Test ValidatorOperationTime (last_seen - last_down, in days)
+	// The fixture's latest block is a miss, so the validator is down and the
+	// value is 0 (it read -8, last_up - last_down, before #159). An unset
+	// series also reads 0, so check that reading it created no new series.
+	seriesBefore := testutil.CollectAndCount(gnovalidator.ValidatorOperationTime)
 	operationTime := testutil.ToFloat64(gnovalidator.ValidatorOperationTime.WithLabelValues(testChain, testAddr, testMoniker))
-	assert.InDelta(t, -8.0, operationTime, 0.001, "ValidatorOperationTime is last_up - last_down")
+	require.Equal(t, seriesBefore, testutil.CollectAndCount(gnovalidator.ValidatorOperationTime), "ValidatorOperationTime series must exist")
+	assert.Equal(t, 0.0, operationTime, "ValidatorOperationTime is 0 while the validator is down")
 
 	// Test ValidatorTxContribution (current month)
 	txContrib := testutil.ToFloat64(gnovalidator.ValidatorTxContribution.WithLabelValues(testChain, testAddr, testMoniker))

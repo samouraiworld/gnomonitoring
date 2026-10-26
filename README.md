@@ -597,7 +597,14 @@ Response:
 
 ##### Operation time Metrics
 
-Operation Time represents the number of days between a validator’s last successful participation and its most recent downtime.
+Operation Time is how long a validator has been operating without missing a
+block: the time from its latest missed block (`lastDownDate`) to its latest
+recorded block (`lastUpDate`), in days with one decimal. It is `0` while the
+validator is down (its latest block is a miss) and never negative. A validator
+that never missed a block is measured from its first recorded block, with an
+empty `lastDownDate`. Today's blocks use exact block timestamps; aggregated
+days only keep counts, so a past day with a missed block counts as down until
+its end, which can understate the value by less than a day.
 
 ```bash
 curl -X GET ‘localhost:8989/operation_time’
@@ -864,7 +871,7 @@ Metrics are exposed at <http://localhost:8888/metrics>. All metrics include chai
 **Validator Metrics** (per-validator, updated every 5 minutes):
 
 - `gnoland_validator_uptime` — Participation rate (%) over last 500 blocks
-- `gnoland_validator_operation_time` — Days since validator's last downtime event
+- `gnoland_validator_operation_time` — Days since the validator's last missed block, up to its latest block (`0` while down; since first seen if it never missed one)
 - `gnoland_validator_tx_contribution` — Transaction contribution (%) in current month
 - `gnoland_validator_missing_blocks_month` — Blocks missed in current month
 - `gnoland_validator_first_seen_unix` — Unix timestamp of first participation

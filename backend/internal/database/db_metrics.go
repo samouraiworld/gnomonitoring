@@ -281,6 +281,25 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string, aggr
 }
 
 // ====================================== Up Time / tx_contrib Metrics ==========================
+
+// OperationTimeMetricsaddr returns, per validator, how long it has been
+// operating without missing a block: last_seen - last_down, in days (one
+// decimal), never negative.
+//   - last_seen is the validator's latest recorded block.
+//   - last_down is its latest missed block. A validator whose latest block is
+//     a miss is down, so last_down = last_seen and the value is 0.
+//   - A validator that never missed a block is measured from its first seen
+//     block instead, so it still gets a value.
+//
+// Days not aggregated yet use exact block timestamps. Aggregated days only
+// keep counts, so they use day bounds: a day is seen until its end, and a day
+// with a missed block counts as down until its end. That can only understate
+// the value, by less than a day. Day bounds follow the session TimeZone, like
+// the date::date bucketing that built the agrega rows.
+//
+// LastDownDate is last_down ("" when the validator never missed a block) and
+// LastUpDate is last_seen.
+//
 // aggregatedThrough is the chain's aggregation watermark — see
 // GetCurrentPeriodParticipationRate's doc comment.
 func OperationTimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough time.Time) ([]OperationTimeMetrics, error) {
@@ -293,40 +312,39 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough tim
 
 	// Combines agrega (complete past days) with raw fallback (days not yet aggregated).
 	query := `
-		WITH last_down AS (
-			SELECT chain_id, addr, MAX(last_down) AS last_down_date FROM (
-				SELECT chain_id, addr, block_date::date AS last_down
-				FROM daily_participation_agregas WHERE chain_id = ? AND missed_count > 0
-				UNION ALL
-				SELECT dp.chain_id, dp.addr, dp.date::date AS last_down
-				FROM daily_participations dp
-				LEFT JOIN daily_participation_agregas dpa
-					ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date::date = dp.date::date
-				WHERE dp.chain_id = ? AND dp.date >= ? AND dp.participated = false AND dpa.block_date IS NULL
-			) GROUP BY chain_id, addr
+		WITH spans AS (
+			SELECT chain_id, addr,
+				CAST(block_date AS date)::timestamptz AS first_seen,
+				(CAST(block_date AS date) + 1)::timestamptz AS last_seen,
+				CASE WHEN missed_count > 0 THEN (CAST(block_date AS date) + 1)::timestamptz END AS last_down
+			FROM daily_participation_agregas WHERE chain_id = ?
+			UNION ALL
+			SELECT dp.chain_id, dp.addr,
+				MIN(dp.date) AS first_seen,
+				MAX(dp.date) AS last_seen,
+				MAX(dp.date) FILTER (WHERE NOT dp.participated) AS last_down
+			FROM daily_participations dp
+			LEFT JOIN daily_participation_agregas dpa
+				ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date::date = dp.date::date
+			WHERE dp.chain_id = ? AND dp.date >= ? AND dpa.block_date IS NULL
+			GROUP BY dp.chain_id, dp.addr
 		),
-		last_up AS (
-			SELECT chain_id, addr, MAX(last_up) AS last_up_date FROM (
-				SELECT chain_id, addr, block_date::date AS last_up
-				FROM daily_participation_agregas WHERE chain_id = ? AND participated_count > 0
-				UNION ALL
-				SELECT dp.chain_id, dp.addr, dp.date::date AS last_up
-				FROM daily_participations dp
-				LEFT JOIN daily_participation_agregas dpa
-					ON dpa.chain_id = dp.chain_id AND dpa.addr = dp.addr AND dpa.block_date::date = dp.date::date
-				WHERE dp.chain_id = ? AND dp.date >= ? AND dp.participated = true AND dpa.block_date IS NULL
-			) GROUP BY chain_id, addr
+		per_addr AS (
+			SELECT chain_id, addr,
+				MIN(first_seen) AS first_seen,
+				MAX(last_seen) AS last_seen,
+				MAX(last_down) AS last_down
+			FROM spans GROUP BY chain_id, addr
 		)
 		SELECT
-			` + MonikerSQL("ld.chain_id", "ld.addr", MonikerFallbackAddr) + ` AS moniker,
-			ld.addr,
-			ld.last_down_date,
-			lu.last_up_date,
-			ROUND(EXTRACT(EPOCH FROM (lu.last_up_date::timestamp - ld.last_down_date::timestamp)) / 86400.0, 1) AS days_diff
-		FROM last_down ld
-		LEFT JOIN last_up lu ON lu.chain_id = ld.chain_id AND lu.addr = ld.addr`
+			` + MonikerSQL("pa.chain_id", "pa.addr", MonikerFallbackAddr) + ` AS moniker,
+			pa.addr,
+			COALESCE(pa.last_down::text, '') AS last_down_date,
+			pa.last_seen::text AS last_up_date,
+			ROUND(GREATEST(EXTRACT(EPOCH FROM (pa.last_seen - COALESCE(pa.last_down, pa.first_seen))), 0) / 86400.0, 1) AS days_diff
+		FROM per_addr pa`
 
-	if err := db.Raw(query, chainID, chainID, fallbackStart, chainID, chainID, fallbackStart).Scan(&results).Error; err != nil {
+	if err := db.Raw(query, chainID, chainID, fallbackStart).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)
 	}
 
