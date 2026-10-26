@@ -87,6 +87,15 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **Telegram `/validator <moniker or address>`** — the validator bot shows one
+  validator of the chat's active chain: score and tier (last 24h), sign rate,
+  proposer reliability, voting power, precommit lag p50/p90 (24h and 7d) and
+  the time of its last WARNING/CRITICAL alert. An exact moniker or address
+  match wins; several partial matches are listed (up to 10) so the user can
+  narrow the query; no match says so. Only validators of the active set are
+  searched. Also reachable from `/cmd` → Validators → Validator card, and
+  listed in `/help`.
+
 - **BFT margin alert (`BFT_WARNING` / `BFT_CRITICAL` / `BFT_RESOLVED`)** —
   every `bft_alert_check_minutes` (default 5) each chain's online voting power
   is checked over the last `bft_alert_window_blocks` (default 100). A
@@ -226,6 +235,17 @@ Entries are ordered newest-first within each section.
   realm prerequisite that must be satisfied before the production cutover.
 
 ### Fixed
+
+- **Telegram sends respect the Bot API limits** — every send goes through one
+  path that handles Telegram's answers. On 429 it waits `retry_after` (at most
+  30 s) and retries, three attempts in all. On 403 (bot blocked by the user,
+  or removed from the group) the chat is skipped in memory for that bot,
+  logged once, until it writes to the bot again, re-adds or unblocks it, or
+  the process restarts; nothing is changed in the database. `sendMessage`
+  calls are paced to about 30 per second overall, one per second per private
+  chat and one every 3 seconds per group, so alert, GovDAO and daily-report
+  broadcasts no longer trip the flood limits. Transport errors no longer
+  carry the request URL, which contained the bot token.
 
 - **Unreachable Keycloak issuer no longer stops the backend** — in keycloak
   mode, a failed OIDC discovery at boot used to exit the process, taking

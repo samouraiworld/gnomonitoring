@@ -302,6 +302,7 @@ Use /setchain <chain> to switch chains.
 - `/subscribe on <address>` - Subscribe to validator alerts on active chain
 - `/subscribe off <address>` - Unsubscribe from validator alerts on active chain
 - `/subscribe list` - Show your subscriptions on active chain
+- `/validator <moniker or address>` - Show one validator's score, tier, sign rate, proposer reliability, voting power, precommit lag and last alert on active chain
 
 **Hourly reports per chain:**
 
