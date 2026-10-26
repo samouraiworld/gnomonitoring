@@ -239,6 +239,37 @@ func TestRunValidatorAlertCycle_ClosedIncidentNotActive(t *testing.T) {
 	assert.Zero(t, n)
 }
 
+// A closed incident is not joined to a pending alert of an earlier incident:
+// it is recorded once that alert is resolved, with its own RESOLVED.
+func TestRunValidatorAlertCycle_ClosedIncidentNotJoinedToEarlierIncident(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chainID = "alert-cycle-closed-separate"
+	sent := captureValidatorAlertDispatch(t)
+	th := alertCycleTestThresholds()
+	now := time.Now().UTC()
+
+	seedParticipationRows(t, db, chainID, "g1val", 1, 50, true, now)
+	seedParticipationRows(t, db, chainID, "g1val", 100, 140, false, now)
+	require.NoError(t, database.InsertAlertlog(db, chainID, "g1val", "val", "CRITICAL", 100, 135, true, now, ""))
+	seedParticipationRows(t, db, chainID, "g1val", 141, 141, true, now)
+	seedParticipationRows(t, db, chainID, "g1val", 150, 160, false, now)
+	seedParticipationRows(t, db, chainID, "g1val", 161, 161, true, now)
+
+	runValidatorAlertCycle(db, chainID, th)
+	SendResolveAlerts(db, chainID)
+	runValidatorAlertCycle(db, chainID, th)
+
+	assert.Empty(t, *sent)
+	rows := alertRows(t, db, chainID, "g1val")
+	require.Len(t, rows, 4)
+	assert.Equal(t, "RESOLVED", rows[1].Level)
+	assert.EqualValues(t, 140, rows[1].EndHeight)
+	assert.Equal(t, "WARNING", rows[2].Level)
+	assert.EqualValues(t, 150, rows[2].StartHeight)
+	assert.Equal(t, "RESOLVED", rows[3].Level)
+	assert.EqualValues(t, 160, rows[3].EndHeight)
+}
+
 // A repeat validator silenced as dead while down is not notified when it
 // comes back: its first signature closes the incident.
 func TestRunValidatorAlertCycle_DeadRepeatValidatorNotNotifiedOnRecovery(t *testing.T) {

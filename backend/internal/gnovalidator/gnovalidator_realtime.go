@@ -666,7 +666,7 @@ func runValidatorAlertCycle(db *gorm.DB, chainID string, t Thresholds) {
 		if resumeHeight > 0 {
 			log.Printf("[validator][%s] closed: recording %s for %s (%s) without notification start=%d end=%d missed=%d (participated again at %d)",
 				chainID, level, moniker, addr, start_height, end_height, missed, resumeHeight)
-			if err := recordClosedIncident(db, chainID, addr, moniker, level, start_height, end_height); err != nil {
+			if err := recordClosedIncident(db, chainID, addr, moniker, level, start_height, end_height, resumeHeight); err != nil {
 				log.Printf("[validator][%s] recording closed incident: %v", chainID, err)
 			}
 			continue
@@ -793,21 +793,23 @@ func SendResolveAlerts(db *gorm.DB, chainID string) {
 // alert dispatched earlier still awaits its RESOLVED, SendResolveAlerts
 // announces the recovery and its RESOLVED, stored at the real end of the
 // sequence, covers this row too. Otherwise the row gets its own RESOLVED.
-func recordClosedIncident(db *gorm.DB, chainID, addr, moniker, level string, startHeight, endHeight int64) error {
+// A pending alert of an earlier incident (the validator participated between
+// the two) is resolved first: the row is recorded on a later cycle.
+func recordClosedIncident(db *gorm.DB, chainID, addr, moniker, level string, startHeight, endHeight, resumeHeight int64) error {
 	var state struct {
-		Recorded int64
-		Pending  int64
+		Recorded   int64
+		PendingEnd int64
 	}
 	err := db.Raw(`
 		SELECT
 			COUNT(*) FILTER (WHERE al.level = ? AND al.end_height >= ?) AS recorded,
-			COUNT(*) FILTER (WHERE al.skipped = true AND NOT EXISTS (
+			COALESCE(MAX(al.end_height) FILTER (WHERE al.skipped = true AND NOT EXISTS (
 				SELECT 1 FROM alert_logs r
 				WHERE r.chain_id   = al.chain_id
 				  AND r.addr       = al.addr
 				  AND r.level      = 'RESOLVED'
 				  AND r.end_height >= al.end_height
-			)) AS pending
+			)), 0) AS pending_end
 		FROM alert_logs al
 		WHERE al.chain_id = ? AND al.addr = ?
 		  AND al.level IN ('WARNING', 'CRITICAL')
@@ -820,7 +822,14 @@ func recordClosedIncident(db *gorm.DB, chainID, addr, moniker, level string, sta
 		return nil
 	}
 	now := time.Now()
-	if state.Pending > 0 {
+	if state.PendingEnd > 0 {
+		pendingResume, err := resumeHeightAfter(db, chainID, addr, state.PendingEnd)
+		if err != nil {
+			return fmt.Errorf("checking pending alert recovery: %w", err)
+		}
+		if pendingResume != resumeHeight {
+			return nil
+		}
 		return database.InsertAlertlog(db, chainID, addr, moniker, level, startHeight, endHeight, false, now, "")
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
