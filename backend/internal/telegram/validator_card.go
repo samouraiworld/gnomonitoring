@@ -9,8 +9,13 @@ import (
 	"time"
 
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
+
+// validatorCardLoads coalesces concurrent cache misses of the chain-wide
+// /validator queries, so a burst of commands runs each query once.
+var validatorCardLoads singleflight.Group
 
 const (
 	// validatorCardLatencyTTL caches the chain-wide precommit-lag query, a
@@ -69,15 +74,22 @@ func chainPrecommitLatency(db *gorm.DB, chainID string) (map[string]database.Pre
 			return byAddr, nil
 		}
 	}
-	rows, err := database.GetPrecommitLatencyMultiWindow(db, chainID)
+	v, err, _ := validatorCardLoads.Do(cacheKey, func() (any, error) {
+		rows, err := database.GetPrecommitLatencyMultiWindow(db, chainID)
+		if err != nil {
+			return nil, err
+		}
+		byAddr := make(map[string]database.PrecommitLatencyMultiWindow, len(rows))
+		for _, r := range rows {
+			byAddr[r.Addr] = r
+		}
+		setCached(cacheKey, byAddr, validatorCardLatencyTTL)
+		return byAddr, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	byAddr := make(map[string]database.PrecommitLatencyMultiWindow, len(rows))
-	for _, r := range rows {
-		byAddr[r.Addr] = r
-	}
-	setCached(cacheKey, byAddr, validatorCardLatencyTTL)
+	byAddr, _ := v.(map[string]database.PrecommitLatencyMultiWindow)
 	return byAddr, nil
 }
 
@@ -98,19 +110,26 @@ func chainValidatorCardReport(db *gorm.DB, chainID string) (validatorCardReport,
 			return report, nil
 		}
 	}
-	ctx, err := database.LoadValidatorReportContext(db, chainID)
+	v, err, _ := validatorCardLoads.Do(cacheKey, func() (any, error) {
+		ctx, err := database.LoadValidatorReportContext(db, chainID)
+		if err != nil {
+			return nil, fmt.Errorf("load report context: %w", err)
+		}
+		entries, err := database.BuildChainValidatorReport(db, ctx, chainID, "last_24h", "")
+		if err != nil {
+			return nil, fmt.Errorf("build validator report: %w", err)
+		}
+		report := validatorCardReport{entries: entries}
+		report.lastAlerts, report.alertsErr = database.GetLastAlertTimes(db, chainID)
+		if report.alertsErr == nil {
+			setCached(cacheKey, report, validatorCardReportTTL)
+		}
+		return report, nil
+	})
 	if err != nil {
-		return validatorCardReport{}, fmt.Errorf("load report context: %w", err)
+		return validatorCardReport{}, err
 	}
-	entries, err := database.BuildChainValidatorReport(db, ctx, chainID, "last_24h", "")
-	if err != nil {
-		return validatorCardReport{}, fmt.Errorf("build validator report: %w", err)
-	}
-	report := validatorCardReport{entries: entries}
-	report.lastAlerts, report.alertsErr = database.GetLastAlertTimes(db, chainID)
-	if report.alertsErr == nil {
-		setCached(cacheKey, report, validatorCardReportTTL)
-	}
+	report, _ := v.(validatorCardReport)
 	return report, nil
 }
 

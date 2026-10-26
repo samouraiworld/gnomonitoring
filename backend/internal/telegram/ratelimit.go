@@ -64,12 +64,16 @@ type sendPacer struct {
 	maxWait  time.Duration
 	nextBot  map[string]time.Time
 	nextChat map[chatKey]time.Time
+	// cooldown is the end of each bot's last 429 wait. Calls already
+	// holding an earlier slot check it again right before sending.
+	cooldown map[string]time.Time
 }
 
 func newSendPacer(global, private, group, maxWait time.Duration) *sendPacer {
 	return &sendPacer{
 		global: global, private: private, group: group, maxWait: maxWait,
 		nextBot: map[string]time.Time{}, nextChat: map[chatKey]time.Time{},
+		cooldown: map[string]time.Time{},
 	}
 }
 
@@ -121,7 +125,21 @@ func (p *sendPacer) backoff(token string, until time.Time) {
 	if p.nextBot[token].Before(until) {
 		p.nextBot[token] = until
 	}
+	if p.cooldown[token].Before(until) {
+		p.cooldown[token] = until
+	}
 }
+
+// cooldownUntil returns the end of token's current 429 cooldown (zero or
+// past when there is none).
+func (p *sendPacer) cooldownUntil(token string) time.Time {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cooldown[token]
+}
+
+// telegramNow is the send path's clock; tests advance it with telegramSleep.
+var telegramNow = time.Now
 
 // telegramSleep waits for d or until ctx is done. Tests replace it to record
 // the waits instead of sleeping.

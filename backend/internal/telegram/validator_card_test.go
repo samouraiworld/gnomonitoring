@@ -33,9 +33,22 @@ func TestMatchValidators(t *testing.T) {
 	assert.Empty(t, matchValidators(entries, "nobody"))
 }
 
+// forgetCardCache drops chainID's cached /validator data when the test ends,
+// so a rerun in the same process (-count=N) reads its own fresh schema.
+func forgetCardCache(t *testing.T, chainID string) {
+	t.Helper()
+	t.Cleanup(func() {
+		metricsCacheMu.Lock()
+		defer metricsCacheMu.Unlock()
+		delete(metricsCache, "validator_card_report:"+chainID)
+		delete(metricsCache, "validator_card_latency:"+chainID)
+	})
+}
+
 // seedCardChain writes a short last-24h history for addr on chainID.
 func seedCardChain(t *testing.T, db *gorm.DB, chainID, addr, moniker string, vp int64, lagMs int64) {
 	t.Helper()
+	forgetCardCache(t, chainID)
 	now := time.Now().UTC()
 	for i := 0; i < 10; i++ {
 		lag := lagMs + int64(i)
@@ -80,6 +93,7 @@ func TestFormatValidatorCard_OneMatchShowsCard(t *testing.T) {
 func TestFormatValidatorCard_NoAlertNoLatency(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	chainID := "card-quiet"
+	forgetCardCache(t, chainID)
 	require.NoError(t, db.Create(&database.DailyParticipation{
 		ChainID: chainID, Addr: "g1quiet", Moniker: "quiet",
 		BlockHeight: 1, Date: time.Now().UTC(), Participated: true,

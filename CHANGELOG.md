@@ -237,16 +237,17 @@ Entries are ordered newest-first within each section.
 ### Fixed
 
 - **Telegram sends respect the Bot API limits** — every send goes through one
-  path that handles Telegram's answers. On 429 every message of that bot
-  waits `retry_after` (at most 30 s), and the call is retried, three attempts
-  in all. On 403 (bot blocked by the user, or removed from the group) the
+  path that handles Telegram's answers. On 429 every message of that bot,
+  including those already queued, waits `retry_after`, and the call is
+  retried (`retry_after` up to 30 s, three attempts in all). On 403 (bot blocked by the user, or removed from the group) the
   chat is skipped in memory for that bot, logged once, until it writes to the
   bot again, re-adds or unblocks it, or the process restarts; nothing is
   changed in the database. `sendMessage` calls are paced per bot to about 30
   per second overall, one per second per private chat and one every 3
   seconds per group, so alert, GovDAO and daily-report broadcasts no longer
   trip the flood limits; a send that would queue more than a minute fails at
-  once instead of piling up. Replies to search input and callback
+  once instead of piling up. `/validator` coalesces concurrent cache misses,
+  so a burst of commands runs each chain-wide query once. Replies to search input and callback
   acknowledgements no longer run inline in the update loop, so a wait cannot
   stall it. `getUpdates` now always names the update types it reads,
   including `my_chat_member`. Transport errors no longer carry the request
