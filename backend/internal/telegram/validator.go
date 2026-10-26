@@ -1572,10 +1572,10 @@ func matchesFilter(filter, moniker, addr string) bool {
 	return strings.Contains(strings.ToLower(moniker), f) || strings.Contains(strings.ToLower(addr), f)
 }
 
+// The filter* helpers below always return a new slice, even for an empty
+// filter: their input is the slice shared through metricsCache, and the
+// formatters sort the result in place.
 func filterParticipationRates(in []database.ParticipationRate, filter string) []database.ParticipationRate {
-	if filter == "" {
-		return in
-	}
 	out := make([]database.ParticipationRate, 0, len(in))
 	for _, r := range in {
 		if matchesFilter(filter, r.Moniker, r.Addr) {
@@ -1586,9 +1586,6 @@ func filterParticipationRates(in []database.ParticipationRate, filter string) []
 }
 
 func filterUptimeMetrics(in []database.UptimeMetrics, filter string) []database.UptimeMetrics {
-	if filter == "" {
-		return in
-	}
 	out := make([]database.UptimeMetrics, 0, len(in))
 	for _, r := range in {
 		if matchesFilter(filter, r.Moniker, r.Addr) {
@@ -1599,9 +1596,6 @@ func filterUptimeMetrics(in []database.UptimeMetrics, filter string) []database.
 }
 
 func filterOperationTimeMetrics(in []database.OperationTimeMetrics, filter string) []database.OperationTimeMetrics {
-	if filter == "" {
-		return in
-	}
 	out := make([]database.OperationTimeMetrics, 0, len(in))
 	for _, r := range in {
 		if matchesFilter(filter, r.Moniker, r.Addr) {
@@ -1612,9 +1606,6 @@ func filterOperationTimeMetrics(in []database.OperationTimeMetrics, filter strin
 }
 
 func filterTxContrib(in []database.TxContribMetrics, filter string) []database.TxContribMetrics {
-	if filter == "" {
-		return in
-	}
 	out := make([]database.TxContribMetrics, 0, len(in))
 	for _, r := range in {
 		if matchesFilter(filter, r.Moniker, r.Addr) {
@@ -1625,9 +1616,6 @@ func filterTxContrib(in []database.TxContribMetrics, filter string) []database.T
 }
 
 func filterMissing(in []database.MissingBlockMetrics, filter string) []database.MissingBlockMetrics {
-	if filter == "" {
-		return in
-	}
 	out := make([]database.MissingBlockMetrics, 0, len(in))
 	for _, r := range in {
 		if matchesFilter(filter, r.Moniker, r.Addr) {
