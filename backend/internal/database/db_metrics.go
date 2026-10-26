@@ -297,8 +297,13 @@ func GetCurrentPeriodParticipationRate(db *gorm.DB, chainID, period string, aggr
 // the value, by less than a day. Day bounds follow the session TimeZone, like
 // the date::date bucketing that built the agrega rows.
 //
+// Validators not seen within a day of the chain's latest recorded block have
+// left the valset and are dropped. A validator that is down keeps writing
+// missed rows, so it stays listed with 0.
+//
 // LastDownDate is last_down ("" when the validator never missed a block) and
-// LastUpDate is last_seen.
+// LastUpDate is last_seen, both RFC 3339 in UTC. For an aggregated day they
+// are the end bound of that day, the value the computation used.
 //
 // aggregatedThrough is the chain's aggregation watermark — see
 // GetCurrentPeriodParticipationRate's doc comment.
@@ -339,10 +344,11 @@ func OperationTimeMetricsaddr(db *gorm.DB, chainID string, aggregatedThrough tim
 		SELECT
 			` + MonikerSQL("pa.chain_id", "pa.addr", MonikerFallbackAddr) + ` AS moniker,
 			pa.addr,
-			COALESCE(pa.last_down::text, '') AS last_down_date,
-			pa.last_seen::text AS last_up_date,
+			COALESCE(to_char(pa.last_down AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), '') AS last_down_date,
+			to_char(pa.last_seen AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS last_up_date,
 			ROUND(GREATEST(EXTRACT(EPOCH FROM (pa.last_seen - COALESCE(pa.last_down, pa.first_seen))), 0) / 86400.0, 1) AS days_diff
-		FROM per_addr pa`
+		FROM per_addr pa
+		WHERE pa.last_seen >= (SELECT MAX(last_seen) FROM per_addr) - interval '1 day'`
 
 	if err := db.Raw(query, chainID, chainID, fallbackStart).Scan(&results).Error; err != nil {
 		return nil, fmt.Errorf("error in the request Uptime: %s", err)

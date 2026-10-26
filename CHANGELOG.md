@@ -243,10 +243,13 @@ Entries are ordered newest-first within each section.
   is down, where it used to go negative (last signed day minus last missed
   day, for example `-8` after eight days down). A validator that never
   missed a block now gets a value, measured from its first recorded block,
-  instead of no series at all; its `lastDownDate` is empty. Today's blocks
-  use exact block timestamps instead of whole days; aggregated past days
-  still use day bounds. `lastUpDate` is now the latest recorded block, not
-  the latest day with a signed block, and both dates carry a time (#159).
+  instead of no series at all; its `lastDownDate` is empty. Days not
+  aggregated yet use exact block timestamps instead of whole days;
+  aggregated days still use day bounds. Validators not seen within a day of
+  the chain's latest block have left the valset and are no longer listed.
+  `lastUpDate` is now the latest recorded block, not the latest day with a
+  signed block, and both dates are RFC 3339 in UTC with a time. Telegram
+  shows the value with one decimal, as computed (#159).
 
 - **Telegram sends respect the Bot API limits** — every send goes through one
   path that handles Telegram's answers. On 429 every message of that bot,

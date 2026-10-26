@@ -602,9 +602,12 @@ block: the time from its latest missed block (`lastDownDate`) to its latest
 recorded block (`lastUpDate`), in days with one decimal. It is `0` while the
 validator is down (its latest block is a miss) and never negative. A validator
 that never missed a block is measured from its first recorded block, with an
-empty `lastDownDate`. Today's blocks use exact block timestamps; aggregated
-days only keep counts, so a past day with a missed block counts as down until
-its end, which can understate the value by less than a day.
+empty `lastDownDate`. Days not aggregated yet use exact block timestamps;
+aggregated days only keep counts, so a past day with a missed block counts as
+down until its end (the dates then show that day's end bound), which can
+understate the value by less than a day. Validators not seen within a day of
+the chain's latest block have left the valset and are not listed. Dates are
+RFC 3339 in UTC.
 
 ```bash
 curl -X GET ‘localhost:8989/operation_time’
@@ -615,8 +618,8 @@ Response:
 ```json
 [{"moniker":"gnocore-val-01",
 "addr":"g1ek7ftha29qv4ahtv7jzpc0d57lqy7ynzklht7t",
-"lastDownDate":"2025-10-14 08:00:00+00:00",
-"lastUpDate":"2025-10-18 16:29:24.242186417+00:00","operationTime":4.4}....
+"lastDownDate":"2025-10-14T08:00:00Z",
+"lastUpDate":"2025-10-18T16:29:24Z","operationTime":4.4}....
 ```
 
 ##### First Seen Metrics
