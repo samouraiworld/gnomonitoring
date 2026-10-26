@@ -390,6 +390,33 @@ func TestSendMessage_CooldownReachesCallsAlreadyWaiting(t *testing.T) {
 	assert.Len(t, calls(), 2)
 }
 
+func TestEditMessage_CooldownExtendedWhileWaitingIsWaitedToo(t *testing.T) {
+	var once sync.Once
+	waits := recordSleeps(t, func() {
+		once.Do(func() { telegramPacer.backoff("tok", telegramNow().Add(2*time.Second)) })
+	})
+	freshPacer(t)
+	scriptedTelegram(t, func(int, int64) (int, string) { return http.StatusOK, okAnswer })
+	telegramPacer.backoff("tok", telegramNow().Add(3*time.Second))
+
+	require.NoError(t, EditMessageTelegramWithMarkup("tok", 5, 1, "x", nil))
+	assert.Equal(t, []time.Duration{3 * time.Second, 2 * time.Second}, waits())
+}
+
+func TestSendMessage_CallsReleasedByCooldownStaySpaced(t *testing.T) {
+	waits := recordSleeps(t)
+	usePacer(t, newSendPacer(time.Second, 0, 0, time.Minute))
+	calls := scriptedTelegram(t, func(int, int64) (int, string) { return http.StatusOK, okAnswer })
+	telegramPacer.backoff("tok", telegramNow().Add(5*time.Second))
+
+	require.NoError(t, SendMessageTelegram("tok", 1, "a"))
+	require.NoError(t, SendMessageTelegram("tok", 2, "b"))
+
+	assert.Equal(t, []time.Duration{5 * time.Second, time.Second}, waits())
+	got := calls()
+	require.Len(t, got, 2)
+}
+
 func TestSendMessage_BlockWhileWaitingStopsTheSend(t *testing.T) {
 	resetBlockedChats(t)
 	recordSleeps(t, func() { markChatBlocked("tok", 8, "test") })

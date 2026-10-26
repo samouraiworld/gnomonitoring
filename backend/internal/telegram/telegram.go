@@ -206,31 +206,8 @@ func callTelegram(ctx context.Context, botToken, method string, chatID int64, pa
 	apiURL := fmt.Sprintf("%s/bot%s/%s", telegramAPIBaseURL, botToken, method)
 
 	for attempt := 1; ; attempt++ {
-		if paced {
-			now := telegramNow()
-			at, ok := telegramPacer.reserve(now, botToken, chatID)
-			if !ok {
-				return fmt.Errorf("%w: %s chat_id=%d: send queue full, next slot in %s",
-					ErrRateLimited, method, chatID, at.Sub(now).Round(time.Second))
-			}
-			if err := telegramSleep(ctx, at.Sub(now)); err != nil {
-				return err
-			}
-		}
-		// Re-check right before sending: while this call waited, another
-		// may have hit a 429 (bot cooldown) or a 403 (chat blocked).
-		if until := telegramPacer.cooldownUntil(botToken); until.After(telegramNow()) {
-			wait := until.Sub(telegramNow())
-			if wait > telegramMaxQueueWait {
-				return fmt.Errorf("%w: %s chat_id=%d: bot cooling down for %s",
-					ErrRateLimited, method, chatID, wait.Round(time.Second))
-			}
-			if err := telegramSleep(ctx, wait); err != nil {
-				return err
-			}
-		}
-		if chatID != 0 && isChatBlocked(botToken, chatID) {
-			return fmt.Errorf("%w: chat_id=%d", ErrChatBlocked, chatID)
+		if err := waitSendTurn(ctx, botToken, method, chatID, paced); err != nil {
+			return err
 		}
 
 		status, res, err := postTelegram(ctx, apiURL, jsonBody)
@@ -262,6 +239,49 @@ func callTelegram(ctx context.Context, botToken, method string, chatID int64, pa
 			return fmt.Errorf("telegram http %d: %s", status, res.Description)
 		}
 	}
+}
+
+// waitSendTurn waits until the call may be sent: its paced slot when paced,
+// then the end of the bot's 429 cooldown, re-checked after every wait since
+// another call may extend it meanwhile. A paced call released by a cooldown
+// books a fresh slot, so calls queued behind the same cooldown stay spaced
+// instead of all sending at its end. Fails with ErrRateLimited when a wait
+// would exceed telegramMaxQueueWait, and with ErrChatBlocked when the chat
+// was found blocked while waiting.
+func waitSendTurn(ctx context.Context, botToken, method string, chatID int64, paced bool) error {
+	for {
+		now := telegramNow()
+		if paced {
+			at, ok := telegramPacer.reserve(now, botToken, chatID)
+			if !ok {
+				return fmt.Errorf("%w: %s chat_id=%d: send queue full, next slot in %s",
+					ErrRateLimited, method, chatID, at.Sub(now).Round(time.Second))
+			}
+			if err := telegramSleep(ctx, at.Sub(now)); err != nil {
+				return err
+			}
+			now = telegramNow()
+		}
+		until := telegramPacer.cooldownUntil(botToken)
+		if !until.After(now) {
+			break
+		}
+		wait := until.Sub(now)
+		if wait > telegramMaxQueueWait {
+			return fmt.Errorf("%w: %s chat_id=%d: bot cooling down for %s",
+				ErrRateLimited, method, chatID, wait.Round(time.Second))
+		}
+		if !paced {
+			if err := telegramSleep(ctx, wait); err != nil {
+				return err
+			}
+		}
+		// A paced call's next reservation starts after the cooldown.
+	}
+	if chatID != 0 && isChatBlocked(botToken, chatID) {
+		return fmt.Errorf("%w: chat_id=%d", ErrChatBlocked, chatID)
+	}
+	return nil
 }
 
 // postTelegram sends one request. A transport error is returned without its
