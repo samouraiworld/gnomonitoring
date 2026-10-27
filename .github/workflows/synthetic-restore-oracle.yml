@@ -1,0 +1,51 @@
+name: Synthetic restore source oracle
+
+on:
+  pull_request:
+    paths:
+      - 'rehearsal/restore/**'
+      - 'rehearsal/run-synthetic.py'
+      - 'rehearsal/render_volume_template.go'
+      - 'rehearsal/Dockerfile.initdb'
+      - 'backend/**'
+      - '.github/workflows/synthetic-restore-oracle.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'rehearsal/restore/**'
+      - 'rehearsal/run-synthetic.py'
+      - 'rehearsal/render_volume_template.go'
+      - 'rehearsal/Dockerfile.initdb'
+      - 'backend/**'
+      - '.github/workflows/synthetic-restore-oracle.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic:
+    name: Compare invented source and restored payloads
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: backend/go.sum
+      - name: Test restore boundaries before integration
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s rehearsal/restore -p 'test_runner_boundary.py' -v
+      - name: Test controlled session core boundaries
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s rehearsal/restore -p 'test_session_boundary.py' -v
+      - name: Test canonical snapshot and receipt boundaries
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s rehearsal/restore -p 'test_synthetic_snapshot.py' -v
+      - name: Test new boundaries without Docker execution
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s rehearsal/restore -p 'test_synthetic_oracle.py' -v
+      - name: Exercise synthetic clone checks and verify cleanup
+        env:
+          RUN_SYNTHETIC_RESTORE_ORACLE_TESTS: '1'
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s rehearsal/restore -p 'test_synthetic_oracle.py' -v
+      # Dumps, SQL, manifests and private command logs are never uploaded.
