@@ -85,6 +85,7 @@ class InventoryTests(unittest.TestCase):
         self.assertIn('PGHOSTADDR', args)
         self.assertIn('PGSERVICE', args)
         self.assertIn('PGPASSWORD', args)
+        self.assertIn('PGPASSFILE=/dev/null', args)
         self.assertIn('BEGIN READ ONLY;', kwargs['input_text'])
         self.assertIn("statement_timeout = '8s'", kwargs['input_text'])
         self.assertIn("lock_timeout = '1s'", kwargs['input_text'])
@@ -170,7 +171,7 @@ class InventoryTests(unittest.TestCase):
 
     def test_workflow_only_retains_ciphertext_on_fixed_manual_ref(self):
         workflow = (HERE.parent / 'workflows/main.yml').read_text()
-        self.assertIn("github.ref == 'refs/heads/chore/preflight-readonly-metadata-20261027'", workflow)
+        self.assertIn("github.ref == 'refs/heads/chore/preflight-readonly-metadata-v2-20261027'", workflow)
         self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
         self.assertIn('> "$inventory_file" 2> "$error_file"', workflow)
         self.assertIn('openssl cms -encrypt -aes-256-gcm', workflow)

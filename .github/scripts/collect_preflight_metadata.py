@@ -129,7 +129,7 @@ def database_metadata(container_id, invoke):
     args = DOCKER + ['exec', '-i', '--user', 'postgres', container_id, 'env',
             '-u', 'PGHOSTADDR', '-u', 'PGSERVICE', '-u', 'PGSERVICEFILE', '-u', 'PGOPTIONS',
             '-u', 'PGPASSWORD', '-u', 'PGPASSFILE', 'PGAPPNAME=gnomonitoring_readonly_preflight',
-            'PGCONNECT_TIMEOUT=5', 'psql', '-X', '-q', '-t', '-A', '-w',
+            'PGCONNECT_TIMEOUT=5', 'PGPASSFILE=/dev/null', 'psql', '-X', '-q', '-t', '-A', '-w',
             '-h', '/var/run/postgresql', '-p', '5432', '-U', user, '-d', database, '-v', 'ON_ERROR_STOP=1']
     result = json.loads(invoke(args, input_text=SQL, timeout=12))
     if (not isinstance(result, dict) or not isinstance(result.get('database_size_bytes'), int)
