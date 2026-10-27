@@ -1,25 +1,133 @@
-name: Deploy to prod
+name: "DO NOT MERGE - read-only production inspection"
+run-name: "Read-only production inspection (${{ github.sha }})"
 
 on:
   workflow_dispatch:
 
-jobs:
-  deploy:
-    name: Deploy to prod
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+concurrency:
+  group: gnomonitoring-readonly-production-inspection
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: Inspect documented project metadata without deployment
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'samouraiworld/gnomonitoring' &&
+      github.ref == 'refs/heads/chore/monitoring-readonly-inspection-20261027'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          script: |
-            # gnomonitoringv2 is the live Postgres-era project; ~/gnomonitoring is the
-            # retired SQLite-era dir (renamed *-legacy-sqlite on the box) — deploying
-            # there crashloops the backend with an empty database DSN (2026-07-10).
-            cd gnomonitoringv2
-            docker compose pull
-            docker compose up -d
+      - name: Read project Git and Docker provenance over pinned SSH
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SSH_HOST:-}" || -z "${SSH_USER:-}" || -z "${SSH_PRIVATE_KEY:-}" ]]; then
+            echo 'Required SSH connection secrets are unavailable.' >&2
+            exit 1
+          fi
+          if [[ ! "$SSH_HOST" =~ ^[A-Za-z0-9._:-]+$ || ! "$SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo 'Unexpected SSH connection metadata format.' >&2
+            exit 1
+          fi
+          umask 077
+          inspection_dir=$(mktemp -d "${RUNNER_TEMP}/gnomonitoring-inspection.XXXXXXXX")
+          key_file=$inspection_dir/identity
+          known_hosts_file=$inspection_dir/known_hosts
+          cleanup() {
+            rm -f -- "$key_file" "$known_hosts_file"
+            rmdir -- "$inspection_dir"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          cat > "$known_hosts_file" <<'TRUSTED_HOST_KEYS'
+          gnomonitoring-prod-inspection ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIbkopwdGXdS6c4xUy7kG9uRWF+w1I/mczSeLmMLN82Q
+          gnomonitoring-prod-inspection ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDmGElc3AS+OdQ70v0hkzJTlabxPOs6shsINMwWJsOm4+O8YHs3fmk9O3en9e2Z0fk50z43c4GZjUSEhovWC4N7elnvKA2yYHDaQjV/xLGR/2QHXCFkNoXRFu70dc8K8BW+GQOuAWYfXd5YDPaRZzxWbT2I+QV9cV659s9wBei6puX/Py0+rc65Yy6RUzDhjQsKJ1x/vlxPrhiu4d0q76nIlAxin+hhK9O/OkAcPTAZecMKFKCFqS6l6UnMwlfwkIqpSeTYdvuRhx658JiobyEuvoV/7XjT6aw3uhJ6mFa6Ce0W+VBu7KTbVRDk4cgYIsllucT8zcBpH2eN6rdFio0NTuBceLfifpj3VFv0WufYZbXRM47BUSmtgWNjHHlMWxwU42BDJ7hREt9onF+QDiPZQqt/XLAtE66NHhbrGmYAHycNG3INIqm9utYazda8I2S6aH5kv3jHm2cvfF4kJJRJBjBGvLnbTQXEQ42WrhRaBKT2Eq3x9h01gO4B8IDIaLs=
+          gnomonitoring-prod-inspection ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBOihyr3TeI90KAIG202gdARL25tM9T+6fFKLoKtB044ST7Rhb5POmhWJgrQKr6sYYOnwLluwY5pTZ7c0xebf0d0=
+          TRUSTED_HOST_KEYS
+          inspection_host=$SSH_HOST
+          inspection_user=$SSH_USER
+          unset SSH_HOST SSH_USER SSH_PRIVATE_KEY
+
+          timeout 60s ssh -F /dev/null -T \
+            -i "$key_file" -l "$inspection_user" -p 22 \
+            -o "UserKnownHostsFile=$known_hosts_file" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o HostKeyAlias=gnomonitoring-prod-inspection \
+            -o StrictHostKeyChecking=yes -o UpdateHostKeys=no \
+            -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes \
+            -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+            -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+            -o ClearAllForwardings=yes -o PermitLocalCommand=no -o LogLevel=ERROR \
+            -- "$inspection_host" 'bash --noprofile --norc -s' <<'REMOTE_INSPECTION'
+          set -euo pipefail
+          project_dir=$(cd "$HOME/gnomonitoringv2" && pwd -P)
+          command -v docker >/dev/null
+          printf 'format_version=1\nobserved_at=%s\nproject_directory=%s\n' \
+            "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$project_dir"
+          for basename in compose.yaml compose.yml docker-compose.yaml docker-compose.yml docker-compose-prod.yml; do
+            if [[ -f "$project_dir/$basename" ]]; then
+              printf 'present_compose_basename=%s\n' "$basename"
+            fi
+          done
+          checkout_root=''
+          if command -v git >/dev/null; then
+            checkout_root=$(git -C "$project_dir" rev-parse --show-toplevel 2>/dev/null || true)
+          fi
+          if [[ "$checkout_root" == "$project_dir" ]]; then
+            printf 'checkout_revision=%s\n' "$(git -C "$project_dir" rev-parse --verify HEAD)"
+            if [[ -n "$(GIT_OPTIONAL_LOCKS=0 git -c core.fsmonitor=false -c core.untrackedCache=false -C "$project_dir" status --porcelain --untracked-files=no)" ]]; then
+              echo 'checkout_tracked_changes=true'
+            else
+              echo 'checkout_tracked_changes=false'
+            fi
+          else
+            echo 'checkout_revision=unavailable'
+          fi
+
+          # Select only containers whose Compose working-directory label is this project.
+          # No fallback to an unscoped Docker listing or the retired project is permitted.
+          container_ids=$(docker ps --all --quiet --no-trunc \
+            --filter "label=com.docker.compose.project.working_dir=$project_dir")
+          if [[ -z "$container_ids" ]]; then
+            echo 'No containers matched the documented project directory; inspection stopped.' >&2
+            exit 1
+          fi
+          while IFS= read -r container_id; do
+            if [[ ! "$container_id" =~ ^[0-9a-f]{64}$ ]]; then
+              echo 'Unexpected scoped container identifier; inspection stopped.' >&2
+              exit 1
+            fi
+            docker inspect --type container --format 'container_id={{.Id}}
+          container_name={{.Name}}
+          status={{.State.Status}}
+          started_at={{.State.StartedAt}}
+          health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}}
+          image_id={{.Image}}
+          compose_project={{index .Config.Labels "com.docker.compose.project"}}
+          compose_service={{index .Config.Labels "com.docker.compose.service"}}
+          actual_compose_files={{index .Config.Labels "com.docker.compose.project.config_files"}}
+          actual_working_directory={{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$container_id"
+            image_id=$(docker inspect --type container --format '{{.Image}}' "$container_id")
+            if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo 'Unexpected image identifier; inspection stopped.' >&2
+              exit 1
+            fi
+            docker image inspect --format 'image_id={{.Id}}
+          repo_digests={{json .RepoDigests}}
+          image_revision={{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.revision"}}{{end}}
+          image_source={{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.source"}}{{end}}' "$image_id"
+          done <<< "$container_ids"
+          echo 'A missing image revision is unavailable provenance, not proof of the checkout running.'
+          REMOTE_INSPECTION
