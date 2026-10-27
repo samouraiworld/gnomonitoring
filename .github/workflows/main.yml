@@ -113,7 +113,7 @@ jobs:
           container_name={{.Name}}
           status={{.State.Status}}
           started_at={{.State.StartedAt}}
-          health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}}
+          health={{with index .State "Health"}}{{.Status}}{{else}}not_configured{{end}}
           image_id={{.Image}}
           compose_project={{index .Config.Labels "com.docker.compose.project"}}
           compose_service={{index .Config.Labels "com.docker.compose.service"}}
