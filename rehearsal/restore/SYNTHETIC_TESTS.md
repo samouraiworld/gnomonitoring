@@ -81,3 +81,31 @@ A successful synthetic restore does not prove equivalence to a production
 snapshot, production performance, a full application rehearsal or compatibility
 with a historical rollback image. The report therefore retains
 `source_snapshot_equality_verified:false`.
+
+## Controlled session lifecycle
+
+The targeted suite checks that a restored session is usable only while its context is open. Normal return, callback exceptions, `KeyboardInterrupt` and a real `SIGTERM` caught by the callback must all remove the owned containers, volumes and helper images. Failed callbacks may retain a private progress journal, but may not publish a completed summary. A later attempt must receive a new nonce, project and database rather than reconnect to the previous clone.
+
+```sh
+python3 -B -W error::ResourceWarning -m unittest discover \
+  -s rehearsal/restore -p 'test_controlled_session.py' -v
+RUN_CONTROLLED_CLONE_SESSION_TESTS=1 \
+  python3 -B -W error::ResourceWarning -m unittest discover \
+  -s rehearsal/restore -p 'test_controlled_session.py' -v
+```
+
+## Source snapshot oracle
+
+The oracle is limited to the invented fixture. A frozen source snapshot supplies canonical catalogue metadata and payload fingerprints bound to the archive's hash. Comparison takes place against the live restored clone before InitDB. Source and destination ownership are normalized to their explicitly different fixture/rehearsal owners; that normalization does not erase column, constraint, index, view, sequence or payload differences. Hashes detect differences and do not establish provenance from an untrusted source.
+
+The positive test requires source/target equality. The negative test changes one payload while preserving row and chain counts; comparison must fail, and the owned clone must still be cleaned up. InitDB remains a later phase that can intentionally change data. No comparison before InitDB is presented as proof of equality after migration, full application compatibility, rollback or production recovery performance.
+
+```sh
+python3 -B -W error::ResourceWarning -m unittest discover \
+  -s rehearsal/restore -p 'test_synthetic_oracle.py' -v
+RUN_SYNTHETIC_RESTORE_ORACLE_TESTS=1 \
+  python3 -B -W error::ResourceWarning -m unittest discover \
+  -s rehearsal/restore -p 'test_synthetic_oracle.py' -v
+```
+
+Both workflows run pure boundary tests before their explicit Docker opt-in. Source receipts, archive bytes, SQL and private command logs stay in private local output; no CI upload step exists. These tests accept no production archive, database endpoint, configuration or credentials.
