@@ -93,6 +93,28 @@ build strategy and capture the prior image IDs/digests, compose version and a
 verified DB backup. Review schema compatibility for the forward and return
 paths. Do not roll back an image against an incompatible migrated database.
 
+### Dependency gate before release
+
+On 2026-10-27, GitHub reported 93 open Dependabot alerts across the backend,
+block exporter and panel manifests. In particular, backend pgx 5.6.0 has two
+critical memory-safety alerts, [#46](https://github.com/samouraiworld/gnomonitoring/security/dependabot/46)
+and [#41](https://github.com/samouraiworld/gnomonitoring/security/dependabot/41),
+with 5.9.0 listed as patched. PostgreSQL is the backend's actual database path;
+the affected functions' reachability still needs to be established.
+
+Dependabot identifies vulnerable dependency versions, not which affected
+functions are reachable in a deployed binary. Some alerts repeat across Go
+modules or affect development tooling and server modes absent from the static
+panel. Conversely, manifest alerts do not cover every vulnerability in the
+container's OS or Go toolchain. Match this triage to the observed deployed
+images, remediate applicable critical/high findings, and record the evidence
+before release. A passing Memba dependency audit covers Memba, not Gnomonitoring.
+
+The current image workflow runs Trivy with `exit-code: 0`, and the Go workflows
+do not run `govulncheck`. Their green results therefore do not establish a clean
+dependency or image security assessment. This observation adds a release gate;
+it does not change dependencies or claim that a production exploit was found.
+
 After deployment, repeat provenance inspection and public height/report checks.
 Verify that collection advances on the expected chains and compare the running
 revision with the candidate. Only then smoke-test the validator bot and update
