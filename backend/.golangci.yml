@@ -13,8 +13,11 @@ linters:
       check-type-assertions: true
       check-blank: false
     staticcheck:
+      # v1 enabled staticcheck (SA) and gosimple (S), not the separate
+      # stylecheck (ST) or quickfix (QF) linters now grouped under v2.
       checks:
-        - all
+        - SA*
+        - S*
         - -SA1019
   exclusions:
     # Preserve the v1 default exclusions and existing response-write rules.
