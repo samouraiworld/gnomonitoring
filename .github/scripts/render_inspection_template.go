@@ -17,7 +17,12 @@ func render() error {
 	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
 		return err
 	}
-	parsed, err := template.New("inspect").Option("missingkey=error").Parse(input.Template)
+	parsed, err := template.New("inspect").Funcs(template.FuncMap{
+		"json": func(value any) (string, error) {
+			encoded, err := json.Marshal(value)
+			return string(encoded), err
+		},
+	}).Option("missingkey=error").Parse(input.Template)
 	if err != nil {
 		return err
 	}

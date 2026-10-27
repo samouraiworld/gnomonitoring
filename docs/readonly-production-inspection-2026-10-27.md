@@ -2,7 +2,7 @@
 
 This branch deliberately replaces the existing deploy workflow with an
 inspection-only variant. It is for one reviewed `workflow_dispatch` run on
-`chore/monitoring-readonly-inspection-20261027`, not a change to the default
+`chore/monitoring-readonly-inspection-labels-20261027`, not a change to the default
 branch. Open the PR as a draft, inspect the complete workflow diff and its
 SHA-256 before any dispatch, then close the PR after collecting the result.
 Do not merge it. No SSH connection or workflow run was performed while

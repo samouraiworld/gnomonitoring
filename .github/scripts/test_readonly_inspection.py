@@ -10,7 +10,7 @@ import unittest
 
 
 WORKFLOW = Path(__file__).resolve().parents[1] / "workflows" / "main.yml"
-BRANCH = "chore/monitoring-readonly-inspection-20261027"
+BRANCH = "chore/monitoring-readonly-inspection-labels-20261027"
 YAML = WORKFLOW.read_text()
 CLIENT = textwrap.dedent(YAML.split("        run: |\n", 1)[1])
 REMOTE = CLIENT.split("<<'REMOTE_INSPECTION'\n", 1)[1].rsplit("\nREMOTE_INSPECTION", 1)[0]
@@ -128,6 +128,30 @@ else: raise SystemExit("Unexpected or mutating Docker command")
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("health=" + expected, result.stdout)
+        image_template = docker_calls[3][4]
+        revision, source = "2" * 40, "https://example.invalid/source"
+        # Docker/Postgres images can omit Config.Labels entirely. Missing
+        # provenance is an empty field, not a template error or "<no value>".
+        for config, expected_revision, expected_source in [
+                ({}, "", ""),
+                ({"Config": None}, "", ""),
+                ({"Config": {}}, "", ""),
+                ({"Config": {"Labels": None}}, "", ""),
+                ({"Config": {"Labels": {}}}, "", ""),
+                ({"Config": {"Labels": {"unrelated": "label"}}}, "", ""),
+                ({"Config": {"Labels": {"org.opencontainers.image.revision": "",
+                                          "org.opencontainers.image.source": ""}}}, "", ""),
+                ({"Config": {"Labels": {"org.opencontainers.image.revision": revision,
+                                          "org.opencontainers.image.source": source}}}, revision, source)]:
+            with self.subTest(config=config):
+                data = {"Id": "sha256:" + "b" * 64, "RepoDigests": [], **config}
+                result = subprocess.run([str(renderer)], input=json.dumps({"template": image_template, "data": data}),
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                fields = dict(line.split("=", 1) for line in result.stdout.splitlines())
+                self.assertEqual(fields["image_revision"], expected_revision)
+                self.assertEqual(fields["image_source"], expected_source)
+                self.assertNotIn("<no value>", result.stdout)
 
     def test_no_matching_project_stops_without_inspection_or_broader_scan(self):
         result = self.remote(INSPECTION_TEST_IDS="")

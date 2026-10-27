@@ -17,7 +17,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'samouraiworld/gnomonitoring' &&
-      github.ref == 'refs/heads/chore/monitoring-readonly-inspection-20261027'
+      github.ref == 'refs/heads/chore/monitoring-readonly-inspection-labels-20261027'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -126,8 +126,8 @@ jobs:
             fi
             docker image inspect --format 'image_id={{.Id}}
           repo_digests={{json .RepoDigests}}
-          image_revision={{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.revision"}}{{end}}
-          image_source={{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.source"}}{{end}}' "$image_id"
+          image_revision={{with index . "Config"}}{{with index . "Labels"}}{{with index . "org.opencontainers.image.revision"}}{{.}}{{end}}{{end}}{{end}}
+          image_source={{with index . "Config"}}{{with index . "Labels"}}{{with index . "org.opencontainers.image.source"}}{{.}}{{end}}{{end}}{{end}}' "$image_id"
           done <<< "$container_ids"
           echo 'A missing image revision is unavailable provenance, not proof of the checkout running.'
           REMOTE_INSPECTION
