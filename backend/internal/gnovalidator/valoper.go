@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
@@ -93,7 +93,7 @@ func (e *realmError) Error() string { return e.msg }
 // qevalRender evaluates `gno.land/r/gnops/valopers.Render(arg)` over the RPC
 // client and returns the raw rendered output. arg is quoted as a Go string
 // literal, matching what the realm's Render entrypoint expects.
-func qevalRender(client gnoclient.Client, arg string) (string, error) {
+func qevalRender(client chainquery.Client, arg string) (string, error) {
 	cmd := fmt.Sprintf("gno.land/r/gnops/valopers.Render(%q)", arg)
 	resp, err := client.RPCClient.ABCIQuery("vm/qeval", []byte(cmd))
 	if err != nil {
@@ -253,7 +253,7 @@ func enrichValoperProfiles(ctx context.Context, fetch profileFetcher, valopers [
 // GetValopers lists every registered valoper, then fetches each profile for
 // its signing address and server type. prev is the last known-good snapshot;
 // it supplies the values of any profile that cannot be fetched this cycle.
-func GetValopers(client gnoclient.Client, prev []Valoper) ([]Valoper, error) {
+func GetValopers(client chainquery.Client, prev []Valoper) ([]Valoper, error) {
 	var allValopers []Valoper
 	page := 1
 
@@ -499,7 +499,7 @@ func resolveMoniker(addr string, dbMap, valoperMap, genesisMap, discoveredMap ma
 	return "unknown"
 }
 
-func InitMonikerMap(db *gorm.DB, chainID string, client gnoclient.Client, chainCfg *internal.ChainConfig) []Valoper {
+func InitMonikerMap(db *gorm.DB, chainID string, client chainquery.Client, chainCfg *internal.ChainConfig) []Valoper {
 	type Validator struct {
 		Address     string `json:"address"`
 		VotingPower string `json:"voting_power"`

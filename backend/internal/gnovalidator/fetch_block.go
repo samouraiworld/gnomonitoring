@@ -3,7 +3,7 @@ package gnovalidator
 import (
 	"time"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 )
 
 const (
@@ -30,7 +30,7 @@ type fetchedBlock struct {
 // to fetchBlockMaxAttempts times with a short backoff. ok is false only once
 // every attempt has failed; callers are responsible for logging that and
 // treating h as still unrecorded.
-func fetchBlockParticipation(client gnoclient.Client, h int64) (fetchedBlock, bool) {
+func fetchBlockParticipation(client chainquery.Client, h int64) (fetchedBlock, bool) {
 	for attempt := 1; attempt <= fetchBlockMaxAttempts; attempt++ {
 		block, err := client.Block(h)
 		if err == nil && block != nil && block.Block != nil && block.Block.LastCommit != nil {

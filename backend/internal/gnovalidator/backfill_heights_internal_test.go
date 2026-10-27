@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
 	"github.com/gnolang/gno/tm2/pkg/bft/types"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 )
@@ -52,7 +52,7 @@ func TestBackfillHeights_WritesOnlyRequestedNonContiguousHeights(t *testing.T) {
 			return nil, nil
 		}
 	}}
-	client := gnoclient.Client{RPCClient: fake}
+	client := chainquery.Client{RPCClient: fake}
 
 	monikerMap := map[string]string{addrStr: "validator-a"}
 	if err := BackfillHeights(db, client, chainID, []int64{201, 203}, monikerMap); err != nil {
