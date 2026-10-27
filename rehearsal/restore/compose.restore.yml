@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: ${REHEARSAL_PROJECT:?}-postgres:local-only
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    network_mode: none
+    user: '999:999'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 2
+    shm_size: 128m
+    environment:
+      POSTGRES_USER: rehearsal_admin
+      POSTGRES_PASSWORD: ${RESTORE_ADMIN_PASSWORD:?}
+      POSTGRES_DB: postgres
+      REHEARSAL_CLONE_ID: ${REHEARSAL_CLONE_ID:?}
+    command:
+      - postgres
+      - -c
+      - listen_addresses=
+      - -c
+      - unix_socket_directories=/run/rehearsal-postgres,/var/run/postgresql
+      - -c
+      - max_connections=30
+      - -c
+      - temp_file_limit=1GB
+      - -c
+      - max_wal_size=1GB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - socket:/run/rehearsal-postgres
+      - private_logs:/run/rehearsal-private
+    healthcheck:
+      test: [CMD-SHELL, 'test -f /run/rehearsal-postgres/empty-bootstrap.ready && test "$$(head -n 1 "$$PGDATA/postmaster.pid")" = 1 && pg_isready -h /run/rehearsal-postgres -U rehearsal_admin -d postgres']
+      interval: 2s
+      timeout: 2s
+      retries: 45
+  initdb:
+    image: ${REHEARSAL_PROJECT:?}-initdb:local-only
+    build:
+      context: ../../backend
+      dockerfile: ../rehearsal/Dockerfile.initdb
+    network_mode: none
+    user: '999:999'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 2
+    volumes:
+      - socket:/run/rehearsal-postgres:ro
+      - private_logs:/run/rehearsal-private
+    command:
+      - --clone-dsn-file=/run/rehearsal-postgres/clone.dsn
+      - --clone-id=${REHEARSAL_CLONE_ID:?}
+      - --allow-initdb-on-isolated-clone
+volumes:
+  pgdata:
+    name: ${REHEARSAL_PROJECT:?}-pgdata
+  socket:
+    name: ${REHEARSAL_PROJECT:?}-socket
+  private_logs:
+    name: ${REHEARSAL_PROJECT:?}-private-logs
