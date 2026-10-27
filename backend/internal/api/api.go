@@ -1613,6 +1613,8 @@ func StartWebhookAPI(db *gorm.DB) {
 
 	})
 
+	public("/api/reports/consensus", newConsensusReportHandler(db).ServeHTTP)
+
 	public("/api/reports/validators", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
