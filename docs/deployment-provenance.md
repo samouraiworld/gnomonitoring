@@ -25,10 +25,28 @@ The latest `Deploy to prod` Actions execution found was the
 [2026-07-11 run](https://github.com/samouraiworld/gnomonitoring/actions/runs/29146790672).
 This does not exclude later direct server deployments.
 
-The historical workstation record names a server, but no corresponding SSH
-alias/user was established in this verification. No SSH session, Docker
-inspection, DB query, restart or Telegram action was performed. Actual server
-access and container provenance remain the outstanding gate.
+At the initial public check, the historical workstation record named a server,
+but no corresponding SSH alias/user was established. That check performed no
+SSH session, Docker inspection, DB query, restart or Telegram action.
+
+### Follow-up read-only image metadata
+
+A subsequent remote metadata inspection on the same date returned the backend
+image's OCI revision label
+`693df79a96dff2a50b0fe21fa919186cb192cca0`. Repository ancestry confirms that this
+revision includes [#158](https://github.com/samouraiworld/gnomonitoring/pull/158)
+(`/validator`) and is the merge of
+[#161](https://github.com/samouraiworld/gnomonitoring/pull/161) (operation time).
+This is an image metadata/source comparison, not a functional Telegram command
+test. No `/validator` smoke test or BotFather update was performed.
+
+Relative to source `128f5bb`, that revision lacks the three commits in
+[#162](https://github.com/samouraiworld/gnomonitoring/pull/162): `9e48b82` (cached
+slice sorting fix), `723543f` (changelog), and `128f5bb` (merge). The inspection
+then stopped when a Postgres image omitted its optional `Config.Labels` map.
+The script now handles that absence; the complete inventory still needs to be
+repeated. Compare every backend instance, its image ID/digest and declared
+revision before concluding that the full production service runs one version.
 
 ## Read-only inspection on the host
 
@@ -130,4 +148,8 @@ python3 -B -m unittest discover -s scripts -p 'test_inspect_deployment.py' -v
 
 The tests use a fake Docker command to verify explicit compose selection, paths
 with spaces, read-only calls, error propagation and rejection of malformed
-container IDs. They do not certify the production host or a real Docker daemon.
+container IDs. A local Go toolchain also renders the captured container/image
+templates with strict map lookups against absent, null, empty and populated
+label fixtures, and with/without healthchecks. It uses the standard library only;
+no Go module download is needed. The tests do not certify the production host or
+a real Docker daemon.

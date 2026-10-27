@@ -5,12 +5,14 @@ on:
     paths:
       - 'scripts/inspect-deployment.sh'
       - 'scripts/test_inspect_deployment.py'
+      - 'scripts/render_inspection_template.go'
       - '.github/workflows/deployment-inspection.yml'
   push:
     branches: [main]
     paths:
       - 'scripts/inspect-deployment.sh'
       - 'scripts/test_inspect_deployment.py'
+      - 'scripts/render_inspection_template.go'
       - '.github/workflows/deployment-inspection.yml'
 
 permissions:
@@ -21,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: false
       - name: Validate shell
         run: |
           bash -n scripts/inspect-deployment.sh

@@ -63,15 +63,15 @@ image_id={{.Image}}
 status={{.State.Status}}
 started_at={{.State.StartedAt}}
 health={{with index .State "Health"}}{{.Status}}{{else}}not_configured{{end}}
-compose_project={{index .Config.Labels "com.docker.compose.project"}}
-compose_service={{index .Config.Labels "com.docker.compose.service"}}
-actual_compose_files={{index .Config.Labels "com.docker.compose.project.config_files"}}
-actual_working_directory={{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$container"
+compose_project={{with index . "Config"}}{{with index . "Labels"}}{{with index . "com.docker.compose.project"}}{{.}}{{end}}{{end}}{{end}}
+compose_service={{with index . "Config"}}{{with index . "Labels"}}{{with index . "com.docker.compose.service"}}{{.}}{{end}}{{end}}{{end}}
+actual_compose_files={{with index . "Config"}}{{with index . "Labels"}}{{with index . "com.docker.compose.project.config_files"}}{{.}}{{end}}{{end}}{{end}}
+actual_working_directory={{with index . "Config"}}{{with index . "Labels"}}{{with index . "com.docker.compose.project.working_dir"}}{{.}}{{end}}{{end}}{{end}}' "$container"
   image_id=$(docker inspect --format '{{.Image}}' "$container")
   docker image inspect --format 'image_id={{.Id}}
 repo_digests={{json .RepoDigests}}
-image_revision={{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.revision"}}{{end}}
-image_source={{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.source"}}{{end}}' "$image_id"
+image_revision={{with index . "Config"}}{{with index . "Labels"}}{{with index . "org.opencontainers.image.revision"}}{{.}}{{end}}{{end}}{{end}}
+image_source={{with index . "Config"}}{{with index . "Labels"}}{{with index . "org.opencontainers.image.source"}}{{.}}{{end}}{{end}}{{end}}' "$image_id"
 done
 
 echo 'Revision labels and digests identify images; a missing revision is not proof of the checkout running.'

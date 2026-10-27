@@ -67,6 +67,63 @@ else:
         self.assertEqual(self.calls()[0][3], "-f")
         self.assertEqual(self.calls()[0][4], str(path))
 
+    def test_real_templates_handle_optional_health_and_labels_with_strict_lookups(self):
+        result = self.run_script(self.project, "production.yml")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls()
+        container_format, image_format = calls[1][2], calls[3][3]
+        renderer = self.root / "render-inspection-template"
+        build = subprocess.run(
+            ["go", "build", "-o", str(renderer), str(SCRIPT.with_name("render_inspection_template.go"))],
+            capture_output=True, text=True,
+            env={**self.env, "GOMAXPROCS": "1", "GOTOOLCHAIN": "local", "GOWORK": "off",
+                 "GOPROXY": "off", "GOSUMDB": "off"})
+        self.assertEqual(build.returncode, 0, build.stderr)
+        labels = {"org.opencontainers.image.revision": "1" * 40,
+                  "org.opencontainers.image.source": "https://github.com/samouraiworld/gnomonitoring",
+                  "com.docker.compose.project": "gnomonitoring",
+                  "com.docker.compose.service": "backend",
+                  "com.docker.compose.project.config_files": str(self.project / "production.yml"),
+                  "com.docker.compose.project.working_dir": str(self.project)}
+        for label_fields in [{}, {"Labels": None}, {"Labels": {}}, {"Labels": {"unrelated": "value"}},
+                             {"Labels": {"org.opencontainers.image.revision": "1" * 40}}, {"Labels": labels}]:
+            for health_fields in [{}, {"Health": {"Status": "healthy"}}]:
+                with self.subTest(labels=label_fields, health=health_fields):
+                    data = {"Id": CONTAINER, "Name": "/inspection-fixture", "Image": "sha256:" + "b" * 64,
+                            "Config": {"Image": "test-image", **label_fields},
+                            "State": {"Status": "running", "StartedAt": "2026-10-27T00:00:00Z", **health_fields},
+                            "RepoDigests": []}
+                    outputs = []
+                    for fmt in [container_format, image_format]:
+                        rendered = subprocess.run(
+                            [str(renderer)], input=json.dumps({"template": fmt, "data": data}),
+                            capture_output=True, text=True)
+                        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+                        outputs.append(dict(line.split("=", 1) for line in rendered.stdout.splitlines()))
+                    self.assertEqual(outputs[0]["health"], "healthy" if health_fields else "not_configured")
+                    self.assertEqual(outputs[1]["repo_digests"], "[]")
+                    actual_labels = label_fields.get("Labels") or {}
+                    for name, key in [("image_revision", "org.opencontainers.image.revision"),
+                                      ("image_source", "org.opencontainers.image.source")]:
+                        self.assertEqual(outputs[1][name], actual_labels.get(key, ""))
+                    for name, key in [("compose_project", "com.docker.compose.project"),
+                                      ("compose_service", "com.docker.compose.service"),
+                                      ("actual_compose_files", "com.docker.compose.project.config_files"),
+                                      ("actual_working_directory", "com.docker.compose.project.working_dir")]:
+                        self.assertEqual(outputs[0][name], actual_labels.get(key, ""))
+        # Image metadata can also omit Config entirely. Required container
+        # identity/status fields remain strict rather than hiding malformed input.
+        for config_fields in [{}, {"Config": None}]:
+            with self.subTest(image_config=config_fields):
+                rendered = subprocess.run(
+                    [str(renderer)], input=json.dumps({"template": image_format,
+                        "data": {"Id": "sha256:" + "b" * 64, "RepoDigests": [], **config_fields}}),
+                    capture_output=True, text=True)
+                self.assertEqual(rendered.returncode, 0, rendered.stderr)
+                fields = dict(line.split("=", 1) for line in rendered.stdout.splitlines())
+                self.assertEqual(fields["image_revision"], "")
+                self.assertEqual(fields["image_source"], "")
+
     def test_override_files_keep_their_order_and_project_name(self):
         override = self.project / "override with spaces.yml"
         override.write_text("services: {}\n")
