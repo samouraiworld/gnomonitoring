@@ -3,7 +3,7 @@ package govdao
 import (
 	"testing"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/rpcpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,8 +11,8 @@ import (
 
 // Compile-time contract: both accept a pooled client, not an endpoint string.
 var (
-	_ func(int, *gnoclient.Client) (string, error) = ExtractTitle
-	_ func(int, *gnoclient.Client) (string, error) = ExtractProposalRender
+	_ func(int, *chainquery.Client) (string, error) = ExtractTitle
+	_ func(int, *chainquery.Client) (string, error) = ExtractProposalRender
 )
 
 // clientForChain must resolve the pool registered by main.startChainMonitoring

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
@@ -193,7 +193,7 @@ func TestCollectParticipation_AcceptedRegressionThenAdvance_NoFalseStuckAlert(t 
 	client := newStagnationTestClient([]int64{5, 3, 3, 6})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	CollectParticipation(ctx, db, chainID, gnoclient.Client{RPCClient: client})
+	CollectParticipation(ctx, db, chainID, chainquery.Client{RPCClient: client})
 
 	require.Eventually(t, func() bool { return client.callCount() >= 5 }, 20*time.Second, 20*time.Millisecond,
 		"the scripted sequence (4 heights) must be fully consumed, plus one more call into the error branch")
@@ -232,7 +232,7 @@ func TestCollectParticipation_AcceptedRegressionThenHalt_StillAlertsCritical(t *
 	client := newStagnationTestClient([]int64{5, 3, 3, 3})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	CollectParticipation(ctx, db, chainID, gnoclient.Client{RPCClient: client})
+	CollectParticipation(ctx, db, chainID, chainquery.Client{RPCClient: client})
 
 	require.Eventually(t, func() bool { return countCriticalStuckAlerts(t, db, chainID) >= 1 }, 20*time.Second, 20*time.Millisecond,
 		"a node that rewinds and then genuinely halts at the accepted baseline must still raise 'Blockchain stuck', just one window later than an instant-fire would have")

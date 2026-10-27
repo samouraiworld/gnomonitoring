@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,7 +30,7 @@ func TestInitMonikerMap_EmptyValsetKeepsPreviousMap(t *testing.T) {
 	defer srv.Close()
 
 	cfg := &internal.ChainConfig{RPCEndpoints: []string{srv.URL}}
-	got := InitMonikerMap(db, chainID, gnoclient.Client{}, cfg)
+	got := InitMonikerMap(db, chainID, chainquery.Client{}, cfg)
 
 	require.Nil(t, got)
 	assert.Equal(t, map[string]string{"g1aaa": "alice", "g1bbb": "bob"}, GetMonikerMap(chainID),

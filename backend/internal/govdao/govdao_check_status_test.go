@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
@@ -209,11 +209,11 @@ func TestProcessProposalMarksSuccessfullyReadStatusAsSynced(t *testing.T) {
 	t.Cleanup(func() {
 		fetchProposalTitle, fetchProposalStatus, fetchTxByHeight = origTitle, origStatus, origTx
 	})
-	fetchProposalTitle = func(int, *gnoclient.Client) (string, error) { return "Onboard validator4", nil }
-	fetchProposalStatus = func(int, *gnoclient.Client) (string, error) { return StatusInProgress, nil }
+	fetchProposalTitle = func(int, *chainquery.Client) (string, error) { return "Onboard validator4", nil }
+	fetchProposalStatus = func(int, *chainquery.Client) (string, error) { return StatusInProgress, nil }
 	fetchTxByHeight = func(int, []string) (*TxBlock, error) { return nil, fmt.Errorf("no tx") }
 
-	ProcessProposal(proposalCreatedTx(100, "5"), "Fetch", db, "dev", []string{"http://gql"}, &gnoclient.Client{}, "https://gno.land")
+	ProcessProposal(proposalCreatedTx(100, "5"), "Fetch", db, "dev", []string{"http://gql"}, &chainquery.Client{}, "https://gno.land")
 
 	p := loadProposal(t, db, 5, "dev")
 	assert.Equal(t, StatusInProgress, p.Status)
@@ -229,11 +229,11 @@ func TestProcessProposalDoesNotMarkUnknownStatusAsSynced(t *testing.T) {
 	t.Cleanup(func() {
 		fetchProposalTitle, fetchProposalStatus, fetchTxByHeight = origTitle, origStatus, origTx
 	})
-	fetchProposalTitle = func(int, *gnoclient.Client) (string, error) { return "Onboard validator4", nil }
-	fetchProposalStatus = func(int, *gnoclient.Client) (string, error) { return StatusUnknown, nil }
+	fetchProposalTitle = func(int, *chainquery.Client) (string, error) { return "Onboard validator4", nil }
+	fetchProposalStatus = func(int, *chainquery.Client) (string, error) { return StatusUnknown, nil }
 	fetchTxByHeight = func(int, []string) (*TxBlock, error) { return nil, fmt.Errorf("no tx") }
 
-	ProcessProposal(proposalCreatedTx(100, "5"), "Fetch", db, "dev", []string{"http://gql"}, &gnoclient.Client{}, "https://gno.land")
+	ProcessProposal(proposalCreatedTx(100, "5"), "Fetch", db, "dev", []string{"http://gql"}, &chainquery.Client{}, "https://gno.land")
 
 	p := loadProposal(t, db, 5, "dev")
 	assert.Equal(t, StatusUnknown, p.Status)
