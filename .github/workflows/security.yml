@@ -1,0 +1,120 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  merge_group:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: Security policy tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '22.23.4'
+      - run: node --test .github/scripts/security-policy.test.mjs
+
+  go:
+    name: Go vulnerability check (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [backend, block_exporter]
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: Install pinned govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+      - name: Inventory modules and block imported or called vulnerabilities
+        run: bash .github/scripts/security-go.sh '${{ matrix.module }}'
+
+  panel:
+    name: Panel dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: panel/package-lock.json
+      - name: Verify the complete lockfile installs without lifecycle scripts
+        working-directory: panel
+        run: npm ci --ignore-scripts --include=dev --include=optional --include=peer
+      - name: Block high and critical audit findings, including build dependencies
+        run: bash .github/scripts/security-panel.sh
+
+  images:
+    name: Runtime image vulnerability check (${{ matrix.component }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, panel]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build the actual runtime image without publishing
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./${{ matrix.component }}
+          file: ./${{ matrix.component }}/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: gnomonitoring-security-${{ matrix.component }}:${{ github.sha }}
+      - name: Block high and critical OS and library vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        env:
+          TRIVY_IGNOREFILE: /dev/null
+        with:
+          version: v0.76.1
+          image-ref: ${{ steps.image.outputs.imageid }}
+          trivy-config: /dev/null
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: 'false'
+          exit-code: '1'
+          format: table
+          timeout: 10m
+
+  gate:
+    name: Security gate
+    if: ${{ always() }}
+    needs: [policy, go, panel, images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every security job to succeed
+        env:
+          SECURITY_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          node -e 'const jobs = Object.values(JSON.parse(process.env.SECURITY_RESULTS)); if (jobs.length !== 4 || jobs.some(job => job.result !== "success")) { console.error("Security gate blocked: every scanner and policy test must succeed."); process.exit(1); }'
