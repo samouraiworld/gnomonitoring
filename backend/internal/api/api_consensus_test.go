@@ -95,6 +95,43 @@ func TestConsensusContractLatencyAndIsolation(t *testing.T) {
 	assert.Nil(t, empty.BFT.TotalVotingPower)
 }
 
+func TestConsensusPreservesResolvedMonikerWhenSnapshotNameIsMissing(t *testing.T) {
+	consensusTestChains(t)
+	db := testoutils.NewTestDB(t)
+	now := time.Now().UTC()
+	for _, tc := range []struct{ addr, snapshot, historical string }{
+		{"g1empty", "", "named-from-history"},
+		{"g1unknown", "unknown", "another-historical-name"},
+	} {
+		require.NoError(t, db.Create(&database.AddrMoniker{
+			ChainID: "consensus-a", Addr: tc.addr, Moniker: tc.snapshot, VotingPower: 5,
+		}).Error)
+		require.NoError(t, db.Create(&database.DailyParticipation{
+			ChainID: "consensus-a", Addr: tc.addr, Moniker: tc.historical,
+			BlockHeight: 1, Date: now, Participated: true,
+		}).Error)
+	}
+	legacy := httptest.NewRecorder()
+	GetValidatorReportHandler(legacy, httptest.NewRequest(http.MethodGet, "/api/reports/validators?chain=consensus-a", nil), db)
+	require.Equal(t, http.StatusOK, legacy.Code, legacy.Body.String())
+	var health []validatorReport
+	require.NoError(t, json.Unmarshal(legacy.Body.Bytes(), &health))
+	require.Len(t, health, 2)
+	healthNames := make(map[string]string, len(health))
+	for _, validator := range health {
+		healthNames[validator.Addr] = validator.Moniker
+	}
+	consensus := consensusRequest(t, newConsensusReportHandler(db), "")
+	require.Len(t, consensus.Validators, 2)
+	for _, validator := range consensus.Validators {
+		assert.Equal(t, healthNames[validator.Addr], validator.Moniker)
+		assert.NotEmpty(t, validator.Moniker)
+		assert.NotEqual(t, "unknown", validator.Moniker)
+	}
+	assert.Equal(t, "named-from-history", healthNames["g1empty"])
+	assert.Equal(t, "another-historical-name", healthNames["g1unknown"])
+}
+
 func TestConsensusBFTUsesLiveWindowAndUnavailableReasons(t *testing.T) {
 	consensusTestChains(t)
 	db := testoutils.NewTestDB(t)

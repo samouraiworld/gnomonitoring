@@ -220,7 +220,12 @@ func buildConsensusReport(db *gorm.DB, chainID string) (consensusReport, error) 
 		roster[identity.Addr] = identity.Moniker
 	}
 	for addr := range ctx.VPByAddr {
-		roster[addr] = ctx.VPMonikerByAddr[addr]
+		// Existing roster names already follow MonikerSQL's fallback rule.
+		// Raw snapshot names may be empty/unknown; use them only for members
+		// without participation history, as the health report does.
+		if _, exists := roster[addr]; !exists {
+			roster[addr] = ctx.VPMonikerByAddr[addr]
+		}
 	}
 	addresses := make([]string, 0, len(roster))
 	for addr := range roster {
