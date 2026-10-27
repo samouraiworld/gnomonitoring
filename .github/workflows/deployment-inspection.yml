@@ -6,6 +6,8 @@ on:
       - 'scripts/inspect-deployment.sh'
       - 'scripts/test_inspect_deployment.py'
       - 'scripts/render_inspection_template.go'
+      - 'scripts/backup/**'
+      - 'docs/postgres-backup-preparation.md'
       - '.github/workflows/deployment-inspection.yml'
   push:
     branches: [main]
@@ -13,6 +15,8 @@ on:
       - 'scripts/inspect-deployment.sh'
       - 'scripts/test_inspect_deployment.py'
       - 'scripts/render_inspection_template.go'
+      - 'scripts/backup/**'
+      - 'docs/postgres-backup-preparation.md'
       - '.github/workflows/deployment-inspection.yml'
 
 permissions:
@@ -21,6 +25,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -35,3 +40,10 @@ jobs:
           shellcheck scripts/inspect-deployment.sh
       - name: Test read-only inspection boundary
         run: python3 -B -m unittest discover -s scripts -p 'test_inspect_deployment.py' -v
+      - name: Test backup preparation boundary without credentials
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s scripts/backup -p 'test_*.py' -v
+      - name: Test a disposable synthetic PostgreSQL backup without network access
+        working-directory: scripts/backup
+        env:
+          RUN_SYNTHETIC_POSTGRES_BACKUP_TESTS: '1'
+        run: python3 -B -W error::ResourceWarning -m unittest test_prepare_postgres_backup.SyntheticPostgresBackupTest -v
