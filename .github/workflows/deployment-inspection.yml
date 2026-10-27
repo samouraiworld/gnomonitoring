@@ -1,0 +1,29 @@
+name: Deployment inspection tooling
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/inspect-deployment.sh'
+      - 'scripts/test_inspect_deployment.py'
+      - '.github/workflows/deployment-inspection.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/inspect-deployment.sh'
+      - 'scripts/test_inspect_deployment.py'
+      - '.github/workflows/deployment-inspection.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell
+        run: |
+          bash -n scripts/inspect-deployment.sh
+          shellcheck scripts/inspect-deployment.sh
+      - name: Test read-only inspection boundary
+        run: python3 -B -m unittest discover -s scripts -p 'test_inspect_deployment.py' -v
