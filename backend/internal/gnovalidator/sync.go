@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"gorm.io/gorm"
 )
@@ -152,7 +152,7 @@ func flushChunk(db *gorm.DB, rows []dpRow) error {
 }
 
 // sequentielle 42hours approx for 1 month
-func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, to int64, monikerMap map[string]string) error {
+func BackfillRange(db *gorm.DB, client chainquery.Client, chainID string, from, to int64, monikerMap map[string]string) error {
 	const chunk = int64(1000)   // number of blocks per tranche
 	const flushThreshold = 3000 // number row before row flush
 
@@ -215,7 +215,7 @@ func BackfillRange(db *gorm.DB, client gnoclient.Client, chainID string, from, t
 // Parallel
 // - 5 approx hours with 6 workers for one month
 // - 2 approx  hours with 20 workers for one month
-func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from, to int64, monikerMap map[string]string) error {
+func BackfillParallel(db *gorm.DB, client chainquery.Client, chainID string, from, to int64, monikerMap map[string]string) error {
 	produce := func(jobs chan<- job) {
 		for h := from; h <= to; h++ {
 			jobs <- job{H: h}
@@ -229,7 +229,7 @@ func BackfillParallel(db *gorm.DB, client gnoclient.Client, chainID string, from
 // (which walks a contiguous from..to range), this is used to repair specific
 // heights a gap-reconciliation scan found missing — real gaps left behind by
 // silently-dropped RPC fetch failures are rarely contiguous.
-func BackfillHeights(db *gorm.DB, client gnoclient.Client, chainID string, heights []int64, monikerMap map[string]string) error {
+func BackfillHeights(db *gorm.DB, client chainquery.Client, chainID string, heights []int64, monikerMap map[string]string) error {
 	produce := func(jobs chan<- job) {
 		for _, h := range heights {
 			jobs <- job{H: h}
@@ -244,7 +244,7 @@ func BackfillHeights(db *gorm.DB, client gnoclient.Client, chainID string, heigh
 // date range is re-aggregated afterward. logPrefix distinguishes the two
 // callers in logs ("backfill" for a contiguous catch-up, "reconcile" for a
 // targeted gap repair).
-func runBackfillWorkers(db *gorm.DB, client gnoclient.Client, chainID string, monikerMap map[string]string, logPrefix string, produce func(jobs chan<- job)) error {
+func runBackfillWorkers(db *gorm.DB, client chainquery.Client, chainID string, monikerMap map[string]string, logPrefix string, produce func(jobs chan<- job)) error {
 	const workers = 20
 	const flushThreshold = 2000
 

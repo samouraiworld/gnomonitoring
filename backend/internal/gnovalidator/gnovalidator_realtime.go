@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/jobclock"
 	"gorm.io/gorm"
@@ -138,7 +138,7 @@ type Participation struct {
 	LateForQuorum  *bool
 }
 
-func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client) {
+func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, client chainquery.Client) {
 	// simulateCount := 0
 	// simulateMax := 4   // for test
 	go func() {
@@ -390,7 +390,7 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 	}()
 }
 
-func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client, chainCfg *internal.ChainConfig, refreshInterval time.Duration) {
+func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client chainquery.Client, chainCfg *internal.ChainConfig, refreshInterval time.Duration) {
 	go func() {
 		if refreshInterval <= 0 {
 			refreshInterval = jobclock.Cycle
@@ -502,7 +502,7 @@ func WatchNewValidators(ctx context.Context, db *gorm.DB, chainID string, client
 // backfills exactly those heights. It runs once immediately (so a freshly
 // restarted service self-heals recent gaps right away) and then on every
 // tick, for as long as ctx stays alive.
-func ReconcileGaps(ctx context.Context, db *gorm.DB, chainID string, client gnoclient.Client, interval time.Duration, lookbackDays int) {
+func ReconcileGaps(ctx context.Context, db *gorm.DB, chainID string, client chainquery.Client, interval time.Duration, lookbackDays int) {
 	reconcileOnce := func() {
 		since := time.Now().UTC().AddDate(0, 0, -lookbackDays)
 		missing, err := database.FindMissingHeights(db, chainID, since)
@@ -810,7 +810,7 @@ func StartValidatorMonitoring(ctx context.Context, db *gorm.DB, chainID string, 
 		log.Printf("[monitor][%s] no RPC pool registered, monitoring not started", chainID)
 		return
 	}
-	client := gnoclient.Client{RPCClient: rpcClient}
+	client := chainquery.Client{RPCClient: rpcClient}
 
 	t := GetThresholds()
 	valopers := InitMonikerMap(db, chainID, client, chainCfg)
