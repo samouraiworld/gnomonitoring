@@ -1,0 +1,14 @@
+FROM golang:1.26.10-bookworm AS build
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN test "$(sha256sum internal/database/db_init.go | cut -d ' ' -f 1)" = b89ab62f218255680065eaca18db81bfe86c53ded9667bb4c839e59eeb43eff9
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+    -ldflags='-s -w -X main.databaseSourceSHA=b89ab62f218255680065eaca18db81bfe86c53ded9667bb4c839e59eeb43eff9' \
+    -o /rehearse-initdb ./cmd/rehearse-initdb
+
+FROM gcr.io/distroless/static-debian12:nonroot
+USER 999:999
+COPY --from=build /rehearse-initdb /rehearse-initdb
+ENTRYPOINT ["/rehearse-initdb"]
