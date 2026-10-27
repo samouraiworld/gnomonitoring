@@ -107,6 +107,27 @@ else: raise SystemExit("Unexpected or mutating Docker command")
         docker_calls = [c for c in self.calls() if c[0] == "docker"]
         self.assertEqual(len(docker_calls), 4)
         self.assertEqual(docker_calls[0][-1], "label=com.docker.compose.project.working_dir=" + str(self.project))
+        # Render the actual format captured from the script with Go's strict
+        # template engine. A mock Docker response alone cannot reproduce the
+        # production error caused by an absent optional State.Health map key.
+        renderer = self.root / "render-inspection-template"
+        helper = Path(__file__).with_name("render_inspection_template.go")
+        build = subprocess.run(["go", "build", "-o", str(renderer), str(helper)],
+                               capture_output=True, text=True,
+                               env={**self.env, "GOMAXPROCS": "1", "GOTOOLCHAIN": "local",
+                                    "GOWORK": "off", "GOPROXY": "off", "GOSUMDB": "off"})
+        self.assertEqual(build.returncode, 0, build.stderr)
+        template = docker_calls[1][5]
+        base_state = {"Status": "running", "StartedAt": "2026-10-27T00:00:00Z"}
+        for state, expected in [(base_state, "not_configured"),
+                                ({**base_state, "Health": {"Status": "healthy"}}, "healthy")]:
+            with self.subTest(state=state):
+                data = {"Id": CONTAINER_ID, "Name": "/inspection-fixture", "Image": "sha256:" + "b" * 64,
+                        "State": state, "Config": {"Labels": {}}}
+                result = subprocess.run([str(renderer)], input=json.dumps({"template": template, "data": data}),
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("health=" + expected, result.stdout)
 
     def test_no_matching_project_stops_without_inspection_or_broader_scan(self):
         result = self.remote(INSPECTION_TEST_IDS="")
