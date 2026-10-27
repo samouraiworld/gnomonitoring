@@ -1,35 +1,49 @@
-linters:
-  enable:
-    - govet
-    - staticcheck
-    - errcheck
-    - gosimple
-    - ineffassign
-    - unused
-    - misspell
-    - bodyclose
-    - gocritic
-
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: false
-
-  staticcheck:
-    checks: ["all", "-SA1019"]
-
+version: "2"
 run:
   timeout: 5m
   tests: true
-
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - gocritic
+    - misspell
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    staticcheck:
+      checks:
+        - all
+        - -SA1019
+  exclusions:
+    # Preserve the v1 default exclusions and existing response-write rules.
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - errcheck
+        path: _test.go
+      - linters:
+          - errcheck
+        source: json\.NewEncoder\(w\)\.Encode
+      - linters:
+          - errcheck
+        source: w\.Write\(
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
   max-same-issues: 5
-  exclude-rules:
-    - path: "_test.go"
-      linters: [errcheck]
-    # json.Encode / w.Write in HTTP handlers: error is tied to the TCP connection,
-    # there is nothing useful to do if it fails.
-    - source: "json\\.NewEncoder\\(w\\)\\.Encode"
-      linters: [errcheck]
-    - source: "w\\.Write\\("
-      linters: [errcheck]
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
