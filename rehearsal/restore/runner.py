@@ -6,6 +6,8 @@ SQL, so hashes are integrity checks, not an authorization or trust decision.
 """
 
 import argparse
+from contextlib import contextmanager
+import copy
 import hashlib
 import importlib.util
 import json
@@ -335,7 +337,7 @@ GRANT SELECT ON rehearsal_guard.clone_marker TO rehearsal_owner;""", role="rehea
             raise Refused("independent_marker_not_sealed")
         return {**state, "dsn_mode": "0600"}
 
-    def execute(self, run_initdb=False):
+    def _prepare_clone(self, run_initdb=False):
         self.manifest = validate_bundle(self.bundle)
         helper_sources = self.pin_sources() if run_initdb else None
         if self.command(self.docker + ["info", "--format", "{{.OSType}}"])[0].strip() != "linux":
@@ -346,83 +348,228 @@ GRANT SELECT ON rehearsal_guard.clone_marker TO rehearsal_owner;""", role="rehea
         frozen = self.output / "resolved-compose.private.json"
         private_write(frozen, (json.dumps(config) + "\n").encode())
         self.compose = self.docker + ["compose", "--project-name", self.project, "--file", str(frozen), "--project-directory", str(HERE)]
+        self.created = True
+        self._journal("resources_planned")
+        self.stage = "build_empty_clone"
+        services = ["postgres", "initdb"] if run_initdb else ["postgres"]
+        self.command(self.compose + ["build", *services], timeout=1200)
+        self.stage = "create_before_start"
+        self.command(self.compose + ["create", "postgres"])
+        self.inspect_volume_fence()
+        self.postgres_id = self.command(self.compose + ["ps", "--all", "--quiet", "postgres"])[0].strip()
+        self._journal("container_identified", container_id=self.postgres_id, service="postgres")
+        self.inspect_container(self.postgres_id, "postgres")
+        self.command(self.docker + ["start", self.postgres_id])
+        self.wait_postgres(self.postgres_id)
+        if self.sql("SELECT current_setting('server_version_num')").strip() != "160015":
+            raise Refused("pinned_postgres_version_changed")
+        free = self.disk_free()
+        required = 2 * self.manifest["source"]["database_bytes"] + GIB
+        if free < required:
+            raise Refused("docker_volume_free_space_insufficient")
+        self.stage = "verify_actual_archive_toc"
+        with open_private(self.bundle / "database.dump") as archive:
+            expected = self.manifest["files"]["database.dump"]
+            if os.fstat(archive.fileno()).st_size != expected["bytes"] or fingerprint(archive) != expected["sha256"]:
+                raise Refused("archive_changed_before_restore")
+            identity = os.fstat(archive.fileno())
+            actual_toc = self.exec_pg(["pg_restore", "--list"], input_file=archive)
+            stored_toc = read_small(self.bundle / "toc.list", METADATA_LIMIT).decode("utf-8")
+            if actual_toc.strip() != stored_toc.strip():
+                raise Refused("actual_archive_toc_mismatch")
+            archive.seek(0)
+            self.stage = "restore_nonprivileged_transaction"
+            self.exec_pg(["pg_restore", "--no-owner", "--no-privileges", "--no-tablespaces", "--exit-on-error", "--single-transaction",
+                          "--no-password", "-h", SOCKET, "-U", "rehearsal_owner", "-d", self.database],
+                         timeout=self.timeout_seconds, input_file=archive)
+            now = os.fstat(archive.fileno())
+            if (identity.st_ino, identity.st_dev, identity.st_size, identity.st_mtime_ns) != (now.st_ino, now.st_dev, now.st_size, now.st_mtime_ns):
+                raise Refused("archive_changed_during_restore")
+        self.stage = "validate_restored_catalogue"
+        restored = self.baseline()
+        self.stage = "analyze_restored_tables"
+        for table in restored["tables"]:
+            self.sql("ANALYZE " + quote_identifier(table["schema"]) + "." + quote_identifier(table["name"]), timeout=self.timeout_seconds)
+        if self.disk_free() < GIB:
+            raise Refused("docker_volume_post_restore_margin_insufficient")
+        self.stage = "seal_validated_clone"
+        marker = self.seal_marker()
+        self._report = {"format_version": 1, "kind": "gnomonitoring-isolated-restore", "restore_verified": True,
+                  "source_snapshot_equality_verified": False, "globals_applied": False, "network_mode": "none",
+                  "clone_id": self.clone_id, "project": self.project, "baseline": restored, "marker_sealed": True,
+                  "marker_state": marker, "initdb": None, "initdb_provenance": helper_sources,
+                  "source_archive_sha256": expected["sha256"],
+                  "pre_restore_docker_volume_free_bytes": free, "required_free_bytes": required}
+        if run_initdb:
+            self._run_initdb()
+
+    def _run_initdb(self):
+        if self._report["initdb"] is not None:
+            raise Refused("initdb_already_run_in_session")
+        if self._report["initdb_provenance"] is None:
+            self._report["initdb_provenance"] = self.pin_sources()
+            self.stage = "build_initdb_for_session"
+            self.command(self.compose + ["build", "initdb"], timeout=1200)
+        self.stage = "initdb_after_verified_restore"
+        self.command(self.compose + ["create", "initdb"])
+        container = self.command(self.compose + ["ps", "--all", "--quiet", "initdb"])[0].strip()
+        self._journal("container_identified", container_id=container, service="initdb")
+        self.inspect_container(container, "initdb")
+        first, status1 = self.start_initdb(container)
+        second, status2 = self.start_initdb(container)
+        if status1 not in {0, 3} or status2 not in {0, 3}:
+            raise Refused("initdb_failed_after_restore")
+        self._report["initdb"] = {"first_pass": first, "second_pass": second,
+                                  "review_required": status1 == 3 or status2 == 3}
+        return copy.deepcopy(self._report["initdb"])
+
+    @property
+    def stage(self):
+        return self._stage
+
+    @stage.setter
+    def stage(self, value):
+        self._stage = value
+        if getattr(self, "_journal_ready", False):
+            self._journal("stage")
+
+    def _journal(self, event, **details):
+        record = {"event": event, "stage": self.stage, "project": self.project,
+                  "clone_id": self.clone_id,
+                  "volumes": [self.project + suffix for suffix in ("-pgdata", "-socket", "-private-logs")],
+                  **details}
+        path = self.output / "session-journal.private.jsonl"
+        descriptor = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "ab") as target:
+            info = os.fstat(target.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+                raise Refused("private_session_journal_required")
+            target.write((json.dumps(record, sort_keys=True) + "\n").encode())
+            target.flush()
+            os.fsync(target.fileno())
+        sync_directory(self.output)
+
+    @contextmanager
+    def open_clone(self, run_initdb=False):
+        """Own one validated offline clone until context exit; never resume it.
+
+        Only a successful body and verified cleanup permit atomic publication.
+        SIGTERM becomes KeyboardInterrupt for this main-thread-only lifecycle.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            raise Refused("clone_session_requires_main_thread")
+        if getattr(self, "_session_used", False):
+            raise Refused("clone_session_is_single_use")
+        self._session_used = True
+        self.created = False
+        self.postgres_id = None
+        self._journal_ready = True
+        self._report = None
+        session = CloneSession(self)
+        previous = signal.getsignal(signal.SIGTERM)
+        cleaning_up = False
+        def interrupted(_signum, _frame):
+            session._failed = True
+            if not cleaning_up:
+                raise KeyboardInterrupt
+        signal.signal(signal.SIGTERM, interrupted)
         error = None
         try:
-            self.created = True
-            self.stage = "build_empty_clone"
-            services = ["postgres", "initdb"] if run_initdb else ["postgres"]
-            self.command(self.compose + ["build", *services], timeout=1200)
-            self.stage = "create_before_start"
-            self.command(self.compose + ["create", "postgres"])
-            self.inspect_volume_fence()
-            self.postgres_id = self.command(self.compose + ["ps", "--all", "--quiet", "postgres"])[0].strip()
-            self.inspect_container(self.postgres_id, "postgres")
-            self.command(self.docker + ["start", self.postgres_id])
-            self.wait_postgres(self.postgres_id)
-            if self.sql("SELECT current_setting('server_version_num')").strip() != "160015":
-                raise Refused("pinned_postgres_version_changed")
-            free = self.disk_free()
-            required = 2 * self.manifest["source"]["database_bytes"] + GIB
-            if free < required:
-                raise Refused("docker_volume_free_space_insufficient")
-            self.stage = "verify_actual_archive_toc"
-            with open_private(self.bundle / "database.dump") as archive:
-                expected = self.manifest["files"]["database.dump"]
-                if os.fstat(archive.fileno()).st_size != expected["bytes"] or fingerprint(archive) != expected["sha256"]:
-                    raise Refused("archive_changed_before_restore")
-                identity = os.fstat(archive.fileno())
-                actual_toc = self.exec_pg(["pg_restore", "--list"], input_file=archive)
-                stored_toc = read_small(self.bundle / "toc.list", METADATA_LIMIT).decode("utf-8")
-                if actual_toc.strip() != stored_toc.strip():
-                    raise Refused("actual_archive_toc_mismatch")
-                archive.seek(0)
-                self.stage = "restore_nonprivileged_transaction"
-                self.exec_pg(["pg_restore", "--no-owner", "--no-privileges", "--no-tablespaces", "--exit-on-error", "--single-transaction",
-                              "--no-password", "-h", SOCKET, "-U", "rehearsal_owner", "-d", self.database],
-                             timeout=self.timeout_seconds, input_file=archive)
-                now = os.fstat(archive.fileno())
-                if (identity.st_ino, identity.st_dev, identity.st_size, identity.st_mtime_ns) != (now.st_ino, now.st_dev, now.st_size, now.st_mtime_ns):
-                    raise Refused("archive_changed_during_restore")
-            self.stage = "validate_restored_catalogue"
-            restored = self.baseline()
-            for table in restored["tables"]:
-                self.sql("ANALYZE " + quote_identifier(table["schema"]) + "." + quote_identifier(table["name"]), timeout=self.timeout_seconds)
-            if self.disk_free() < GIB:
-                raise Refused("docker_volume_post_restore_margin_insufficient")
-            self.stage = "seal_validated_clone"
-            marker = self.seal_marker()
-            report = {"format_version": 1, "kind": "gnomonitoring-isolated-restore", "restore_verified": True,
-                      "source_snapshot_equality_verified": False, "globals_applied": False, "network_mode": "none",
-                      "clone_id": self.clone_id, "project": self.project, "baseline": restored, "marker_sealed": True,
-                      "marker_state": marker, "initdb": None, "initdb_provenance": helper_sources,
-                      "source_archive_sha256": expected["sha256"],
-                      "pre_restore_docker_volume_free_bytes": free, "required_free_bytes": required}
-            if run_initdb:
-                self.stage = "initdb_after_verified_restore"
-                self.command(self.compose + ["create", "initdb"])
-                container = self.command(self.compose + ["ps", "--all", "--quiet", "initdb"])[0].strip()
-                self.inspect_container(container, "initdb")
-                first, status1 = self.start_initdb(container)
-                second, status2 = self.start_initdb(container)
-                if status1 not in {0, 3} or status2 not in {0, 3}:
-                    raise Refused("initdb_failed_after_restore")
-                report["initdb"] = {"first_pass": first, "second_pass": second,
-                                    "review_required": status1 == 3 or status2 == 3}
+            self._journal("session_opening")
+            self._prepare_clone(run_initdb)
+            self.stage = "validated_clone_session"
+            session._active = True
+            yield session
+            if session._failed:
+                raise Refused("clone_session_operation_failed")
         except BaseException as caught:
             error = caught
+            try:
+                self._journal("session_failed", error_type=type(caught).__name__)
+            except BaseException:
+                pass  # Preserve the initial cause; cleanup must still be attempted.
             raise
         finally:
+            session._active = False
+            # SIGTERM still poisons completion during cleanup, but must not
+            # interrupt the mandatory removal/verification attempt.
+            cleaning_up = True
             try:
                 if self.created:
-                    self.stage = "cleanup_owned_resources"
+                    self._stage = "cleanup_owned_resources"
+                    try:
+                        self._journal("stage")
+                    except BaseException:
+                        pass  # Journal I/O must never prevent the cleanup attempt.
                     self.cleanup(self.postgres_id)
+                    self._journal("cleanup_verified")
             except BaseException:
+                try:
+                    self._journal("cleanup_unverified")
+                except BaseException:
+                    pass
                 if error is None:
                     raise
                 print(json.dumps({"status": "restore_cleanup_failed"}))
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+        if session._failed:
+            raise Refused("clone_session_operation_failed")
+        self._report["owned_resources_cleanup_verified"] = True
+        self.stage = "publish_after_verified_cleanup"
+        publish_summary(self.output, self._report)
+
+    def execute(self, run_initdb=False):
+        with self.open_clone(run_initdb) as session:
+            report = session.report
         report["owned_resources_cleanup_verified"] = True
-        publish_summary(self.output, report)
         return report
+
+
+class CloneSession:
+    """Bounded operations on a runner-owned target, valid only inside its context."""
+
+    def __init__(self, runner):
+        self._runner = runner
+        self._active = False
+        self._failed = False
+
+    def _check_active(self):
+        if not self._active:
+            raise Refused("clone_session_is_closed")
+        if self._failed:
+            raise Refused("clone_session_operation_failed")
+
+    @property
+    def baseline(self):
+        self._check_active()
+        return copy.deepcopy(self._runner._report["baseline"])
+
+    @property
+    def report(self):
+        self._check_active()
+        return copy.deepcopy(self._runner._report)
+
+    def sql(self, query, timeout=30):
+        self._check_active()
+        try:
+            if not isinstance(query, str) or type(timeout) is not int or not 1 <= timeout <= self._runner.timeout_seconds:
+                raise Refused("session_sql_budget_invalid")
+            self._runner.stage = "session_sql"
+            # A fixed SQL prefix prevents psql -c from dispatching a caller's
+            # backslash command (notably \connect) as a client-side operation.
+            return self._runner.sql("/* controlled clone session */\n" + query, timeout=timeout)
+        except BaseException:
+            self._failed = True
+            raise
+
+    def run_initdb(self):
+        self._check_active()
+        try:
+            return self._runner._run_initdb()
+        except BaseException:
+            self._failed = True
+            raise
 
 
 def main(argv=None):

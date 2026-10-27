@@ -66,3 +66,11 @@ shellcheck rehearsal/restore/bootstrap-empty.sh
 ```
 
 Additional opt-in integration validation is delivered separately with invented PostgreSQL archives, rejection fixtures and disposable local resources. It does not use production metadata, credentials or data. The boundary workflow requires only read access to repository contents and has no deployment, registry login, workflow-dispatch or artifact-upload step.
+
+## Controlled clone sessions
+
+The Python API additionally offers an explicit context-managed session for checks that need a live restored database. The session is usable only inside its `open_clone()` context. It owns a newly restored database and never reuses an earlier session's project, nonce or volumes. Leaving the context triggers cleanup on normal return, an exception or interruption. Checks must finish inside that context; no detached service or reusable clone is handed out.
+
+A private progress journal records resource identities, stages and cleanup state for diagnosis. It is not a completed restore report. If a callback fails or is interrupted, no completed summary is published; an uncertain or failed cleanup remains a failure. The journal and SQL diagnostics can contain internal metadata and must stay private. Do not use the journal as permission to delete resources outside its exact owned project.
+
+The core session validation uses only invented archives and checks live queries, cleanup after normal return, callback exceptions and `KeyboardInterrupt`, and fresh identities on a later attempt. It is opt-in through `RUN_CONTROLLED_CLONE_SESSION_TESTS=1`; without that variable, only pure boundaries run. Source-to-target payload comparison is a separate validation layer. Restoring a session alone does not claim source-snapshot parity or post-InitDB equivalence.
