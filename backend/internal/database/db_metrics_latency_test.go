@@ -33,6 +33,12 @@ func TestGetPrecommitLatencyMultiWindow(t *testing.T) {
 	require.Len(t, got, 1, "only g1aaa has samples within 7d on this chain")
 
 	s := got[0]
+	assert.Equal(t, int64(3), s.Samples24h)
+	assert.Equal(t, int64(4), s.Samples7d)
+	require.NotNil(t, s.LastSample24h)
+	require.NotNil(t, s.LastSample7d)
+	assert.WithinDuration(t, now.Add(-9*time.Minute), *s.LastSample24h, time.Microsecond)
+	assert.WithinDuration(t, *s.LastSample24h, *s.LastSample7d, time.Microsecond)
 	assert.Equal(t, "g1aaa", s.Addr)
 	assert.Equal(t, "g1aaa", s.Moniker, "no stored moniker: the moniker label falls back to the address")
 

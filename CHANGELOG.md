@@ -87,6 +87,13 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **Public consensus observations** — `GET /api/reports/consensus` exposes
+  chain-scoped precommit-lag p50/p90 for 24h and 7d with exact sample counts
+  and last sample dates, plus the live block-window BFT margin. Missing,
+  stale or insufficient BFT data is explicit, never a false zero. Loads are
+  coalesced and cached for 30 seconds; the existing validator health API
+  and its four periods stay unchanged. See `docs/api-validator-observability.md`.
+
 - **Telegram `/validator <moniker or address>`** — the validator bot shows one
   validator of the chat's active chain: score and tier (last 24h), sign rate,
   proposer reliability, voting power, precommit lag p50/p90 (24h and 7d) and
