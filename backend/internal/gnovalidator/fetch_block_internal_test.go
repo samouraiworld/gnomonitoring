@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
 	"github.com/gnolang/gno/tm2/pkg/bft/types"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 )
 
 func TestFetchBlockParticipation_RetriesThenSucceeds(t *testing.T) {
@@ -18,7 +18,7 @@ func TestFetchBlockParticipation_RetriesThenSucceeds(t *testing.T) {
 		}
 		return minimalValidBlock(height), nil
 	}}
-	client := gnoclient.Client{RPCClient: fake}
+	client := chainquery.Client{RPCClient: fake}
 
 	_, ok := fetchBlockParticipation(client, 42)
 
@@ -36,7 +36,7 @@ func TestFetchBlockParticipation_GivesUpAfterExhaustingRetries(t *testing.T) {
 		attempts++
 		return nil, errFakeRPC
 	}}
-	client := gnoclient.Client{RPCClient: fake}
+	client := chainquery.Client{RPCClient: fake}
 
 	_, ok := fetchBlockParticipation(client, 42)
 
@@ -76,7 +76,7 @@ func TestFetchBlockParticipation_ExtractsCommittedPrecommits(t *testing.T) {
 		}}, nil
 	}}
 
-	fb, ok := fetchBlockParticipation(gnoclient.Client{RPCClient: fake}, 42)
+	fb, ok := fetchBlockParticipation(chainquery.Client{RPCClient: fake}, 42)
 	if !ok {
 		t.Fatal("want ok=true")
 	}

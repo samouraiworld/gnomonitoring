@@ -1,14 +1,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
+	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gopkg.in/yaml.v3"
@@ -22,6 +23,41 @@ type Config struct {
 }
 
 var config Config
+
+// blockReader exposes only the read-only RPCs used by the exporter. Importing
+// gnoclient also links its signing/key-management dependencies, including the
+// unmaintained OpenPGP implementation, even though this process never signs.
+type blockReader struct {
+	rpc interface {
+		Status() (*ctypes.ResultStatus, error)
+		Block(*int64) (*ctypes.ResultBlock, error)
+	}
+}
+
+func (c blockReader) LatestBlockHeight() (int64, error) {
+	if c.rpc == nil {
+		return 0, errors.New("missing RPCClient")
+	}
+	status, err := c.rpc.Status()
+	if err != nil {
+		return 0, fmt.Errorf("block number query failed: %w", err)
+	}
+	return status.SyncInfo.LatestBlockHeight, nil
+}
+
+func (c blockReader) Block(height int64) (*ctypes.ResultBlock, error) {
+	if c.rpc == nil {
+		return nil, errors.New("missing RPCClient")
+	}
+	if height <= 0 {
+		return nil, errors.New("invalid block height provided")
+	}
+	block, err := c.rpc.Block(&height)
+	if err != nil {
+		return nil, fmt.Errorf("block query failed: %w", err)
+	}
+	return block, nil
+}
 
 // Charger config.yaml
 func loadConfig() {
@@ -61,7 +97,7 @@ func main() {
 		log.Fatalf("Failed to connect to RPC: %v", err)
 	}
 
-	client := gnoclient.Client{RPCClient: rpcClient}
+	client := blockReader{rpc: rpcClient}
 
 	go func() {
 		missedTotal := 0

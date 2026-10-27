@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gnolang/gno/gno.land/pkg/gnoclient"
 	"github.com/gorilla/websocket"
 	"github.com/machinebox/graphql"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/jobclock"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/rpcpool"
@@ -25,12 +25,12 @@ import (
 // clientForChain returns a gnoclient backed by the chain's shared RPC pool,
 // so every GovDAO query inherits the same endpoint failover as validator
 // monitoring instead of hardcoding RPCEndpoints[0].
-func clientForChain(chainID string) (*gnoclient.Client, error) {
+func clientForChain(chainID string) (*chainquery.Client, error) {
 	pool, ok := rpcpool.Get(chainID)
 	if !ok {
 		return nil, fmt.Errorf("no RPC pool registered for chain %q", chainID)
 	}
-	return &gnoclient.Client{RPCClient: pool}, nil
+	return &chainquery.Client{RPCClient: pool}, nil
 }
 
 type TxBlock struct {
@@ -201,7 +201,7 @@ func ExtractGovDAOIDs(txs []Transaction) []string {
 	return ids
 }
 
-func WebsocketGovdao(ctx context.Context, db *gorm.DB, chainID string, graphqlEndpoints []string, client *gnoclient.Client, gnowebEndpoint string) {
+func WebsocketGovdao(ctx context.Context, db *gorm.DB, chainID string, graphqlEndpoints []string, client *chainquery.Client, gnowebEndpoint string) {
 	primaryGraphQL := ""
 	if len(graphqlEndpoints) > 0 {
 		primaryGraphQL = graphqlEndpoints[0]
@@ -336,8 +336,8 @@ func WebsocketGovdao(ctx context.Context, db *gorm.DB, chainID string, graphqlEn
 	}
 
 }
-func ExtractTitle(proposalID int, client *gnoclient.Client) (string, error) {
-	proposalTitle, err := GnoQueryString(client, gnoclient.QueryCfg{
+func ExtractTitle(proposalID int, client *chainquery.Client) (string, error) {
+	proposalTitle, err := GnoQueryString(client, chainquery.QueryCfg{
 		Path: "vm/qeval",
 		Data: fmt.Appendf(nil, "gno.land/r/gov/dao.proposals.GetProposal(%d).Title()", proposalID),
 	})
@@ -347,7 +347,7 @@ func ExtractTitle(proposalID int, client *gnoclient.Client) (string, error) {
 
 	return proposalTitle, nil
 }
-func GnoQueryString(client *gnoclient.Client, cfg gnoclient.QueryCfg) (string, error) {
+func GnoQueryString(client *chainquery.Client, cfg chainquery.QueryCfg) (string, error) {
 	queryResult, err := client.Query(cfg)
 	if err != nil {
 		return "", fmt.Errorf("query %q: %w", cfg.Path+":"+string(cfg.Data), err)
@@ -407,7 +407,7 @@ func GetTxsByBlockHeight(height int, graphqlEndpoints []string) (*TxBlock, error
 	return nil, fmt.Errorf("no GraphQL endpoints configured")
 }
 
-func InitGovdao(db *gorm.DB, chainID string, graphqlEndpoints []string, client *gnoclient.Client, gnowebEndpoint string) {
+func InitGovdao(db *gorm.DB, chainID string, graphqlEndpoints []string, client *chainquery.Client, gnowebEndpoint string) {
 	Trans, err := FetchGovDAOEvents(graphqlEndpoints)
 	if err != nil {
 		log.Printf("[govdao][%s] init fetch failed: %v", chainID, err)
@@ -457,7 +457,7 @@ func chainProposalStatus(chainID string, proposalID int) (string, error) {
 	return fetchProposalStatus(proposalID, client)
 }
 
-func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, graphqlEndpoints []string, client *gnoclient.Client, gnowebEndpoint string) {
+func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, graphqlEndpoints []string, client *chainquery.Client, gnowebEndpoint string) {
 	for _, ev := range tx.Response.Events {
 		if ev.Type != "ProposalCreated" {
 			continue
@@ -522,7 +522,7 @@ func ProcessProposal(tx Transaction, who string, db *gorm.DB, chainID string, gr
 }
 
 // =========================================== Extract Status
-func GnoQueryRender(client *gnoclient.Client, cfg gnoclient.QueryCfg) (string, error) {
+func GnoQueryRender(client *chainquery.Client, cfg chainquery.QueryCfg) (string, error) {
 	res, err := client.Query(cfg)
 	if err != nil {
 		return "", err
@@ -583,9 +583,9 @@ func parseProposalStatus(render string) string {
 	return StatusUnknown
 }
 
-func ExtractProposalRender(proposalID int, client *gnoclient.Client) (string, error) {
+func ExtractProposalRender(proposalID int, client *chainquery.Client) (string, error) {
 	data := fmt.Sprintf("gno.land/r/gov/dao:%d", proposalID)
-	res, err := GnoQueryRender(client, gnoclient.QueryCfg{
+	res, err := GnoQueryRender(client, chainquery.QueryCfg{
 		Path: "vm/qrender",
 		Data: []byte(data),
 	})
