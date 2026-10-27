@@ -304,12 +304,7 @@ func GetAllHourReportsAdmin(db *gorm.DB) ([]HourReportAdmin, error) {
 	}
 	result := make([]HourReportAdmin, len(reports))
 	for i, r := range reports {
-		result[i] = HourReportAdmin{
-			UserID:            r.UserID,
-			DailyReportHour:   r.DailyReportHour,
-			DailyReportMinute: r.DailyReportMinute,
-			Timezone:          r.Timezone,
-		}
+		result[i] = HourReportAdmin(r)
 	}
 	return result, nil
 }
