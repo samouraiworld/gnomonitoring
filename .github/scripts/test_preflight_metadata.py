@@ -171,7 +171,7 @@ class InventoryTests(unittest.TestCase):
 
     def test_workflow_only_retains_ciphertext_on_fixed_manual_ref(self):
         workflow = (HERE.parent / 'workflows/main.yml').read_text()
-        self.assertIn("github.ref == 'refs/heads/chore/preflight-readonly-metadata-v2-20261027'", workflow)
+        self.assertIn("github.ref == 'refs/heads/chore/preflight-readonly-metadata-approved-20261027'", workflow)
         self.assertIn("github.event_name == 'workflow_dispatch'", workflow)
         self.assertIn('> "$inventory_file" 2> "$error_file"', workflow)
         self.assertIn('openssl cms -encrypt -aes-256-gcm', workflow)

@@ -1,9 +1,12 @@
 # Temporary encrypted preflight — DO NOT MERGE
 
 This branch replaces the registered manual deployment workflow only on its
-explicit diagnostic ref. It must never be merged into main. The owner authorized
-read-only production inventory and preparation tools, not a dump, data copy,
-deployment, image publication or application startup.
+explicit diagnostic ref. It must never be merged into main. The owner explicitly
+authorized the encrypted GitHub artifact transfer of technical metadata for one
+day on 2026-10-27. This does not authorize a dump,
+application-data copy, deployment, image publication or application startup.
+The previous local recipient private key was retired; this branch rotates only
+the public recipient certificate and exact manual-ref guard.
 
 The fixed collector selects containers by the documented Compose working
 directory, verifies their project and identities, and pins Docker to the host's
