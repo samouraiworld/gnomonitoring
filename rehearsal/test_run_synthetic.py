@@ -1,9 +1,13 @@
 import copy
 import importlib.util
 import hashlib
+import io
+import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +17,51 @@ SPEC.loader.exec_module(MODULE)
 
 
 class RehearsalBoundaryTests(unittest.TestCase):
+    def test_command_failure_reports_only_fixed_stage_and_exit_code(self):
+        with tempfile.TemporaryDirectory() as raw:
+            runner = MODULE.Runner.__new__(MODULE.Runner)
+            runner.output = Path(raw)
+            runner.environment = os.environ.copy()
+            runner.sequence = 0
+            runner.stage = "fixture_stage"
+            with self.assertRaisesRegex(MODULE.Refused, "^synthetic_step_failed_fixture_stage_exit_7$"):
+                runner.command([sys.executable, "-c", "import sys; print('private-detail'); sys.exit(7)"])
+            self.assertEqual((runner.output / "01-stdout.private").read_text(), "private-detail\n")
+            self.assertEqual((runner.output / "01-stdout.private").stat().st_mode & 0o777, 0o600)
+
+    def test_cleanup_failure_cannot_mask_original_failure(self):
+        runner = MODULE.Runner.__new__(MODULE.Runner)
+        runner.docker = ["docker", "--host", "unix:///approved/local.sock"]
+        runner.compose = runner.docker + ["compose"]
+        project, config = self.config()
+        runner.project = project
+        def command(arguments, **unused):
+            if arguments == runner.docker + ["info", "--format", "{{.OSType}}"]:
+                return "linux", 0
+            if arguments == runner.compose + ["config", "--format", "json"]:
+                return json.dumps(config), 0
+            raise MODULE.Refused("original_build_failure")
+        with patch.object(runner, "pin_sources", return_value={}), patch.object(runner, "fresh_volumes"), \
+                patch.object(runner, "command", side_effect=command), \
+                patch.object(runner, "cleanup", side_effect=MODULE.Refused("secondary_cleanup_failure")), \
+                patch.object(MODULE.sys, "stdout", new_callable=io.StringIO) as output:
+            with self.assertRaisesRegex(MODULE.Refused, "^original_build_failure$"):
+                runner.execute()
+            self.assertEqual(json.loads(output.getvalue()), {"status": "synthetic_cleanup_failed"})
+
+    def test_volume_template_accepts_docker_struct_and_raw_map(self):
+        renderer = Path(__file__).with_name("render_volume_template.go")
+        for mode in ["struct", "map"]:
+            completed = subprocess.run(["go", "run", str(renderer), mode], input=MODULE.VOLUME_TEMPLATE,
+                                       text=True, capture_output=True, check=False, timeout=60)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            value = json.loads(completed.stdout)
+            MODULE.validate_volume_fence(value, "fixture", "fixture")
+        old = MODULE.VOLUME_TEMPLATE.replace("json .Options", 'json (index . "Options")')
+        completed = subprocess.run(["go", "run", str(renderer), "struct"], input=old,
+                                   text=True, capture_output=True, check=False, timeout=60)
+        self.assertNotEqual(completed.returncode, 0)
+
     def config(self):
         project = "gnomon-rehearsal-fixture"
         config = {

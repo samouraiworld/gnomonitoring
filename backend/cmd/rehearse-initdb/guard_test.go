@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const fixtureID = "0123456789abcdef0123456789abcdef"
@@ -171,5 +173,53 @@ func TestAnyDeletedRowsRequireExplicitReview(t *testing.T) {
 	removed := removedRows(map[string]tableCount{"existing": {Present: true, Rows: 2}, "grown": {Rows: 1}}, map[string]tableCount{"existing": {Present: true, Rows: 1}, "grown": {Rows: 3}})
 	if len(removed) != 1 || removed["existing"] != 1 {
 		t.Fatal("row loss was not measured")
+	}
+}
+
+func TestReductionOnOneChainCannotBeMaskedByAnotherChainsGrowth(t *testing.T) {
+	a := chainScope(pgtype.Text{String: "chain-a", Valid: true}, 2)
+	b := chainScope(pgtype.Text{String: "chain-b", Valid: true}, 1)
+	before := map[string]tableCount{"fixture_table": {Present: true, Rows: 3, Scopes: []scopeCount{a, b}}}
+	a.Rows, b.Rows = 1, 2
+	after := map[string]tableCount{"fixture_table": {Present: true, Rows: 3, Scopes: []scopeCount{a, b}}}
+	if len(removedRows(before, after)) != 0 {
+		t.Fatal("control should have unchanged table total")
+	}
+	reductions := reducedScopes(before, after)
+	if len(reductions) != 1 || reductions[0].Scope != "chain" || reductions[0].ChainID == nil || *reductions[0].ChainID != "chain-a" || reductions[0].RowsReduced != 1 || reductions[0].Before != 2 || reductions[0].After != 1 {
+		t.Fatal("a chain-local count decrease was hidden by growth elsewhere")
+	}
+	if len(reducedScopes(after, after)) != 0 {
+		t.Fatal("stable chain buckets should be idempotent")
+	}
+}
+
+func TestNullEmptyAndLegacyChainScopesStayDistinct(t *testing.T) {
+	null := chainScope(pgtype.Text{}, 1)
+	empty := chainScope(pgtype.Text{String: "", Valid: true}, 1)
+	legacy := scopeCount{Scope: "legacy_without_chain_id", Rows: 1}
+	if null.Scope != "null_chain_id" || null.ChainID != nil || empty.Scope != "chain" || empty.ChainID == nil || *empty.ChainID != "" || keyForScope(null) == keyForScope(empty) || keyForScope(null) == keyForScope(legacy) {
+		t.Fatal("NULL, empty chain ID and an absent legacy column must not alias")
+	}
+	before := map[string]tableCount{"fixture_table": {Present: true, Rows: 2, Scopes: []scopeCount{null, empty}}}
+	empty.Rows = 2
+	after := map[string]tableCount{"fixture_table": {Present: true, Rows: 2, Scopes: []scopeCount{empty}}}
+	changes := reducedScopes(before, after)
+	if len(changes) != 1 || changes[0].Scope != "null_chain_id" || changes[0].RowsReduced != 1 {
+		t.Fatal("reclassification of NULL rows must require review despite an unchanged total")
+	}
+	legacyBefore := map[string]tableCount{"fixture_table": {Present: true, Rows: 1, Scopes: []scopeCount{legacy}}}
+	namedAfter := map[string]tableCount{"fixture_table": {Present: true, Rows: 1, Scopes: []scopeCount{chainScope(pgtype.Text{String: "betanet", Valid: true}, 1)}}}
+	if changes := reducedScopes(legacyBefore, namedAfter); len(changes) != 1 || changes[0].Scope != "legacy_without_chain_id" {
+		t.Fatal("adding a chain column must not silently approve reclassification")
+	}
+}
+
+func TestAWholeChainOrTableDisappearingRequiresReview(t *testing.T) {
+	before := map[string]tableCount{"fixture_table": {Present: true, Rows: 3, Scopes: []scopeCount{chainScope(pgtype.Text{String: "chain-a", Valid: true}, 3)}}}
+	after := map[string]tableCount{"fixture_table": {Present: false, Scopes: []scopeCount{}}}
+	changes := reducedScopes(before, after)
+	if len(changes) != 1 || changes[0].After != 0 || changes[0].RowsReduced != 3 || removedRows(before, after)["fixture_table"] != 3 {
+		t.Fatal("a disappeared chain must be reported explicitly")
 	}
 }

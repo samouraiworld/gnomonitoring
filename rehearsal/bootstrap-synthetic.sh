@@ -38,10 +38,12 @@ CREATE TABLE public.daily_participations (
  proposed boolean NOT NULL DEFAULT false
 );
 INSERT INTO public.addr_monikers (chain_id, addr, moniker, first_active_block, voting_power)
- VALUES ('synthetic-chain', 'g1synthetic', 'synthetic-validator', -1, 1);
+ VALUES ('synthetic-chain', 'g1synthetic', 'synthetic-validator', -1, 1),
+        ('synthetic-peer-chain', 'g1synthetic', 'synthetic-validator', -1, 1);
 INSERT INTO public.daily_participations (date, block_height, chain_id, moniker, addr, participated, tx_contribution)
  VALUES ('2026-10-26T12:00:00Z', 9, 'synthetic-chain', 'synthetic-validator', 'g1synthetic', false, false),
-        ('2026-10-26T12:01:00Z', 10, 'synthetic-chain', 'synthetic-validator', 'g1synthetic', true, false);
+        ('2026-10-26T12:01:00Z', 10, 'synthetic-chain', 'synthetic-validator', 'g1synthetic', true, false),
+        ('2026-10-26T12:01:00Z', 9, 'synthetic-peer-chain', 'synthetic-validator', 'g1synthetic', true, false);
 SQL
 
 printf 'postgresql://rehearsal_owner@/gnomonitoring_rehearsal_%s?host=/run/rehearsal-postgres&sslmode=disable\n' \

@@ -12,10 +12,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 )
 
@@ -26,8 +28,26 @@ const expectedDatabaseSourceSHA = "b89ab62f218255680065eaca18db81bfe86c53ded9667
 var databaseSourceSHA = "unrecorded"
 
 type tableCount struct {
-	Present bool  `json:"present"`
-	Rows    int64 `json:"rows"`
+	Present            bool         `json:"present"`
+	Rows               int64        `json:"rows"`
+	ChainScoped        bool         `json:"chain_scoped"`
+	ChainColumnPresent bool         `json:"chain_column_present"`
+	Scopes             []scopeCount `json:"scopes"`
+}
+
+type scopeCount struct {
+	Scope   string  `json:"scope"`
+	ChainID *string `json:"chain_id,omitempty"`
+	Rows    int64   `json:"rows"`
+}
+
+type scopeReduction struct {
+	Table       string  `json:"table"`
+	Scope       string  `json:"scope"`
+	ChainID     *string `json:"chain_id,omitempty"`
+	Before      int64   `json:"before"`
+	After       int64   `json:"after"`
+	RowsReduced int64   `json:"rows_reduced"`
 }
 
 type result struct {
@@ -38,6 +58,7 @@ type result struct {
 	Before            map[string]tableCount `json:"before,omitempty"`
 	After             map[string]tableCount `json:"after,omitempty"`
 	RowsRemoved       map[string]int64      `json:"rows_removed,omitempty"`
+	ScopeReductions   []scopeReduction      `json:"scope_reductions,omitempty"`
 	PrivateLog        string                `json:"private_log,omitempty"`
 }
 
@@ -129,7 +150,8 @@ func run(arguments []string) (result, int) {
 		return fail("clone_snapshot_after_failed")
 	}
 	report.RowsRemoved = removedRows(report.Before, report.After)
-	if len(report.RowsRemoved) != 0 {
+	report.ScopeReductions = reducedScopes(report.Before, report.After)
+	if len(report.RowsRemoved) != 0 || len(report.ScopeReductions) != 0 {
 		report.Status = "completed_requires_deletion_review"
 		return report, 3
 	}
@@ -191,15 +213,91 @@ func snapshot(ctx context.Context, connection *pgx.Conn) (map[string]tableCount,
 		if err := connection.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, "public."+table).Scan(&exists); err != nil {
 			return nil, err
 		}
-		count := tableCount{Present: exists}
+		count := tableCount{Present: exists, ChainScoped: table != "admin_configs", Scopes: []scopeCount{}}
 		if exists {
-			if err := connection.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{"public", table}.Sanitize()).Scan(&count.Rows); err != nil {
-				return nil, err
+			if count.ChainScoped {
+				if err := connection.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns
+ WHERE table_schema='public' AND table_name=$1 AND column_name='chain_id')`, table).Scan(&count.ChainColumnPresent); err != nil {
+					return nil, err
+				}
+			}
+			if count.ChainColumnPresent {
+				rows, err := connection.Query(ctx, "SELECT chain_id, count(*) FROM "+pgx.Identifier{"public", table}.Sanitize()+" GROUP BY chain_id ORDER BY chain_id NULLS FIRST")
+				if err != nil {
+					return nil, err
+				}
+				for rows.Next() {
+					var chainID pgtype.Text
+					var total int64
+					if err := rows.Scan(&chainID, &total); err != nil {
+						rows.Close()
+						return nil, err
+					}
+					count.Scopes = append(count.Scopes, chainScope(chainID, total))
+				}
+				rows.Close()
+				if err := rows.Err(); err != nil {
+					return nil, err
+				}
+			} else {
+				scope := scopeCount{Scope: "global"}
+				if count.ChainScoped {
+					scope.Scope = "legacy_without_chain_id"
+				}
+				if err := connection.QueryRow(ctx, "SELECT count(*) FROM "+pgx.Identifier{"public", table}.Sanitize()).Scan(&scope.Rows); err != nil {
+					return nil, err
+				}
+				count.Scopes = append(count.Scopes, scope)
+			}
+			for _, scope := range count.Scopes {
+				count.Rows += scope.Rows
 			}
 		}
 		counts[table] = count
 	}
 	return counts, nil
+}
+
+func chainScope(chainID pgtype.Text, rows int64) scopeCount {
+	if !chainID.Valid {
+		return scopeCount{Scope: "null_chain_id", Rows: rows}
+	}
+	value := chainID.String
+	return scopeCount{Scope: "chain", ChainID: &value, Rows: rows}
+}
+
+type scopeKey struct {
+	Scope, ChainID string
+}
+
+func keyForScope(scope scopeCount) scopeKey {
+	key := scopeKey{Scope: scope.Scope}
+	if scope.ChainID != nil {
+		key.ChainID = *scope.ChainID
+	}
+	return key
+}
+
+func reducedScopes(before, after map[string]tableCount) []scopeReduction {
+	tables := make([]string, 0, len(before))
+	for table := range before {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+	var reductions []scopeReduction
+	for _, table := range tables {
+		afterRows := map[scopeKey]int64{}
+		for _, scope := range after[table].Scopes {
+			afterRows[keyForScope(scope)] = scope.Rows
+		}
+		for _, scope := range before[table].Scopes {
+			remaining := afterRows[keyForScope(scope)]
+			if scope.Rows > remaining {
+				reductions = append(reductions, scopeReduction{Table: table, Scope: scope.Scope, ChainID: scope.ChainID, Before: scope.Rows, After: remaining, RowsReduced: scope.Rows - remaining})
+			}
+		}
+	}
+	return reductions
 }
 
 func removedRows(before, after map[string]tableCount) map[string]int64 {

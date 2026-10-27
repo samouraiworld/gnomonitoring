@@ -17,6 +17,7 @@ BASE = "92ed63fe7eb5ec54327aff36dc2bcaf2e6f24968"
 DB_SOURCE_SHA = "b89ab62f218255680065eaca18db81bfe86c53ded9667bb4c839e59eeb43eff9"
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = ROOT / "rehearsal/compose.synthetic.yml"
+VOLUME_TEMPLATE = '{"Name":{{json .Name}},"Driver":{{json .Driver}},"Options":{{json .Options}},"Scope":{{json .Scope}},"Labels":{{json .Labels}}}'
 HELPER_FILES = {"backend/cmd/rehearse-initdb/" + name for name in ["main.go", "guard.go", "guard_test.go", "fd_linux.go", "fd_darwin.go"]}
 
 
@@ -115,6 +116,7 @@ class Runner:
         socket = approved_socket(docker_socket)
         self.output = output
         self.sequence = 0
+        self.stage = "initial_checks"
         self.clone_id = secrets.token_hex(16)
         self.project = "gnomon-rehearsal-" + self.clone_id
         self.environment = {key: value for key, value in os.environ.items() if key in {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"}}
@@ -144,7 +146,7 @@ class Runner:
                 os.chmod(path, 0o600)
                 handle.write(content)
         if completed.returncode not in allowed:
-            raise Refused("synthetic_step_failed_see_private_logs")
+            raise Refused(f"synthetic_step_failed_{self.stage}_exit_{completed.returncode}")
         return completed.stdout.decode("utf-8"), completed.returncode
 
     def fresh_volumes(self):
@@ -163,10 +165,9 @@ class Runner:
         validate_container_fence(json.loads(output), self.project)
 
     def inspect_volume_fence(self):
-        template = '{"Name":{{json .Name}},"Driver":{{json .Driver}},"Options":{{json (index . "Options")}},"Scope":{{json .Scope}},"Labels":{{json (index . "Labels")}}}'
         for suffix in ["pgdata", "socket", "private-logs"]:
             name = f"{self.project}-{suffix}"
-            output, _ = self.command(self.docker + ["volume", "inspect", "--format", template, name])
+            output, _ = self.command(self.docker + ["volume", "inspect", "--format", VOLUME_TEMPLATE, name])
             validate_volume_fence(json.loads(output), name, self.project)
 
     def wait_postgres(self, container):
@@ -227,27 +228,47 @@ class Runner:
         validate_config(json.loads(config), self.project)
         created = False
         postgres_id = None
+        original_error = None
         try:
             created = True
+            self.stage = "build_public_fixture_images"
             self.command(self.compose + ["build", "postgres", "initdb"], timeout=1200)
+            self.stage = "create_postgres"
             self.command(self.compose + ["create", "postgres"])
+            self.stage = "inspect_volumes_before_start"
             self.inspect_volume_fence()
             postgres, _ = self.command(self.compose + ["ps", "--all", "--quiet", "postgres"])
             postgres_id = postgres.strip()
+            self.stage = "inspect_postgres_before_start"
             self.inspect_fence(postgres_id)
+            self.stage = "start_postgres"
             self.command(self.docker + ["start", postgres_id])
             self.wait_postgres(postgres_id)
+            self.stage = "create_initdb"
             self.command(self.compose + ["create", "initdb"])
             initdb, _ = self.command(self.compose + ["ps", "--all", "--quiet", "initdb"])
             self.inspect_fence(initdb.strip())
+            self.stage = "first_initdb_pass"
             first, first_status = self.start_initdb(initdb.strip())
             if first_status != 3 or first.get("status") != "completed_requires_deletion_review" or first.get("rows_removed") != {"daily_participations": 1}:
                 raise Refused("synthetic_cleanup_measurement_mismatch")
+            before_scopes = [{"scope": "chain", "chain_id": "synthetic-chain", "rows": 2},
+                             {"scope": "chain", "chain_id": "synthetic-peer-chain", "rows": 1}]
+            after_scopes = [{"scope": "chain", "chain_id": "synthetic-chain", "rows": 1},
+                            {"scope": "chain", "chain_id": "synthetic-peer-chain", "rows": 1}]
+            reductions = [{"table": "daily_participations", "scope": "chain", "chain_id": "synthetic-chain",
+                           "before": 2, "after": 1, "rows_reduced": 1}]
+            if (first["before"]["daily_participations"].get("scopes") != before_scopes
+                    or first["after"]["daily_participations"].get("scopes") != after_scopes
+                    or first.get("scope_reductions") != reductions):
+                raise Refused("synthetic_chain_scoped_cleanup_mismatch")
+            self.stage = "second_initdb_pass"
             second, second_status = self.start_initdb(initdb.strip())
-            if second_status != 0 or second.get("status") != "completed" or second.get("rows_removed") or first.get("after") != second.get("before") or second.get("before") != second.get("after"):
+            if second_status != 0 or second.get("status") != "completed" or second.get("rows_removed") or second.get("scope_reductions") or first.get("after") != second.get("before") or second.get("before") != second.get("after"):
                 raise Refused("synthetic_idempotence_failed")
             # Corrupt only this fresh synthetic marker and prove refusal before
             # snapshot/migration. This is not a restore or a production query.
+            self.stage = "synthetic_marker_mismatch"
             self.command(self.compose + ["exec", "--no-TTY", "postgres", "psql", "--no-psqlrc", "-v", "ON_ERROR_STOP=1", "-h", "/run/rehearsal-postgres", "-U", "rehearsal_admin", "-d", "gnomonitoring_rehearsal_" + self.clone_id,
                                          "-c", "UPDATE rehearsal_guard.clone_marker SET clone_id='mismatched-synthetic-marker'"])
             refused, refusal_status = self.start_initdb(initdb.strip(), allowed=(0, 1))
@@ -258,24 +279,38 @@ class Runner:
                       "helper_working_tree_source_sha256": helper_sources,
                       "first_pass": first, "second_pass": second, "marker_mismatch_refused_before_migration": True, "production_data_used": False,
                       "restore_performed": False, "image_publication_performed": False}
+        except BaseException as error:
+            original_error = error
+            raise
         finally:
-            if created:
-                self.command(self.compose + ["logs", "--no-color", "postgres"], allowed=(0, 1))
-                if not postgres_id:
-                    container, _ = self.command(self.compose + ["ps", "--all", "--quiet", "postgres"], allowed=(0, 1))
-                    postgres_id = container.strip() or None
-                if postgres_id:
-                    self.command(self.docker + ["cp", f"{postgres_id}:/run/rehearsal-private", str(self.output / "database-private-logs")], allowed=(0, 1))
-                self.command(self.compose + ["down", "--volumes"], timeout=120)
-                self.command(self.docker + ["image", "rm", f"{self.project}-postgres:local-only", f"{self.project}-initdb:local-only"], allowed=(0, 1))
-                self.fresh_volumes()
-                images, _ = self.command(self.docker + ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}", "--filter", f"reference={self.project}-*:local-only"])
-                if images.strip():
-                    raise Refused("synthetic_image_cleanup_incomplete")
+            try:
+                if created:
+                    self.stage = "cleanup"
+                    self.cleanup(postgres_id)
+            except BaseException:
+                if original_error is None:
+                    raise
+                # Preserve the first failure class, never command arguments or
+                # raw private logs. A failed cleanup cannot claim completion.
+                print(json.dumps({"status": "synthetic_cleanup_failed"}))
         report["owned_resources_cleanup_verified"] = True
         (self.output / "synthetic-summary.json").write_text(json.dumps(report, indent=2) + "\n")
         os.chmod(self.output / "synthetic-summary.json", 0o600)
         return report
+
+    def cleanup(self, postgres_id):
+        self.command(self.compose + ["logs", "--no-color", "postgres"], allowed=(0, 1))
+        if not postgres_id:
+            container, _ = self.command(self.compose + ["ps", "--all", "--quiet", "postgres"], allowed=(0, 1))
+            postgres_id = container.strip() or None
+        if postgres_id:
+            self.command(self.docker + ["cp", f"{postgres_id}:/run/rehearsal-private", str(self.output / "database-private-logs")], allowed=(0, 1))
+        self.command(self.compose + ["down", "--volumes"], timeout=120)
+        self.command(self.docker + ["image", "rm", f"{self.project}-postgres:local-only", f"{self.project}-initdb:local-only"], allowed=(0, 1))
+        self.fresh_volumes()
+        images, _ = self.command(self.docker + ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}", "--filter", f"reference={self.project}-*:local-only"])
+        if images.strip():
+            raise Refused("synthetic_image_cleanup_incomplete")
 
 
 def main():

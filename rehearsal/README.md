@@ -34,7 +34,7 @@ To execute only the synthetic fixture, first create an empty absolute directory 
 python3 rehearsal/run-synthetic.py --execute-synthetic --private-output-dir /absolute/private/empty-directory
 ```
 
-The fixture builds local-only helper images, starts a fresh PostgreSQL 16.15 enclave, and seeds invented rows. It deliberately supplies one pre-activation missed row. InitDB backfills the activation height and removes that row: the first pass must report exactly one removed row and **exit 3**, requiring deletion review. The second pass must exit 0 with unchanged counts. A subsequent mismatched synthetic marker must be refused before migration. The runner records these expectations and removes only its own containers, volumes and local image tags.
+The fixture builds local-only helper images, starts a fresh PostgreSQL 16.15 enclave, and seeds invented rows on two chains that share a validator address and block height. It deliberately supplies one pre-activation missed row on `synthetic-chain`; the peer chain's signed row must remain. InitDB backfills the activation height and removes that missed row: the first pass must report exactly one removed row and **exit 3**, requiring deletion review. The second pass must exit 0 with unchanged per-chain counts. A subsequent mismatched synthetic marker must be refused before migration. The runner records these expectations and removes only its own containers, volumes and local image tags.
 
 The fixture PostgreSQL manifest is pinned to the official multi-platform digest `postgres:16@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97`. This is a synthetic test image, not evidence that a previous production application image can restart against a migrated database.
 
@@ -42,7 +42,9 @@ The fixture PostgreSQL manifest is pinned to the official multi-platform digest 
 
 Only stable error classes and aggregate table counts are written to normal stdout. InitDB/GORM SQL errors and details are captured at file-descriptor level into mode-0600 files in the private clone volume, including loggers initialized before main. The synthetic runner copies these into the requested private output directory before removing its volumes. Do not commit or publish these logs; a future real clone could contain sensitive SQL details.
 
-Exit 1 means refusal or failure. Exit 3 means migration completed but table counts decreased and require explicit review. Every counted table is reported as present/absent and with before/after counts. A second successful run does not retroactively approve deletions reported by the first. Snapshot queries and lock/statement waits are bounded; a timeout does not mean rollback or compatibility succeeded.
+Exit 1 means refusal or failure. Exit 3 means migration completed but a table or scope count decreased and requires explicit review. Every counted table is reported as present/absent. The seven known multi-chain tables are grouped by `chain_id`; their total is derived by summing those groups. Only `admin_configs` is global according to its model. The `scopes` entries distinguish a named chain (including the empty string), `null_chain_id`, and a legacy table whose `chain_id` column is absent (`legacy_without_chain_id`). No legacy chain assignment is guessed before migration.
+
+`rows_removed` reports net table-count decreases, while `scope_reductions` reports every chain/bucket decrease even if growth on another chain keeps the total unchanged. A bucket change can be chain reclassification rather than a SQL DELETE, so it requires investigation rather than an automatic data-loss conclusion. Only chain identifiers and aggregate counts are reported, never row payloads. A second successful run does not retroactively approve changes reported by the first. Snapshot queries and lock/statement waits are bounded; a timeout does not mean rollback or compatibility succeeded.
 
 ## Handoff for a future approved clone
 
