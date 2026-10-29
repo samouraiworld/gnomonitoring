@@ -8,30 +8,36 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  security:
+    name: Publication security checks
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+
   build-push:
-    name: Build and push Docker image
+    name: Build, scan and push Docker image
+    needs: security
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/gnomonitoring-server
           tags: |
@@ -41,41 +47,53 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push
+      - name: Build locally without publishing
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./backend
           file: ./backend/Dockerfile
-          push: true
+          platforms: linux/amd64
+          load: true
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  scan:
-    name: Trivy vulnerability scan
-    needs: build-push
-    runs-on: ubuntu-latest
-    permissions:
-      packages: read
+      - name: Block vulnerable image before registry login or publication
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        env:
+          TRIVY_IGNOREFILE: /dev/null
+        with:
+          version: v0.76.1
+          image-ref: ${{ steps.build.outputs.imageid }}
+          trivy-config: /dev/null
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: 'false'
+          exit-code: '1'
+          format: table
+          timeout: 10m
 
-    steps:
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get short SHA
-        id: sha
-        run: echo "short=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
-
-      - name: Run Trivy on pushed image
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/gnomonitoring-server:sha-${{ steps.sha.outputs.short }}
-          format: table
-          severity: CRITICAL,HIGH
-          exit-code: 0
+      - name: Publish only the image ID that passed scanning
+        env:
+          SCANNED_IMAGE_ID: ${{ steps.build.outputs.imageid }}
+          PUBLICATION_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          [[ "$SCANNED_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ -n "$PUBLICATION_TAGS" ]]
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]]
+            docker image tag "$SCANNED_IMAGE_ID" "$tag"
+            docker image push "$tag"
+          done <<< "$PUBLICATION_TAGS"

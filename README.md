@@ -682,6 +682,11 @@ Response:
 
 ##### Validator Health Report
 
+Precommit-lag p50/p90, sample freshness and the chain-level live BFT margin
+are available separately through `GET /api/reports/consensus`. See the
+[validator observability API contract](docs/api-validator-observability.md)
+for units, windows, missing data and caching. The health response below stays unchanged.
+
 Per-validator health score (0–100), tier, and alert metrics over four rolling periods. Always available, no authentication required, same as the other public dashboard endpoints above.
 
 ```

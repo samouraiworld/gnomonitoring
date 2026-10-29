@@ -1,0 +1,7 @@
+# Fixture PostgreSQL 16.15, resolved from the official manifest on 2026-10-27.
+# This is a synthetic enclave, not a replacement for an observed rollback image.
+FROM postgres:16@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97
+RUN test "$(id -u postgres)" -eq 999 \
+ && install -d -o 999 -g 999 -m 0700 /run/rehearsal-postgres /run/rehearsal-private
+COPY --chown=999:999 --chmod=0644 bootstrap-synthetic.sh /docker-entrypoint-initdb.d/10-rehearsal.sh
+USER 999:999

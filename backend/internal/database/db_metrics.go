@@ -565,17 +565,21 @@ func GetMissedBlocksMultiWindow(db *gorm.DB, chainID string) ([]MissedMultiWindo
 }
 
 type PrecommitLatencyMultiWindow struct {
-	Addr         string   `gorm:"column:addr"`
-	Moniker      string   `gorm:"column:moniker"`
-	LagP50_1h    *float64 `gorm:"column:lag_p50_1h"`
-	LagP90_1h    *float64 `gorm:"column:lag_p90_1h"`
-	LagP50_24h   *float64 `gorm:"column:lag_p50_24h"`
-	LagP90_24h   *float64 `gorm:"column:lag_p90_24h"`
-	LagP50_7d    *float64 `gorm:"column:lag_p50_7d"`
-	LagP90_7d    *float64 `gorm:"column:lag_p90_7d"`
-	LateRatio1h  *float64 `gorm:"column:late_ratio_1h"`
-	LateRatio24h *float64 `gorm:"column:late_ratio_24h"`
-	LateRatio7d  *float64 `gorm:"column:late_ratio_7d"`
+	Samples24h    int64      `gorm:"column:samples_24h"`
+	Samples7d     int64      `gorm:"column:samples_7d"`
+	LastSample24h *time.Time `gorm:"column:last_sample_24h"`
+	LastSample7d  *time.Time `gorm:"column:last_sample_7d"`
+	Addr          string     `gorm:"column:addr"`
+	Moniker       string     `gorm:"column:moniker"`
+	LagP50_1h     *float64   `gorm:"column:lag_p50_1h"`
+	LagP90_1h     *float64   `gorm:"column:lag_p90_1h"`
+	LagP50_24h    *float64   `gorm:"column:lag_p50_24h"`
+	LagP90_24h    *float64   `gorm:"column:lag_p90_24h"`
+	LagP50_7d     *float64   `gorm:"column:lag_p50_7d"`
+	LagP90_7d     *float64   `gorm:"column:lag_p90_7d"`
+	LateRatio1h   *float64   `gorm:"column:late_ratio_1h"`
+	LateRatio24h  *float64   `gorm:"column:late_ratio_24h"`
+	LateRatio7d   *float64   `gorm:"column:late_ratio_7d"`
 }
 
 // GetPrecommitLatencyMultiWindow returns, per validator, the p50/p90 precommit
@@ -588,6 +592,10 @@ func GetPrecommitLatencyMultiWindow(db *gorm.DB, chainID string) ([]PrecommitLat
 	var results []PrecommitLatencyMultiWindow
 	query := `
 		SELECT
+			COUNT(*) FILTER (WHERE dp.date >= NOW() - INTERVAL '24 hours') AS samples_24h,
+			COUNT(*) AS samples_7d,
+			MAX(dp.date) FILTER (WHERE dp.date >= NOW() - INTERVAL '24 hours') AS last_sample_24h,
+			MAX(dp.date) AS last_sample_7d,
 			dp.addr,
 			` + MonikerSQL("dp.chain_id", "dp.addr", MonikerFallbackAddr) + ` AS moniker,
 			percentile_cont(0.5) WITHIN GROUP (ORDER BY dp.precommit_lag_ms) FILTER (WHERE dp.date >= NOW() - INTERVAL '1 hour')   AS lag_p50_1h,
