@@ -243,6 +243,24 @@ Entries are ordered newest-first within each section.
 
 ### Fixed
 
+- **Clerk tokens no longer go through go-jose v3 (CVE-2026-116587)** —
+  clerk-sdk-go parsed every bearer token with go-jose v3, which validates an
+  RSA private key embedded in a JWS `jwk` header before any signature check,
+  so any caller could burn the API's CPU without credentials. go-jose v3 has
+  no patched release, and the required "Security gate" check failed on it for
+  every PR. clerk-sdk-go is replaced by `internal/clerkauth`: Clerk session
+  tokens are verified with go-jose v4 against the instance's JWKS, fetched
+  from the Backend API with `clerk_secret_key`, and the admin role is read
+  with a direct `GET /users/{id}`. Same checks as the SDK (RS256 signature by
+  the key named by `kid`, `exp`/`nbf`/`iat` with no leeway, Clerk issuer),
+  same one-hour key cache (kept 24 hours more while the JWKS cannot be
+  fetched, so a Backend API outage does not refuse every user) and same answers (`403` without a token or for one
+  that does not parse, `401` for a refused one). Stricter: a token without
+  `exp` or `sub` is refused. A token naming an unknown key refetches the JWKS
+  at most once every 10 seconds. No configuration change. go-jose v4 goes from
+  v4.1.4 to v4.1.6, which refuses private key material in a header JWK (same
+  CVE).
+
 - **Telegram validator lists no longer reorder the shared cache** — the
   participation, uptime, operation time, tx contribution and missing blocks
   lists sorted the slice cached in `metricsCache` in place when no filter

@@ -5,11 +5,23 @@ selected at runtime by the `auth_provider` key in `config.yaml`:
 
 | `auth_provider` | Token verification | Admin check |
 | --- | --- | --- |
-| `clerk` (default) | `clerkhttp.RequireHeaderAuthorization()` | live Clerk API call — `clerkuser.Get`, then `publicMetadata.role == "admin"` |
+| `clerk` (default) | JWKS signature/issuer/expiry check against the instance's keys, fetched from Clerk's Backend API with `clerk_secret_key` (`internal/clerkauth`) | live Clerk API call — `GET /users/{id}`, then `publicMetadata.role == "admin"` |
 | `keycloak` | JWKS signature/issuer/expiry check against the realm's OIDC discovery document (`internal/keycloakauth`) | the `admin` role on the `gnomonitoring-panel` **client**, read straight out of the validated token |
 
 Both paths ship in the binary. Switching provider — in either direction — is a
 config edit plus a restart, never a code change or a revert.
+
+Clerk tokens are verified in-house with go-jose v4, not with clerk-sdk-go: that
+SDK parses tokens with go-jose v3, which has no fix for CVE-2026-116587 (a
+crafted RSA key in a JWS `jwk` header burns CPU before any signature check).
+`internal/clerkauth` keeps the SDK's checks (RS256 signature by a key of the
+instance's JWKS named by `kid`, `exp`/`nbf`/`iat` with no leeway, Clerk issuer),
+its key cache (a key is trusted for one hour after the JWKS that published it
+was fetched; while the JWKS cannot be fetched, 24 hours more, with a log line)
+and its answers: `403` without a token or for one that does not
+parse, `401` for a refused one. A token naming an unknown key refetches the
+JWKS at most once every 10 seconds, so forged tokens cannot exhaust the Backend
+API rate limit the admin lookups share.
 
 `dev_mode: true` bypasses all of this, unchanged: the user id comes from the
 `X-Debug-UserID` header, or defaults to `local-dev-user`.
