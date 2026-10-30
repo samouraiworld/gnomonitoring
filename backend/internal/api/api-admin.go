@@ -9,49 +9,57 @@ import (
 	"strings"
 	"time"
 
-	clerk "github.com/clerk/clerk-sdk-go/v2"
-	clerkuser "github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/chainmanager"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/clerkauth"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/govdao"
 	"gorm.io/gorm"
 )
 
+// clerkUsers reads a Clerk user's public metadata; *clerkauth.Client is the
+// production implementation.
+type clerkUsers interface {
+	UserPublicMetadata(ctx context.Context, userID string) (json.RawMessage, error)
+}
+
 // adminRoleMiddleware checks that the authenticated Clerk user has { "role": "admin" }
-// in their publicMetadata. Must be chained after clerkhttp.RequireHeaderAuthorization().
-func adminRoleMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims, ok := clerk.SessionClaimsFromContext(r.Context())
-		if !ok {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
+// in their publicMetadata, read live from Clerk. Must be chained after the Clerk
+// middleware (clerkauth.Client.Middleware).
+func adminRoleMiddleware(users clerkUsers) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := clerkauth.ClaimsFromContext(r.Context())
+			if !ok {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
 
-		u, err := clerkuser.Get(r.Context(), claims.Subject)
-		if err != nil {
-			log.Printf("[admin] failed to fetch user %s: %v", claims.Subject, err)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
+			publicMetadata, err := users.UserPublicMetadata(r.Context(), claims.Subject)
+			if err != nil {
+				log.Printf("[admin] failed to fetch user %s: %v", claims.Subject, err)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
 
-		var meta map[string]interface{}
-		if len(u.PublicMetadata) > 0 {
-			if err := json.Unmarshal(u.PublicMetadata, &meta); err != nil {
+			var meta map[string]interface{}
+			if len(publicMetadata) > 0 {
+				if err := json.Unmarshal(publicMetadata, &meta); err != nil {
+					http.Error(w, "Forbidden", http.StatusForbidden)
+					return
+				}
+			}
+
+			role, _ := meta["role"].(string)
+			if role != "admin" {
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}
-		}
 
-		role, _ := meta["role"].(string)
-		if role != "admin" {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // writeJSON encodes v as JSON and sets the appropriate Content-Type header.

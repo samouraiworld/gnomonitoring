@@ -1,6 +1,6 @@
 // Package keycloakauth validates bearer JWTs issued by the Keycloak
 // `gno-world` realm and exposes the claims this backend cares about. It is
-// the replacement for the previous clerk-sdk-go/v2-based verification, and
+// the replacement for the Clerk verification (internal/clerkauth), and
 // runs alongside it while `auth_provider` can still be flipped back to
 // "clerk" (see internal/api/auth.go).
 //
@@ -180,7 +180,7 @@ type contextKey struct{}
 // Middleware validates the Authorization: Bearer <token> header and, on
 // success, stores the parsed Claims on the request context for downstream
 // handlers (ClaimsFromContext). On failure it writes 401 itself and does not
-// call next — mirroring clerkhttp.RequireHeaderAuthorization's behaviour so
+// call next — mirroring the Clerk middleware (clerkauth.Client.Middleware) so
 // the existing corsThenAuth wrapping in api.go/api-admin.go needs no
 // structural change, only a different `protect` function.
 func (v *Verifier) Middleware(next http.Handler) http.Handler {
