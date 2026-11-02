@@ -5,9 +5,12 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	jose "github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/clerkauth/clerktest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,6 +70,9 @@ func TestVerifyToken_Refusals(t *testing.T) {
 		{"not valid yet", api.TokenWith(t, "user_1", map[string]any{"nbf": time.Now().Add(time.Minute).Unix()})},
 		{"issued in the future", api.TokenWith(t, "user_1", map[string]any{"iat": time.Now().Add(time.Minute).Unix()})},
 		{"names no key", api.TokenWithoutKeyID(t, "user_1")},
+		{"names a key the JWKS lacks", api.TokenWithKeyID(t, "user_1", "ins_unknown")},
+		{"signed with HS256", hs256Token(t)},
+		{"oversized", oversizedToken(t, api)},
 		{"signed by another key", api.TokenSignedByStranger(t, "user_1")},
 		{"issuer is not a Clerk Frontend API", api.TokenWith(t, "user_1", map[string]any{"iss": "https://evil.example"})},
 		{"no subject", api.TokenWith(t, "", nil)},
@@ -229,6 +235,71 @@ func TestVerifyToken_WaitForFetchEndsWithContext(t *testing.T) {
 	assert.Zero(t, api.JWKSRequests())
 }
 
+// An empty JWKS is a fault, not the withdrawal of every key: the cached keys
+// stay usable, as when the fetch fails.
+func TestVerifyToken_EmptyJWKSKeepsCachedKeys(t *testing.T) {
+	api := clerktest.NewAPI(t)
+	c := newTestClient(t, api)
+	now := time.Now()
+	c.keys.now = func() time.Time { return now }
+	token := api.TokenWith(t, "user_1", map[string]any{"exp": now.Add(3 * time.Hour).Unix()})
+
+	_, err := c.VerifyToken(context.Background(), token)
+	require.NoError(t, err)
+
+	api.SetJWKSEmpty(true)
+	now = now.Add(keyMaxAge)
+	_, err = c.VerifyToken(context.Background(), token)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), api.JWKSRequests())
+}
+
+// clerk-sdk-go refused a token whose key the JWKS publishes for another alg.
+func TestVerifyToken_RefusesKeyPublishedForAnotherAlgorithm(t *testing.T) {
+	api := clerktest.NewAPI(t)
+	api.SetKeyAlgorithm(string(jose.RS512))
+	c := newTestClient(t, api)
+
+	_, err := c.VerifyToken(context.Background(), api.Token(t, "user_1"))
+	assert.ErrorContains(t, err, "not an RS256 signing key")
+}
+
+// A token signed with another algorithm is refused by the algorithm check,
+// before any key is looked up, not merely by a failed RSA verification.
+func TestVerifyToken_RefusesOtherAlgorithmBeforeKeyLookup(t *testing.T) {
+	api := clerktest.NewAPI(t)
+	c := newTestClient(t, api)
+
+	_, err := c.VerifyToken(context.Background(), hs256Token(t))
+	assert.ErrorContains(t, err, "not RS256")
+	assert.Zero(t, api.JWKSRequests())
+}
+
+// hs256Token mints a Clerk-shaped token signed with HS256, which the JWKS key
+// never verifies.
+func hs256Token(t *testing.T) string {
+	t.Helper()
+	signer, err := jose.NewSigner(
+		jose.SigningKey{Algorithm: jose.HS256, Key: []byte("0123456789abcdef0123456789abcdef")},
+		(&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), "clerktest-key-1"),
+	)
+	require.NoError(t, err)
+	now := time.Now()
+	raw, err := jwt.Signed(signer).Claims(map[string]any{
+		"iss": clerktest.Issuer, "sub": "user_1", "exp": now.Add(time.Minute).Unix(), "iat": now.Unix(),
+	}).Serialize()
+	require.NoError(t, err)
+	return raw
+}
+
+// oversizedToken mints a valid token padded past maxTokenBytes.
+func oversizedToken(t *testing.T, api *clerktest.API) string {
+	t.Helper()
+	token := api.TokenWith(t, "user_1", map[string]any{"pad": strings.Repeat("a", maxTokenBytes)})
+	require.Greater(t, len(token), maxTokenBytes)
+	return token
+}
+
 func unsignedToken() string {
 	enc := base64.RawURLEncoding.EncodeToString
 	return enc([]byte(`{"alg":"none"}`)) + "." + enc([]byte(`{"sub":"user_1","iss":"https://clerk.clerktest.example"}`)) + "."
@@ -259,7 +330,10 @@ func TestMiddleware(t *testing.T) {
 		// The answers clerk-sdk-go's RequireHeaderAuthorization gave.
 		{"no token", "", http.StatusForbidden},
 		{"token that does not parse", "Bearer not-a-jwt", http.StatusForbidden},
+		{"oversized token, refused before parsing", "Bearer " + oversizedToken(t, api), http.StatusForbidden},
 		{"refused token", "Bearer " + api.TokenSignedByStranger(t, "user_1"), http.StatusUnauthorized},
+		{"token naming an unknown key", "Bearer " + api.TokenWithKeyID(t, "user_1", "ins_unknown"), http.StatusUnauthorized},
+		{"token signed with HS256", "Bearer " + hs256Token(t), http.StatusUnauthorized},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

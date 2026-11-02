@@ -39,19 +39,21 @@ type API struct {
 
 	jwksRequests atomic.Int64
 	jwksDown     atomic.Bool
+	jwksEmpty    atomic.Bool
 
-	mu       sync.Mutex
-	key      *rsa.PrivateKey // the key the JWKS publishes and Token signs with
-	keyID    string
-	rotation int
-	users    map[string]json.RawMessage // user id -> public_metadata
+	mu           sync.Mutex
+	key          *rsa.PrivateKey // the key the JWKS publishes and Token signs with
+	keyID        string
+	keyAlgorithm string // the "alg" the JWKS publishes for the key
+	rotation     int
+	users        map[string]json.RawMessage // user id -> public_metadata
 }
 
 // NewAPI starts the fake API and stops it when the test ends.
 func NewAPI(t *testing.T) *API {
 	t.Helper()
 
-	a := &API{users: map[string]json.RawMessage{}}
+	a := &API{users: map[string]json.RawMessage{}, keyAlgorithm: string(jose.RS256)}
 	a.RotateKey(t)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/jwks", func(w http.ResponseWriter, r *http.Request) {
@@ -64,11 +66,14 @@ func NewAPI(t *testing.T) *API {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		a.mu.Lock()
-		jwk := jose.JSONWebKey{Key: &a.key.PublicKey, KeyID: a.keyID, Algorithm: string(jose.RS256), Use: "sig"}
-		a.mu.Unlock()
+		set := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{}}
+		if !a.jwksEmpty.Load() {
+			a.mu.Lock()
+			set.Keys = append(set.Keys, jose.JSONWebKey{Key: &a.key.PublicKey, KeyID: a.keyID, Algorithm: a.keyAlgorithm, Use: "sig"})
+			a.mu.Unlock()
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{jwk}})
+		_ = json.NewEncoder(w).Encode(set)
 	})
 	mux.HandleFunc("GET /v1/users/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if !authorized(r) {
@@ -127,6 +132,20 @@ func (a *API) SetJWKSDown(down bool) {
 	a.jwksDown.Store(down)
 }
 
+// SetJWKSEmpty makes the JWKS endpoint answer 200 with no key (true) or with
+// the current key again (false).
+func (a *API) SetJWKSEmpty(empty bool) {
+	a.jwksEmpty.Store(empty)
+}
+
+// SetKeyAlgorithm sets the "alg" the JWKS publishes for the current key; the
+// key and the tokens Token mints stay RS256.
+func (a *API) SetKeyAlgorithm(alg string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.keyAlgorithm = alg
+}
+
 // JWKSRequests is the number of requests the JWKS endpoint has received.
 func (a *API) JWKSRequests() int64 {
 	return a.jwksRequests.Load()
@@ -156,6 +175,16 @@ func (a *API) TokenWithoutKeyID(t *testing.T, subject string) string {
 	key := a.key
 	a.mu.Unlock()
 	return sign(t, key, "", subject, nil)
+}
+
+// TokenWithKeyID mints a token signed by the API's current key that names
+// keyID instead of the current key id.
+func (a *API) TokenWithKeyID(t *testing.T, subject, keyID string) string {
+	t.Helper()
+	a.mu.Lock()
+	key := a.key
+	a.mu.Unlock()
+	return sign(t, key, keyID, subject, nil)
 }
 
 // TokenSignedByStranger mints a token that names the API's current key id but

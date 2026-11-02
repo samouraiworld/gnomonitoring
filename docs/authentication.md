@@ -19,7 +19,8 @@ instance's JWKS named by `kid`, `exp`/`nbf`/`iat` with no leeway, Clerk issuer),
 its key cache (a key is trusted for one hour after the JWKS that published it
 was fetched; while the JWKS cannot be fetched, 24 hours more, with a log line)
 and its answers: `403` without a token or for one that does not
-parse, `401` for a refused one. A token naming an unknown key refetches the
+parse (including one over 8 KiB, refused unparsed), `401` for a refused one.
+A token naming an unknown key refetches the
 JWKS at most once every 10 seconds, so forged tokens cannot exhaust the Backend
 API rate limit the admin lookups share.
 
