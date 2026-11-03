@@ -7,6 +7,14 @@ Entries are ordered newest-first within each section.
 
 ## [Unreleased]
 
+### Security
+
+- **Panel runtime libexpat updated to 2.10.0-r0** — replace the 2.9.0-r0
+  library inherited from the pinned nginx image. This fixes CVE-2026-117610
+  and CVE-2026-118370, both HIGH findings in the runtime-image security gate.
+  The nginx and Node base-image digests, application dependencies and scanner
+  policy stay unchanged.
+
 ### Changed
 
 - **Validator monikers resolve through one shared rule** — every query that
