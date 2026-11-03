@@ -1,0 +1,12 @@
+# Installed as /etc/cron.d/gnomonitoring-pg-backup (owner root, mode 0644).
+#
+# Daily Postgres backup at 03:30 in the server's time zone: check it with
+# `timedatectl` and shift the hour if the server is not on UTC.
+# Output goes to syslog/journald (rotated by the system):
+#   journalctl -t gnomonitoring-pg-backup
+# The script notifies Discord itself on failure, so cron mail is not needed.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=""
+
+30 3 * * * root /usr/local/sbin/pg-backup-scaleway.sh 2>&1 | logger -t gnomonitoring-pg-backup

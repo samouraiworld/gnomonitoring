@@ -95,6 +95,18 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **Daily encrypted Postgres backup to Scaleway Object Storage** — the
+  production database had no backup since the SQLite to Postgres move.
+  `ops/backup/pg-backup-scaleway.sh` (root cron, 03:30) streams
+  `pg_dump -Fc` from the Postgres container into `age` (public keys only, no
+  plaintext on disk), uploads `postgres/gnomonitoring-<UTC>.dump.age`, checks
+  the stored size, and posts to a Discord webhook when a run fails. Config is a
+  root-only env file read as data; the webhook never appears on argv.
+  `pg-restore-test.sh` restores a backup into a throwaway `postgres:16`
+  container and compares row counts with `pg-row-counts.sh` output;
+  `e2e-test.sh` runs the whole chain locally against MinIO. Install, retention
+  and disaster recovery: `ops/backup/README.md`.
+
 - **Public consensus observations** — `GET /api/reports/consensus` exposes
   chain-scoped precommit-lag p50/p90 for 24h and 7d with exact sample counts
   and last sample dates, plus the live block-window BFT margin. Missing,
