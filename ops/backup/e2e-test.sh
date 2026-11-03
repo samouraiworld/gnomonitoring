@@ -6,7 +6,8 @@
 # a MinIO container standing in for Scaleway Object Storage, a throwaway age
 # key pair and a local HTTP listener standing in for the Discord webhook.
 # The test itself only talks to the loopback and reads no production data;
-# Docker may pull postgres:16 and minio/minio, and Go may download modules.
+# Docker may pull PostgreSQL/build base images; MinIO is built from pinned
+# official source and Go may download modules. No production image is published.
 #
 # Checks: a pre-flight check, a real backup run, the object is age ciphertext
 # with the verified size, no file is left in the work directory, the success
@@ -36,6 +37,7 @@ rows=${E2E_ROWS:-1000000}
 run_id="w17e2e$$"
 pg="gnomonitoring-backup-e2e-pg-$$"
 s3="gnomonitoring-backup-e2e-s3-$$"
+minio_image="gnomonitoring-backup-minio-e2e:$run_id"
 tmp=$(mktemp -d)
 stub_pid=
 lock_pid=
@@ -54,6 +56,7 @@ cleanup() {
 	[[ -z $stub_pid ]] || kill "$stub_pid" 2>/dev/null || true
 	[[ -z $lock_pid ]] || kill "$lock_pid" 2>/dev/null || true
 	docker rm -f -v "$pg" "$s3" >/dev/null 2>&1 || true
+	docker image rm "$minio_image" >/dev/null 2>&1 || true
 	rm -rf -- "$tmp"
 	exit "$status"
 }
@@ -79,13 +82,16 @@ wait_for() {
 	exit 1
 }
 
+log "building the pinned-source S3 fixture"
+docker build -t "$minio_image" -f "$here/Dockerfile.minio-e2e" "$here"
+
 log "starting disposable Postgres ($pg) and MinIO ($s3)"
 docker run -d --name "$pg" -p 127.0.0.1::5432 \
 	-e POSTGRES_USER=gnomonitoring -e POSTGRES_PASSWORD="$run_id" -e POSTGRES_DB=gnomonitoring \
 	postgres:16 >/dev/null
 docker run -d --name "$s3" -p 127.0.0.1::9000 \
 	-e MINIO_ROOT_USER="$run_id" -e MINIO_ROOT_PASSWORD="$run_id-secret" -e MINIO_REGION=fr-par \
-	minio/minio:latest server /data >/dev/null
+	"$minio_image" server /data >/dev/null
 pg_port=$(docker port "$pg" 5432/tcp | head -n 1 | sed 's/.*://')
 s3_port=$(docker port "$s3" 9000/tcp | head -n 1 | sed 's/.*://')
 wait_for Postgres docker exec "$pg" pg_isready -q -h 127.0.0.1 -U gnomonitoring -d gnomonitoring

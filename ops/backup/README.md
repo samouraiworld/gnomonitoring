@@ -1,5 +1,12 @@
 # Postgres backup to Scaleway Object Storage
 
+**Installation status, November 3:** the read-only [server inventory](https://github.com/samouraiworld/gnomonitoring/actions/runs/41618476401)
+found the documented scripts/config/cron/recipient files absent, `age` unavailable
+and no objects in the documented `gnomonitoring/postgres/` prefix. PostgreSQL was
+running and healthy. This is not a search of other storage locations and does not
+certify a production restore. The steps below are an installation proposal, not
+proof of an active daily backup.
+
 A root cron job on the production server takes a daily logical dump of the
 gnomonitoring database, encrypts it with [age](https://age-encryption.org) to
 public keys only, uploads it to Scaleway Object Storage and checks the stored
@@ -29,6 +36,7 @@ it is not suited to an unattended daily run.
 | `pg-row-counts.sh` | exact row count of every table, read-only, for the restore check |
 | `pg-restore-test.sh` | decrypt, restore into a throwaway `postgres:16` container, compare row counts |
 | `e2e-test.sh` | local end-to-end test of all of the above (Docker, MinIO, loopback only) |
+| `Dockerfile.minio-e2e` | disposable S3 fixture built from official MinIO source revision `9e49d5e7`; no retired prebuilt image required |
 
 What a run does, step by step (the step name appears in the failure message):
 
@@ -379,3 +387,24 @@ docker run --rm -v "$PWD/ops/backup:/mnt:ro" koalaman/shellcheck:stable \
   or a long transaction blocked `pg_dump`; the next run retries.
 - A warning about stale `gnomonitoring-pg-backup.*` directories: a run was
   killed before its cleanup; remove those directories from `WORK_DIR`.
+
+## Reproducible synthetic fixture
+
+The old `minio/minio:latest` pull fails on a clean runner. The e2e test builds
+its own temporary image from official source commit
+[`9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`](https://github.com/minio/minio/commit/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a)
+(the `RELEASE.2025-10-15T17-29-55Z` tag), with pinned build/runtime base digests.
+MinIO's [source-only distribution](https://github.com/minio/minio#source-only-distribution)
+is separate from the production backup destination, which remains Scaleway.
+This fixture is used only with synthetic data, disposable credentials and
+loopback ports; no production key, dump, application configuration or webhook
+is supplied. Its container and per-run image tag are removed after the test.
+The MinIO license is included in the image. This does not propose deploying
+MinIO as a backup service.
+
+The dedicated `backup-e2e.yml` workflow runs the complete test on an ephemeral
+Linux runner, including encryption, S3 upload/size verification, decryption,
+restore/count comparison, wrong-key refusal, bounded drift, overlapping runs,
+configuration failures and dump timeout/session cleanup. Its notification
+checks use a local HTTP stub only. A green synthetic result does not establish
+that a production backup exists or can be recovered.

@@ -1,0 +1,13 @@
+# Disposable S3 fixture only. The retired minio/minio Docker Hub image cannot
+# be pulled on a clean runner; build the official source revision instead.
+FROM golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS build
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
+RUN go install -ldflags="-s -w" github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+
+FROM gcr.io/distroless/static-debian12@sha256:d75cdd72874d4790092fcb1b058493ecf6bb5bf2b2b897045b00ff01d91843f2
+COPY --from=build /go/bin/minio /minio
+COPY --from=build /go/pkg/mod/github.com/minio/minio@*/LICENSE /licenses/minio/LICENSE
+ENV MINIO_UPDATE=off
+WORKDIR /data
+EXPOSE 9000
+ENTRYPOINT ["/minio"]
