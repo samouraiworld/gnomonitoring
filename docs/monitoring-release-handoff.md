@@ -32,6 +32,25 @@ signature (401). Return only commit, UTC date, session provenance and results.
 The auth package in the integration is byte-identical to #189, so a result on
 that exact auth head applies to the verifier; retest if its code changes.
 
+## November 3 panel finding and combined candidate
+
+Fresh scans on documentation PR #192 found two HIGH libexpat findings in the
+panel runtime that were absent from the recorded November 2 scan. Panel
+[#193](https://github.com/samouraiworld/gnomonitoring/pull/193), commit
+`b146d7cb489a95609187a76813039abc3ddd6fd6`, pins `libexpat=2.10.0-r0` in the
+existing APK upgrade. A local negative control detects CVE-2026-117610 and
+CVE-2026-118370 before the change; the patched image has zero HIGH/CRITICAL
+findings with the same Trivy v0.76.1 DB and passes the hosted panel image scan.
+Its frontend files and nginx configuration are unchanged. This candidate-image
+finding does not establish a vulnerability in the separately hosted live panel.
+
+The release-candidate branch combines #191, #192 and #193 while leaving all
+three reference heads unchanged. Its backend runtime code matches `2053a5b`
+and its panel source matches `b146d7c`. Validate the combined candidate's required
+checks before merging; the separate main-based branches each lack the other
+image's fix and cannot pass the complete gate independently. The original real
+Memba session test requirement remains; this combination does not fulfil it.
+
 ## Publication is currently held
 
 On November 3, the GitHub Actions API reports `Build_backend_image.yml`
