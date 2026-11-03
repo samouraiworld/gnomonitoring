@@ -1,25 +1,308 @@
-name: Deploy to prod
+name: "DO NOT MERGE - read-only backup inspection"
+run-name: "Read-only backup inspection (${{ github.sha }})"
 
 on:
   workflow_dispatch:
 
-jobs:
-  deploy:
-    name: Deploy to prod
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+concurrency:
+  group: gnomonitoring-readonly-backup-inspection
+  cancel-in-progress: false
+
+jobs:
+  boundary:
+    name: Verify inspection boundary before SSH
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          script: |
-            # gnomonitoringv2 is the live Postgres-era project; ~/gnomonitoring is the
-            # retired SQLite-era dir (renamed *-legacy-sqlite on the box) — deploying
-            # there crashloops the backend with an empty database DSN (2026-07-10).
-            cd gnomonitoringv2
-            docker compose pull
-            docker compose up -d
+          persist-credentials: false
+      - run: python3 -B -m unittest discover -s ops/inspection -p 'test_*.py' -v
+      - run: python3 ops/inspection/check_embedded_source.py
+
+  inspect:
+    needs: boundary
+    name: Read backup installation and object metadata only
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'samouraiworld/gnomonitoring' &&
+      github.ref == 'refs/heads/chore/monitoring-backup-inspection-20261103'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read fixed backup metadata over pinned SSH
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SSH_HOST:-}" || -z "${SSH_USER:-}" || -z "${SSH_PRIVATE_KEY:-}" ]]; then
+            echo 'Required SSH connection secrets are unavailable.' >&2
+            exit 1
+          fi
+          if [[ ! "$SSH_HOST" =~ ^[A-Za-z0-9._:-]+$ || ! "$SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo 'Unexpected SSH connection metadata format.' >&2
+            exit 1
+          fi
+          umask 077
+          inspection_dir=$(mktemp -d "${RUNNER_TEMP}/gnomonitoring-inspection.XXXXXXXX")
+          key_file=$inspection_dir/identity
+          known_hosts_file=$inspection_dir/known_hosts
+          cleanup() {
+            rm -f -- "$key_file" "$known_hosts_file"
+            rmdir -- "$inspection_dir"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          cat > "$known_hosts_file" <<'TRUSTED_HOST_KEYS'
+          gnomonitoring-prod-inspection ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIbkopwdGXdS6c4xUy7kG9uRWF+w1I/mczSeLmMLN82Q
+          gnomonitoring-prod-inspection ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDmGElc3AS+OdQ70v0hkzJTlabxPOs6shsINMwWJsOm4+O8YHs3fmk9O3en9e2Z0fk50z43c4GZjUSEhovWC4N7elnvKA2yYHDaQjV/xLGR/2QHXCFkNoXRFu70dc8K8BW+GQOuAWYfXd5YDPaRZzxWbT2I+QV9cV659s9wBei6puX/Py0+rc65Yy6RUzDhjQsKJ1x/vlxPrhiu4d0q76nIlAxin+hhK9O/OkAcPTAZecMKFKCFqS6l6UnMwlfwkIqpSeTYdvuRhx658JiobyEuvoV/7XjT6aw3uhJ6mFa6Ce0W+VBu7KTbVRDk4cgYIsllucT8zcBpH2eN6rdFio0NTuBceLfifpj3VFv0WufYZbXRM47BUSmtgWNjHHlMWxwU42BDJ7hREt9onF+QDiPZQqt/XLAtE66NHhbrGmYAHycNG3INIqm9utYazda8I2S6aH5kv3jHm2cvfF4kJJRJBjBGvLnbTQXEQ42WrhRaBKT2Eq3x9h01gO4B8IDIaLs=
+          gnomonitoring-prod-inspection ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBOihyr3TeI90KAIG202gdARL25tM9T+6fFKLoKtB044ST7Rhb5POmhWJgrQKr6sYYOnwLluwY5pTZ7c0xebf0d0=
+          TRUSTED_HOST_KEYS
+          inspection_host=$SSH_HOST
+          inspection_user=$SSH_USER
+          unset SSH_HOST SSH_USER SSH_PRIVATE_KEY
+
+          timeout 180s ssh -F /dev/null -T \
+            -i "$key_file" -l "$inspection_user" -p 22 \
+            -o "UserKnownHostsFile=$known_hosts_file" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o HostKeyAlias=gnomonitoring-prod-inspection \
+            -o StrictHostKeyChecking=yes -o UpdateHostKeys=no \
+            -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes \
+            -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+            -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+            -o ClearAllForwardings=yes -o PermitLocalCommand=no -o LogLevel=ERROR \
+            -- "$inspection_host" 'python3 -I -' <<'REMOTE_BACKUP_INVENTORY'
+          #!/usr/bin/env python3
+          """Read fixed backup metadata only; never invoke a backup, restore or notifier."""
+          import datetime
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import stat
+          import subprocess
+          import sys
+
+          FILES = {
+              'backup_script': ('/usr/local/sbin/pg-backup-scaleway.sh', True),
+              'row_count_script': ('/usr/local/sbin/pg-row-counts.sh', True),
+              'cron_file': ('/etc/cron.d/gnomonitoring-pg-backup', True),
+              'backup_config': ('/etc/gnomonitoring/pg-backup.env', False),
+              'public_recipients': ('/etc/gnomonitoring/pg-backup.recipients', False),
+          }
+          AWS_PREFIX = ['aws', '--endpoint-url', 'https://s3.fr-par.scw.cloud', '--region', 'fr-par', 's3api']
+          ALLOWED_AWS = {'list-objects-v2', 'head-object', 'get-bucket-lifecycle-configuration', 'get-bucket-versioning'}
+
+
+          def run_command(args):
+              try:
+                  p = subprocess.run(args, capture_output=True, text=True, timeout=18, check=False)
+                  if len(p.stdout) > 2 * 1024 * 1024 or len(p.stderr) > 65536:
+                      return 1, '', 'bounded_output_exceeded'
+                  return p.returncode, p.stdout, p.stderr
+              except (OSError, subprocess.TimeoutExpired):
+                  return 1, '', 'unavailable'
+
+
+          def metadata(path, checksum=False):
+              try:
+                  p = Path(path)
+                  info = p.lstat()
+                  result = {'exists': True, 'regular': stat.S_ISREG(info.st_mode),
+                            'symlink': stat.S_ISLNK(info.st_mode), 'uid': info.st_uid,
+                            'mode': oct(stat.S_IMODE(info.st_mode)), 'bytes': info.st_size,
+                            'modified_utc': datetime.datetime.fromtimestamp(info.st_mtime, datetime.timezone.utc).isoformat()}
+                  if checksum and result['regular'] and info.st_size <= 1024 * 1024:
+                      result['sha256'] = hashlib.sha256(p.read_bytes()).hexdigest()
+                  return result
+              except FileNotFoundError:
+                  return {'exists': False}
+              except OSError:
+                  return {'accessible': False}
+
+
+          def aws(operation, arguments, runner):
+              if operation not in ALLOWED_AWS:
+                  raise ValueError('unsupported operation')
+              code, out, err = runner(AWS_PREFIX + [operation, '--bucket', 'gnomonitoring', '--output', 'json'] + arguments)
+              if code:
+                  category = 'unavailable'
+                  for marker, name in [('AccessDenied', 'access_denied'), ('NoSuchBucket', 'missing_bucket'),
+                                       ('NoSuchLifecycleConfiguration', 'not_configured')]:
+                      if marker in err:
+                          category = name
+                  return {'status': category}, None
+              try:
+                  data = json.loads(out)
+                  if not isinstance(data, dict):
+                      raise ValueError('not an object')
+                  return {'status': 'ok'}, data
+              except (ValueError, TypeError):
+                  return {'status': 'invalid_response'}, None
+
+
+          def objects(prefix, runner):
+              valid, foreign, truncated = [], 0, False
+              token = None
+              for page in range(5):
+                  args = ['--prefix', prefix, '--max-keys', '1000', '--no-paginate']
+                  if token:
+                      args += ['--continuation-token', token]
+                  state, data = aws('list-objects-v2', args, runner)
+                  if data is None:
+                      return state
+                  entries = data.get('Contents') or []
+                  if not isinstance(entries, list):
+                      return {'status': 'invalid_response'}
+                  for entry in entries:
+                      if not isinstance(entry, dict):
+                          continue
+                      key = entry.get('Key', '')
+                      matches = isinstance(key, str) and bool(re.fullmatch(r'postgres/gnomonitoring-[0-9]{8}T[0-9]{6}Z\.dump\.age', key))
+                      if matches and isinstance(entry.get('Size'), int) and isinstance(entry.get('LastModified'), str):
+                          valid.append(entry)
+                      else:
+                          foreign += 1
+                  truncated = bool(data.get('IsTruncated'))
+                  if not truncated:
+                      break
+                  token = data.get('NextContinuationToken')
+                  if not isinstance(token, str) or not token:
+                      return {'status': 'invalid_pagination'}
+              result = {'status': 'ok', 'matching_object_count': len(valid),
+                        'other_object_count': foreign, 'truncated': truncated,
+                        'content_downloaded': False, 'restore_verified': False}
+              if valid:
+                  newest = max(valid, key=lambda x: x['LastModified'])
+                  result['newest_modified_utc'] = newest['LastModified']
+                  result['newest_bytes'] = newest['Size']
+                  state, head = aws('head-object', ['--key', newest['Key']], runner)
+                  result['newest_head_status'] = state['status']
+                  if head is not None:
+                      result['newest_head_size_matches_listing'] = head.get('ContentLength') == newest['Size']
+              return result
+
+
+          def postgres_state(runner):
+              args = ['docker', 'ps', '--all', '--quiet', '--no-trunc',
+                      '--filter', 'label=com.docker.compose.project=gnomonitoringv2',
+                      '--filter', 'label=com.docker.compose.service=postgres']
+              code, out, _ = runner(args)
+              if code:
+                  return {'status': 'unavailable'}
+              ids = out.split()
+              if not ids:
+                  return {'status': 'not_found'}
+              if len(ids) > 3 or any(not re.fullmatch(r'[0-9a-f]{64}', x) for x in ids):
+                  return {'status': 'unexpected_selection'}
+              template = '{"id":{{json .Id}},"image":{{json .Image}},"status":{{json .State.Status}},"started_at":{{json .State.StartedAt}},"health":{{with .State.Health}}{{json .Status}}{{else}}"not_configured"{{end}}}'
+              selected = []
+              for container in ids:
+                  code, out, _ = runner(['docker', 'inspect', '--type', 'container', '--format', template, container])
+                  if code:
+                      return {'status': 'unavailable'}
+                  try:
+                      data = json.loads(out)
+                      selected.append({key: data.get(key) for key in ['id', 'image', 'status', 'started_at', 'health']})
+                  except (ValueError, AttributeError):
+                      return {'status': 'invalid_response'}
+              return {'status': 'ok', 'containers': selected}
+
+
+          def inventory(runner=run_command, files=FILES):
+              result = {'format_version': 1, 'observed_at_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        'operator_uid': os.getuid(), 'scope': 'documented installation and fixed gnomonitoring/postgres/ target',
+                        'read_only': True, 'restore_verified': False,
+                        'tools': {x: shutil.which(x) is not None for x in ['aws', 'docker', 'age', 'flock', 'curl']},
+                        'files': {name: metadata(path, checksum) for name, (path, checksum) in files.items()}}
+              result['postgres'] = postgres_state(runner)
+              code, out, _ = runner(['crontab', '-l'])
+              if code == 0:
+                  active = [line for line in out.splitlines() if line.strip() and not line.lstrip().startswith('#')]
+                  result['operator_crontab'] = {
+                      'readable': True,
+                      'postgres_backup_reference_count': sum('pg-backup-scaleway.sh' in x for x in active),
+                      'legacy_backup_reference_count': sum('backup_chain.sh' in x or 'backup_sqlite' in x for x in active),
+                  }
+              else:
+                  result['operator_crontab'] = {'readable': False}
+              if result['tools']['aws']:
+                  result['documented_postgres_objects'] = objects('postgres/', runner)
+                  state, data = aws('get-bucket-versioning', [], runner)
+                  result['bucket_versioning'] = state
+                  if data is not None:
+                      status = data.get('Status', 'not_enabled')
+                      result['bucket_versioning']['value'] = status if status in ['Enabled', 'Suspended'] else 'not_enabled'
+                  state, data = aws('get-bucket-lifecycle-configuration', [], runner)
+                  result['bucket_lifecycle'] = state
+                  if data is not None:
+                      rules = data.get('Rules') or []
+                      result['bucket_lifecycle']['rule_count'] = len(rules)
+                      result['bucket_lifecycle']['enabled_postgres_expiration_days'] = [
+                          rule['Expiration']['Days'] for rule in rules if isinstance(rule, dict)
+                          and rule.get('Status') == 'Enabled'
+                          and (rule.get('Filter', {}).get('Prefix') == 'postgres/' or rule.get('Prefix') == 'postgres/')
+                          and isinstance(rule.get('Expiration', {}).get('Days'), int)]
+              else:
+                  result['documented_postgres_objects'] = {'status': 'aws_unavailable'}
+              return result
+
+
+          if __name__ == '__main__':
+              try:
+                  print(json.dumps(inventory(), sort_keys=True))
+              except Exception:
+                  # Do not expose raw provider responses, cron lines or config values.
+                  print(json.dumps({'format_version': 1, 'status': 'inspection_failed', 'read_only': True}))
+                  sys.exit(1)
+          REMOTE_BACKUP_INVENTORY
+
+  synthetic:
+    name: Synthetic backup and restore using candidate schema
+    needs: boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+      E2E_ROWS: '1000000'
+    steps:
+      - name: Check out the release candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: ab5d87757d6274fcdebc50b7fd2cf92e9f32904e
+          path: candidate
+          persist-credentials: false
+      - name: Check out the exact backup-tool PR
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: aeed6837471702fe7f8517510f3898df5fc11493
+          path: backup-tools
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Prepare isolated synthetic tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y age
+          command -v aws docker go age age-keygen curl python3 flock
+          mkdir -p candidate/ops
+          cp -R backup-tools/ops/backup candidate/ops/backup
+      - name: Exercise synthetic dump, encryption, upload and restore
+        working-directory: candidate
+        run: bash ops/backup/e2e-test.sh
