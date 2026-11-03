@@ -1,5 +1,9 @@
 # Verify the deployed service before changing it
 
+For the pending Clerk-verifier/first-incident release, see the dated
+[release handoff](monitoring-release-handoff.md), including the publication hold,
+real-session check and backend-only image return procedure.
+
 A successful image build establishes what can be deployed. It does not establish
 which image is running. A checkout's HEAD also does not identify an already
 running container.
