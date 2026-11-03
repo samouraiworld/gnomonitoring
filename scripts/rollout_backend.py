@@ -25,14 +25,14 @@ SERVICE = "detect-proposal"
 # Read only selected metadata. Never request full inspect output or Env.
 CONTAINER_FORMAT = '''{"id":{{json .Id}},"image":{{json .Image}},
 "status":{{json .State.Status}},"started":{{json .State.StartedAt}},
-"health":{{with .State.Health}}{{json .Status}}{{else}}null{{end}},
+"health":{{with index .State "Health"}}{{json .Status}}{{else}}null{{end}},
 "project":{{json (index .Config.Labels "com.docker.compose.project")}},
 "service":{{json (index .Config.Labels "com.docker.compose.service")}},
 "files":{{json (index .Config.Labels "com.docker.compose.project.config_files")}},
 "directory":{{json (index .Config.Labels "com.docker.compose.project.working_dir")}}}'''
 IMAGE_FORMAT = '''{"id":{{json .Id}},"digests":{{json .RepoDigests}},
-"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},
-"source":{{json (index .Config.Labels "org.opencontainers.image.source")}}}'''
+"revision":{{with index .Config "Labels"}}{{json (index . "org.opencontainers.image.revision")}}{{else}}null{{end}},
+"source":{{with index .Config "Labels"}}{{json (index . "org.opencontainers.image.source")}}{{else}}null{{end}}}'''
 
 
 class Refused(Exception):
@@ -126,7 +126,15 @@ def prepare(args):
     require(len(before) > 1, "no_protected_services")
     for row in before.values():
         require(row["project"] == args.project and row["directory"] == str(directory) and
-                row["files"] == ",".join(files), "effective_compose_mismatch")
+                isinstance(row["files"], str), "effective_compose_mismatch")
+        recorded_files = row["files"].split(",")
+        # Only the replaced backend gains a new pin in its Compose labels.
+        # Protected containers keep their older labels; requiring equality here
+        # would make the next rollout/image return impossible without recreating
+        # PostgreSQL. Require its original file chain to remain a prefix instead.
+        require(recorded_files == files if row["service"] == SERVICE else
+                bool(recorded_files) and recorded_files == files[:len(recorded_files)],
+                "effective_compose_mismatch")
         require(row["status"] == "running" and row["health"] not in ("unhealthy", "starting"),
                 "existing_service_not_ready")
     candidate = inspect_image(args.image)

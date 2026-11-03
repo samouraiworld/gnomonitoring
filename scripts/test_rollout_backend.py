@@ -47,6 +47,7 @@ if a[0] == 'compose':
 elif a[0] == 'inspect':
     backend = a[-1] != 'b' * 64
     files = [str(project / 'production.yml'), str(project / 'operator override.yml')]
+    if backend and os.environ.get('CURRENT_PIN'): files.append(str(project / 'previous-release.yml'))
     if backend and applied: files.append(str(project / 'release.yml'))
     if os.environ.get('WRONG_FILES'): files.reverse()
     print(json.dumps(dict(id=a[-1], image='sha256:' + ('d' if backend and applied else 'c') * 64,
@@ -114,6 +115,22 @@ else:
         self.assertEqual(record["before"][DATABASE], record["after"][DATABASE])
         self.assertEqual(json.loads(self.receipt.read_text())["status"], "preflight_record_not_completion")
         self.assertTrue(Path(str(self.receipt) + ".applied.json").is_file())
+
+    def test_subsequent_rollout_preserves_old_database_labels(self):
+        pin = self.project / "previous-release.yml"
+        pin.write_text("services: {}\n")
+        result = self.run_script("--compose-file", str(pin), CURRENT_PIN="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_no_mutation()
+
+    def test_return_after_release_does_not_require_recreating_database(self):
+        pin = self.project / "previous-release.yml"
+        pin.write_text("services: {}\n")
+        result = self.run_script("--compose-file", str(pin), "--apply",
+                                 "--receipt", str(self.receipt), CURRENT_PIN="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record = json.loads(result.stdout)
+        self.assertEqual(record["before"][DATABASE], record["after"][DATABASE])
 
     def test_tag_instead_of_digest_is_refused_before_docker(self):
         result = self.run_script("--image", "ghcr.io/samouraiworld/gnomonitoring-server:latest")

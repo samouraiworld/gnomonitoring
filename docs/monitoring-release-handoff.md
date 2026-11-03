@@ -138,6 +138,49 @@ pin), and pass the freshly inspected backend ID/image with the recorded previous
 published digest/revision. Preserve that complete override chain afterwards.
 The unscoped workflow described next remains unsuitable for this release.
 
+### Manual SSH runner
+
+The **Targeted backend release** workflow is a separate `workflow_dispatch`
+entry point. It has no push, schedule or PR deployment trigger. The SSH job
+requires this repository's main ref, repeats the boundary tests, checks the
+image revision belongs to reviewed main history, uses the existing SSH secrets
+and the public host keys previously verified by read-only inspection. It never
+uses `ssh-keyscan`, disables host checking or requests a new key from an operator.
+
+Public inputs select `plan` (default), `pull`, or `apply`; exact image digest,
+full revision, freshly inspected backend container/image IDs and a stable new
+release ID are required. Reuse that release ID between plan and apply. `pull`
+only caches the selected digest and then plans; `apply` does not pull images.
+Do not select apply until the real-session and real-recovery prerequisites are
+recorded, publication has passed its image scan, and the final plan is reviewed.
+The runner does not validate those operator proofs merely because apply was
+selected. It does not enable image publication or invoke the old global deploy.
+
+The validated request and reviewed Python sources travel on SSH stdin; the
+remote command is always `python3 -I -`. Inputs cannot select shell commands,
+source files, host, project or a retired deployment directory. The target is
+`~/gnomonitoringv2`, project `gnomonitoringv2`, service `detect-proposal`; effective
+Compose paths come from the verified current backend labels, retaining prior
+pins in order. Protected containers may still record a prefix of that file
+chain because they were deliberately not recreated. Their identities and
+original metadata must remain unchanged after each operation.
+
+Receipts and pins stay mode 0600 in that project; the runner emits selected
+provenance and fixed diagnostics, never environment/config contents. The SSH
+key and source bundle are removed from the ephemeral runner. Bundle hashes
+detect accidental corruption; trust comes from reviewed source and pinned SSH,
+not the hashes alone. No real production execution of this runner is claimed.
+
+The opt-in `test_rollout_backend_docker.py` rehearsal builds two invented amd64
+sleep images, publishes them only to a disposable registry bound to the Docker
+host loopback, then tests plan, forward apply and image return against a real
+disposable PostgreSQL. Only the IMAGE reference pattern is patched inside that
+test process to accept the fixture registry; production has no fixture switch.
+All other provenance, file, snapshot and Compose checks run unchanged. Backend
+and PostgreSQL have network mode `none`; a synthetic marker, PostgreSQL ID,
+start time and image must survive both operations. Cleanup targets the exact
+randomly named project and registry, with no production credentials involved.
+
 The existing **Deploy to prod** workflow performs unscoped `docker compose pull`
 and `docker compose up -d`. Do not use it for this backend-only release: it could
 update PostgreSQL or other services at the same time.

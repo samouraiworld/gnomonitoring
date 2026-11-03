@@ -1,0 +1,124 @@
+name: Targeted backend release
+run-name: 'Targeted backend ${{ inputs.operation }} (${{ inputs.release_id }})'
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Plan is read-only; pull caches one digest; apply requires real auth/recovery acceptance'
+        type: choice
+        options: [plan, pull, apply]
+        default: plan
+        required: true
+      image:
+        description: 'Published ghcr.io/samouraiworld/gnomonitoring-server@sha256:...'
+        type: string
+        required: true
+      revision:
+        description: 'Full 40-character image revision in reviewed main history'
+        type: string
+        required: true
+      backend_container:
+        description: 'Freshly inspected current backend container ID (64 hex)'
+        type: string
+        required: true
+      expected_backend_image:
+        description: 'Freshly inspected current backend image ID (sha256:64 hex)'
+        type: string
+        required: true
+      release_id:
+        description: 'New stable ID for plan/apply receipts; lowercase letters, digits, hyphens only'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gnomonitoring-targeted-backend-release
+  cancel-in-progress: false
+
+jobs:
+  boundary-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - run: python3 -B -W error::ResourceWarning -m unittest discover -s scripts -p 'test_*backend*.py' -v
+
+  release:
+    needs: boundary-tests
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'samouraiworld/gnomonitoring' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate public request and render reviewed source bundle
+        id: bundle
+        shell: bash
+        env:
+          REQUEST_OPERATION: ${{ inputs.operation }}
+          REQUEST_IMAGE: ${{ inputs.image }}
+          REQUEST_REVISION: ${{ inputs.revision }}
+          REQUEST_BACKEND_CONTAINER: ${{ inputs.backend_container }}
+          REQUEST_EXPECTED_BACKEND_IMAGE: ${{ inputs.expected_backend_image }}
+          REQUEST_RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          set -euo pipefail
+          umask 077
+          bundle_dir=$(mktemp -d "${RUNNER_TEMP}/gnomonitoring-release.XXXXXXXX")
+          bundle_file=$bundle_dir/payload.py
+          python3 -c 'import json,os; print(json.dumps({key:os.environ["REQUEST_"+key.upper()] for key in ("operation","image","revision","backend_container","expected_backend_image","release_id")}))' |
+            python3 -B scripts/build_backend_release_bundle.py --output "$bundle_file"
+          git merge-base --is-ancestor "$REQUEST_REVISION" HEAD
+          printf 'directory=%s\n' "$bundle_dir" >> "$GITHUB_OUTPUT"
+      - name: Execute only the fixed release target over pinned SSH
+        shell: bash
+        env:
+          BUNDLE_DIRECTORY: ${{ steps.bundle.outputs.directory }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SSH_PRIVATE_KEY:-}" ]]
+          [[ "$SSH_HOST" =~ ^[A-Za-z0-9._:-]+$ && "$SSH_USER" =~ ^[A-Za-z0-9._-]+$ ]]
+          umask 077
+          key_file=$BUNDLE_DIRECTORY/identity
+          known_hosts_file=$BUNDLE_DIRECTORY/known_hosts
+          cleanup() {
+            rm -f -- "$key_file" "$known_hosts_file" "$BUNDLE_DIRECTORY/payload.py"
+            rmdir -- "$BUNDLE_DIRECTORY"
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$key_file"
+          cp .github/deploy-known-hosts "$known_hosts_file"
+          release_host=$SSH_HOST
+          release_user=$SSH_USER
+          unset SSH_HOST SSH_USER SSH_PRIVATE_KEY
+          timeout 480s ssh -F /dev/null -T \
+            -i "$key_file" -l "$release_user" -p 22 \
+            -o "UserKnownHostsFile=$known_hosts_file" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o HostKeyAlias=gnomonitoring-prod-inspection \
+            -o StrictHostKeyChecking=yes -o UpdateHostKeys=no \
+            -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes \
+            -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no \
+            -o ConnectTimeout=10 -o ConnectionAttempts=1 \
+            -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+            -o ClearAllForwardings=yes -o PermitLocalCommand=no -o LogLevel=ERROR \
+            -- "$release_host" 'python3 -I -' < "$BUNDLE_DIRECTORY/payload.py"

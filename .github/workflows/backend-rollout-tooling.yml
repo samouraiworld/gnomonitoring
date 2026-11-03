@@ -3,14 +3,18 @@ name: Targeted backend rollout tooling
 on:
   pull_request:
     paths:
-      - 'scripts/rollout_backend.py'
-      - 'scripts/test_rollout_backend.py'
+      - 'scripts/*backend*.py'
+      - 'scripts/render_inspection_template.go'
+      - '.github/deploy-known-hosts'
+      - '.github/workflows/backend-release.yml'
       - '.github/workflows/backend-rollout-tooling.yml'
   push:
     branches: [main]
     paths:
-      - 'scripts/rollout_backend.py'
-      - 'scripts/test_rollout_backend.py'
+      - 'scripts/*backend*.py'
+      - 'scripts/render_inspection_template.go'
+      - '.github/deploy-known-hosts'
+      - '.github/workflows/backend-release.yml'
       - '.github/workflows/backend-rollout-tooling.yml'
 
 permissions:
@@ -24,5 +28,22 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - name: Test command and mutation boundaries without Docker or credentials
-        run: python3 -B -W error::ResourceWarning -m unittest discover -s scripts -p test_rollout_backend.py -v
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Test command, payload and real-template boundaries without credentials
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s scripts -p 'test_*backend*.py' -v
+
+  synthetic-forward-return:
+    needs: boundary-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Rehearse a real Compose rollout and image return with synthetic PostgreSQL
+        env:
+          RUN_SYNTHETIC_BACKEND_ROLLOUT_TESTS: '1'
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s scripts -p test_rollout_backend_docker.py -v
