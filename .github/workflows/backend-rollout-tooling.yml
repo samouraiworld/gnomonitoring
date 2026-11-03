@@ -1,0 +1,28 @@
+name: Targeted backend rollout tooling
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/rollout_backend.py'
+      - 'scripts/test_rollout_backend.py'
+      - '.github/workflows/backend-rollout-tooling.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/rollout_backend.py'
+      - 'scripts/test_rollout_backend.py'
+      - '.github/workflows/backend-rollout-tooling.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  boundary-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Test command and mutation boundaries without Docker or credentials
+        run: python3 -B -W error::ResourceWarning -m unittest discover -s scripts -p test_rollout_backend.py -v

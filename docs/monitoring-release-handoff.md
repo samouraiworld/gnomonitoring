@@ -98,6 +98,46 @@ roll an old binary back across an incompatible database migration.
 
 ## Targeted backend rollout and return
 
+`scripts/rollout_backend.py` implements the command boundary below. It defaults
+to a read-only plan and never downloads an image. Pull and scan the published
+digest separately, verify the real-session/recovery prerequisites above, then
+run the plan using the freshly inspected full backend container/image IDs:
+
+```bash
+python3 /path/to/reviewed/scripts/rollout_backend.py \
+  --project-directory "$PWD" --project gnomonitoringv2 \
+  --compose-file docker-compose.yml \
+  --backend-container "$CURRENT_BACKEND_CONTAINER_ID" \
+  --expected-backend-image "$CURRENT_BACKEND_IMAGE_ID" \
+  --image "$RELEASE_IMAGE" --revision "$FULL_MERGED_COMMIT" \
+  --override backend-release.override.yml
+```
+
+Repeat `--compose-file` for **every** currently effective file in order. The
+tool refuses a mismatch with container labels, a mutable tag, missing local
+digest, wrong OCI source/revision, a changed backend, an unhealthy/stopped
+existing service or an existing override. It supports one backend replica.
+Planning reads selected metadata only; it never requests environment variables,
+expanded Compose config or database contents.
+
+Only after reviewing that plan, add `--apply --receipt /private/path/rollout.json`
+to the same command. Apply takes a project lock, repeats preflight, creates a
+new mode-0600 persistent pin and immutable preflight receipt, and runs exactly
+the backend-only Compose operation below. Existing files/symlinks are never
+replaced. It checks every other selected service's identity, start time, image
+and state after apply. A separate `.applied.json` receipt means those immediate
+checks passed; **functional and authenticated production acceptance remain
+pending**, including repeated collection checks after startup.
+
+On timeout, Docker failure or a changed protected service, stop and inspect the
+actual state. The tool does not retry, remove the pin, roll back automatically
+or restore a database. The preflight receipt alone is not evidence that apply
+did or did not occur. For a compatible-schema image return, use a **new**
+override basename, retain the current effective files (including the release
+pin), and pass the freshly inspected backend ID/image with the recorded previous
+published digest/revision. Preserve that complete override chain afterwards.
+The unscoped workflow described next remains unsuitable for this release.
+
 The existing **Deploy to prod** workflow performs unscoped `docker compose pull`
 and `docker compose up -d`. Do not use it for this backend-only release: it could
 update PostgreSQL or other services at the same time.
