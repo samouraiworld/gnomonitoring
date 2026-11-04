@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -124,21 +125,47 @@ class RuntimeBoundaries(unittest.TestCase):
     def test_backend_context_verifies_blobs_and_excludes_untracked_config(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "backend").mkdir()
-            contents = {"Dockerfile": b"FROM scratch\n", "main.go": b"package main\n"}
+            contents = {"Dockerfile": b"FROM scratch\n", "main.go": b"package main\n", "internal/nested/x.go": b"package nested\n"}
+            objects = {}
             entries = []
             for name, value in contents.items():
-                (root / "backend" / name).write_bytes(value)
                 digest = hashlib.sha1(b"blob " + str(len(value)).encode() + b"\0" + value).hexdigest()
+                objects[digest] = value
                 entries.append("100644 blob " + digest + "\tbackend/" + name + "\0")
+            # A later checkout and operator configuration never enter the build.
+            (root / "backend").mkdir()
+            (root / "backend/main.go").write_text("package main // later revision")
             (root / "backend/config.yaml").write_text("operator-config-must-not-enter-build")
             command = mock.Mock(return_value=("".join(entries), 0))
-            evidence = RUNTIME.PROVENANCE.freeze_backend(root, root / "frozen", command, RUNTIME.Refused)
-            self.assertEqual(set(evidence["files"]), set(contents))
-            self.assertFalse((root / "frozen/config.yaml").exists())
-            (root / "backend/main.go").write_text("changed")
-            with self.assertRaises(RUNTIME.Refused):
-                RUNTIME.PROVENANCE.freeze_backend(root, root / "rejected", command, RUNTIME.Refused)
+            read_blobs = mock.Mock(side_effect=lambda digests: {digest: objects[digest] for digest in digests})
+            evidence = RUNTIME.PROVENANCE.freeze_backend(root / "frozen", command, read_blobs, RUNTIME.Refused)
+            self.assertEqual(evidence["files"], {name: hashlib.sha256(value).hexdigest() for name, value in contents.items()})
+            frozen = root / "frozen"
+            self.assertEqual({path.relative_to(frozen).as_posix(): path.read_bytes() for path in frozen.rglob("*") if not path.is_dir()}, contents)
+            for path in [frozen, *frozen.rglob("*")]:
+                self.assertEqual(path.stat().st_mode & 0o777, 0o700 if path.is_dir() else 0o600, path)
+            command.assert_called_once_with(["git", "--no-replace-objects", "ls-tree", "-rz", "--full-tree", RUNTIME.PROVENANCE.REVISION, "--", "backend"])
+            read_blobs.assert_called_once_with(sorted(objects))
+            for tampered in [lambda digests: {digest: b"tampered\n" for digest in digests}, lambda digests: {}]:
+                with self.assertRaisesRegex(RUNTIME.Refused, "^backend_source_changed$"):
+                    RUNTIME.PROVENANCE.freeze_backend(root / ("rejected-" + str(id(tampered))), command, tampered, RUNTIME.Refused)
+            linked = mock.Mock(return_value=("120000 blob " + next(iter(objects)) + "\tbackend/link\0", 0))
+            with self.assertRaisesRegex(RUNTIME.Refused, "^unsupported_backend_source_entry$"):
+                RUNTIME.PROVENANCE.freeze_backend(root / "linked", linked, read_blobs, RUNTIME.Refused)
+            self.assertEqual((root / "backend/main.go").read_text(), "package main // later revision")
+
+    def test_pinned_application_revision_is_readable_from_git_objects(self):
+        # The real reader against this repository's own history (CI checks out
+        # with fetch-depth 0): every blob of REVISION is returned, intact.
+        def command(arguments):
+            return subprocess.run(arguments, cwd=RUNTIME.ROOT, capture_output=True, check=True, timeout=60).stdout.decode(), 0
+        listing = command(["git", "--no-replace-objects", "ls-tree", "-r", "--name-only", "--full-tree", RUNTIME.PROVENANCE.REVISION, "--", "backend"])[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            frozen = Path(temporary) / "frozen"
+            evidence = RUNTIME.PROVENANCE.freeze_backend(
+                frozen, command, lambda digests: RUNTIME.RESTORE.FENCES.read_pinned_blobs(digests, {"PATH": os.environ["PATH"]}), RUNTIME.Refused)
+            self.assertEqual(set(evidence["files"]), {path.removeprefix("backend/") for path in listing.split()})
+            self.assertIn("internal/database/db_init.go", evidence["files"])
 
     def test_callback_failure_and_cleanup_failure_publish_no_success(self):
         for fail_body, fail_cleanup in [(True, False), (False, True)]:

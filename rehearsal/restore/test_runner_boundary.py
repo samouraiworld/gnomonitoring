@@ -248,6 +248,7 @@ class RestoreBoundaryTests(unittest.TestCase):
                 service["volumes"].append({"type": "volume", "source": "pgdata", "target": "/var/lib/postgresql/data"})
             else:
                 service["read_only"] = True
+                service["build"] = {"context": str(self.output / "initdb-context"), "dockerfile": str(RUNNER.FENCES.INITDB_DOCKERFILE)}
             config["services"][name] = service
         original_compose = runner.compose[:]
         commands = []
