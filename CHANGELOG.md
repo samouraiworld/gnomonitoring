@@ -7,6 +7,14 @@ Entries are ordered newest-first within each section.
 
 ## [Unreleased]
 
+### Security
+
+- **Panel runtime libexpat updated to 2.10.0-r0** — replace the 2.9.0-r0
+  library inherited from the pinned nginx image. This fixes CVE-2026-117610
+  and CVE-2026-118370, both HIGH findings in the runtime-image security gate.
+  The nginx and Node base-image digests, application dependencies and scanner
+  policy stay unchanged.
+
 ### Changed
 
 - **Validator monikers resolve through one shared rule** — every query that
@@ -267,6 +275,21 @@ Entries are ordered newest-first within each section.
   carries libexpat 2.9.0 (CVE-2026-113351, CVE-2026-117610, CVE-2026-118370,
   all HIGH), which failed the "Security gate" image scan. The serve stage now
   upgrades it to `2.10.0-r0`, pinned next to the existing brotli/curl fixes.
+- **A validator's first CRITICAL is no longer silenced by its own WARNING** —
+  the dead-validator silence treated any earlier WARNING/CRITICAL as a prior
+  incident, including the WARNING of the same incident. A validator that
+  stopped before its first signature had its CRITICAL silenced while down,
+  then sent at recovery a few seconds before the RESOLVED. The silence now
+  applies only to an alert of a level already dispatched for that validator,
+  so its first WARNING and first CRITICAL always go out.
+- **No alert is sent for an incident that is already over** — a missed
+  sequence the validator recovered from before a check saw it used to send a
+  WARNING or CRITICAL immediately followed by its RESOLVED. It is now recorded
+  in `alert_logs` (score, incident history) without any notification.
+- **A RESOLVED now covers the whole missed sequence** — it was stored with
+  the sequence end seen when the alert went out. About 30 minutes after a
+  recovery, the rest of the sequence was taken for a new incident and sent
+  a spurious WARNING. The RESOLVED now ends where the sequence really ended.
 
 - **Telegram validator lists no longer reorder the shared cache** — the
   participation, uptime, operation time, tx contribution and missing blocks

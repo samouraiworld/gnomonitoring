@@ -270,9 +270,11 @@ func TestGetValidatorParticipation_UnionAgregaAndToday(t *testing.T) {
 func TestGetValidatorParticipation_AggregatorLagIncludesUnaggregatedDay(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	chain := "test17"
+	now := time.Now().UTC()
 
 	// Aggregator is lagging: only two days ago has been rolled up.
-	twoDaysAgo := time.Now().UTC().AddDate(0, 0, -2).Format("2006-01-02")
+	twoDaysAgoDate := now.AddDate(0, 0, -2)
+	twoDaysAgo := twoDaysAgoDate.Format("2006-01-02")
 	if err := db.Exec(`INSERT INTO daily_participation_agregas
 		(chain_id, addr, block_date, moniker, participated_count, missed_count,
 		 tx_contribution_count, total_blocks, first_block_height, last_block_height)
@@ -282,7 +284,7 @@ func TestGetValidatorParticipation_AggregatorLagIncludesUnaggregatedDay(t *testi
 	}
 
 	// Yesterday's raw rows: NOT yet aggregated (aggregator lagging).
-	yesterday := time.Now().UTC().AddDate(0, 0, -1)
+	yesterday := now.AddDate(0, 0, -1)
 	yesterdayTS := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 6, 0, 0, 0, time.UTC)
 	if err := db.Exec(`INSERT INTO daily_participations
 		(chain_id, date, block_height, moniker, addr, participated, tx_contribution)
@@ -292,7 +294,6 @@ func TestGetValidatorParticipation_AggregatorLagIncludesUnaggregatedDay(t *testi
 	}
 
 	// Today's raw row.
-	now := time.Now().UTC()
 	todayTS := time.Date(now.Year(), now.Month(), now.Day(), 1, 0, 0, 0, time.UTC)
 	if err := db.Exec(`INSERT INTO daily_participations
 		(chain_id, date, block_height, moniker, addr, participated, tx_contribution)
@@ -314,11 +315,18 @@ func TestGetValidatorParticipation_AggregatorLagIncludesUnaggregatedDay(t *testi
 	if got == nil {
 		t.Fatal("addrA missing from results")
 	}
-	// 10 (aggregated, two days ago) + 1 (yesterday, raw, not yet aggregated) +
-	// 1 (today, raw) = 12, with no double count and no dropped day even though
-	// the aggregator hasn't caught up on yesterday yet.
-	if got.SignedBlocks != 12 || got.TotalBlocks != 12 {
-		t.Fatalf("signed/total = %d/%d, want 12/12 (yesterday must not be dropped nor double-counted)", got.SignedBlocks, got.TotalBlocks)
+	// Normally 10 (aggregated) + 1 (yesterday, raw) + 1 (today, raw).
+	// On the first two UTC days of a month, older fixture rows belong to the
+	// previous month and must be excluded from this current_month report.
+	want := int64(1)
+	if yesterday.Year() == now.Year() && yesterday.Month() == now.Month() {
+		want++
+	}
+	if twoDaysAgoDate.Year() == now.Year() && twoDaysAgoDate.Month() == now.Month() {
+		want += 10
+	}
+	if got.SignedBlocks != want || got.TotalBlocks != want {
+		t.Fatalf("signed/total = %d/%d, want %d/%d (count each in-month fixture row once despite aggregator lag)", got.SignedBlocks, got.TotalBlocks, want, want)
 	}
 }
 
