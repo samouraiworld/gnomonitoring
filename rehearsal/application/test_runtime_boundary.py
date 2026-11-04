@@ -125,7 +125,7 @@ class RuntimeBoundaries(unittest.TestCase):
     def test_backend_context_verifies_blobs_and_excludes_untracked_config(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            contents = {"Dockerfile": b"FROM scratch\n", "main.go": b"package main\n"}
+            contents = {"Dockerfile": b"FROM scratch\n", "main.go": b"package main\n", "internal/nested/x.go": b"package nested\n"}
             objects = {}
             entries = []
             for name, value in contents.items():
@@ -140,7 +140,11 @@ class RuntimeBoundaries(unittest.TestCase):
             read_blobs = mock.Mock(side_effect=lambda digests: {digest: objects[digest] for digest in digests})
             evidence = RUNTIME.PROVENANCE.freeze_backend(root / "frozen", command, read_blobs, RUNTIME.Refused)
             self.assertEqual(evidence["files"], {name: hashlib.sha256(value).hexdigest() for name, value in contents.items()})
-            self.assertEqual({path.name: path.read_bytes() for path in (root / "frozen").iterdir()}, contents)
+            frozen = root / "frozen"
+            self.assertEqual({path.relative_to(frozen).as_posix(): path.read_bytes() for path in frozen.rglob("*") if not path.is_dir()}, contents)
+            for path in [frozen, *frozen.rglob("*")]:
+                self.assertEqual(path.stat().st_mode & 0o777, 0o700 if path.is_dir() else 0o600, path)
+            command.assert_called_once_with(["git", "--no-replace-objects", "ls-tree", "-rz", "--full-tree", RUNTIME.PROVENANCE.REVISION, "--", "backend"])
             read_blobs.assert_called_once_with(sorted(objects))
             for tampered in [lambda digests: {digest: b"tampered\n" for digest in digests}, lambda digests: {}]:
                 with self.assertRaisesRegex(RUNTIME.Refused, "^backend_source_changed$"):
@@ -153,14 +157,14 @@ class RuntimeBoundaries(unittest.TestCase):
     def test_pinned_application_revision_is_readable_from_git_objects(self):
         # The real reader against this repository's own history (CI checks out
         # with fetch-depth 0): every blob of REVISION is returned, intact.
-        listing = subprocess.run(["git", "ls-tree", "-rz", "--full-tree", RUNTIME.PROVENANCE.REVISION, "--", "backend"],
-                                 cwd=RUNTIME.ROOT, capture_output=True, check=True, timeout=60).stdout.decode()
+        def command(arguments):
+            return subprocess.run(arguments, cwd=RUNTIME.ROOT, capture_output=True, check=True, timeout=60).stdout.decode(), 0
+        listing = command(["git", "--no-replace-objects", "ls-tree", "-r", "--name-only", "--full-tree", RUNTIME.PROVENANCE.REVISION, "--", "backend"])[0]
         with tempfile.TemporaryDirectory() as temporary:
             frozen = Path(temporary) / "frozen"
             evidence = RUNTIME.PROVENANCE.freeze_backend(
-                frozen, lambda arguments: (listing, 0),
-                lambda digests: RUNTIME.RESTORE.FENCES.read_pinned_blobs(digests, {"PATH": os.environ["PATH"]}), RUNTIME.Refused)
-            self.assertEqual(len(evidence["files"]), len(list(filter(None, listing.split("\0")))))
+                frozen, command, lambda digests: RUNTIME.RESTORE.FENCES.read_pinned_blobs(digests, {"PATH": os.environ["PATH"]}), RUNTIME.Refused)
+            self.assertEqual(set(evidence["files"]), {path.removeprefix("backend/") for path in listing.split()})
             self.assertIn("internal/database/db_init.go", evidence["files"])
 
     def test_callback_failure_and_cleanup_failure_publish_no_success(self):

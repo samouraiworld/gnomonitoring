@@ -176,7 +176,9 @@ class PinnedBuildContextTests(unittest.TestCase):
         "backend/fixture.bin": bytes(range(256)) + b"\n\n",
         "backend/same.go": b"package same\n",
         "backend/copy.go": b"package same\n",
+        "backend/tools/run.sh": b"#!/bin/sh\n",
     }
+    EXECUTABLE = "backend/tools/run.sh"
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -187,6 +189,7 @@ class PinnedBuildContextTests(unittest.TestCase):
         for path, content in self.BASELINE.items():
             (self.root / path).parent.mkdir(parents=True, exist_ok=True)
             (self.root / path).write_bytes(content)
+        (self.root / self.EXECUTABLE).chmod(0o755)
         self.git("add", "backend")
         self.git("commit", "-q", "-m", "invented baseline")
         self.base = self.git("rev-parse", "HEAD").strip()
@@ -246,19 +249,36 @@ class PinnedBuildContextTests(unittest.TestCase):
         # Later, tracked-new, untracked and ignored checkout bytes never reach the build.
         self.assertEqual(self.snapshot(runner.initdb_context), expected)
         self.assertEqual(stat.S_IMODE(runner.initdb_context.stat().st_mode), 0o700)
+        executable = runner.initdb_context / self.EXECUTABLE.removeprefix("backend/")
         for file in runner.initdb_context.rglob("*"):
-            if not file.is_dir():
-                self.assertEqual(stat.S_IMODE(file.stat().st_mode), 0o600)
+            # Every directory, including intermediate ones, and every file stays private.
+            expected_mode = 0o700 if file.is_dir() or file == executable else 0o600
+            self.assertEqual(stat.S_IMODE(file.stat().st_mode), expected_mode, file)
+        stderr = sorted(runner.output.glob("*-pinned-objects-stderr.private"))
+        self.assertEqual(len(stderr), 1)
+        self.assertEqual(stat.S_IMODE(stderr[0].stat().st_mode), 0o600)
+
+    def test_replacement_refs_cannot_substitute_pinned_objects(self):
+        later_db_init = self.git("rev-parse", "HEAD:backend/internal/database/db_init.go").strip()
+        base_db_init = MODULE.git_blob_digest(self.BASELINE["backend/internal/database/db_init.go"])
+        # Replace both the pinned commit and one of its blobs with later objects.
+        self.git("replace", self.base, "HEAD")
+        self.git("replace", base_db_init, later_db_init)
+        runner = self.runner()
+        runner.pin_sources()
+        expected = {path.removeprefix("backend/"): content for path, content in self.BASELINE.items()}
+        expected.update({path.removeprefix("backend/"): b"package main\n" for path in MODULE.HELPER_FILES})
+        self.assertEqual(self.snapshot(runner.initdb_context), expected)
         self.assertEqual(self.snapshot(self.root / "backend"), self.checkout, "the checkout must never be written")
 
     def test_object_bytes_not_matching_their_pinned_digest_are_refused(self):
-        with patch.object(MODULE, "read_pinned_blobs", side_effect=lambda digests, environment: {digest: b"tampered\n" for digest in digests}):
+        with patch.object(MODULE, "read_pinned_blobs", side_effect=lambda digests, *unused: {digest: b"tampered\n" for digest in digests}):
             self.assert_refused("baseline_build_context_file_changed")
 
     def test_existing_or_contaminated_context_is_refused(self):
         runner = self.runner()
         runner.initdb_context.mkdir(mode=0o700)
-        self.assert_refused("unexpected_tracked_untracked_or_ignored_build_file", runner)
+        self.assert_refused("initdb_context_already_exists", runner)
         original = MODULE.write_context_file
         def contaminate(context, path, content, mode):
             original(context, path, content, mode)
@@ -289,6 +309,14 @@ class PinnedBuildContextTests(unittest.TestCase):
         helper.symlink_to(self.root / "backend/same.go")
         self.checkout = self.snapshot(self.root / "backend")
         self.assert_refused("explicit_helper_source_manifest_required")
+        helper.unlink()
+        helper.write_bytes(b"package main\n")
+        # A symlinked helper directory would read bytes from outside the checkout.
+        moved = self.root / "elsewhere"
+        (self.root / "backend/cmd/rehearse-initdb").rename(moved)
+        (self.root / "backend/cmd/rehearse-initdb").symlink_to(moved, target_is_directory=True)
+        self.checkout = self.snapshot(self.root / "backend")
+        self.assert_refused("explicit_helper_source_manifest_required")
 
     def test_unsupported_baseline_entries_are_refused(self):
         digest = MODULE.git_blob_digest(b"package main\n")
@@ -305,6 +333,48 @@ class PinnedBuildContextTests(unittest.TestCase):
         for requested in [["0" * 40], ["HEAD:backend/same.go"], [digests[0], "f" * 40]]:
             with self.assertRaisesRegex(MODULE.Refused, "^pinned_source_objects_unavailable$"):
                 MODULE.read_pinned_blobs(requested, self.environment)
+        # Git diagnostics stay in a private file, never on public output.
+        outside = self.root / "not-a-repository"
+        outside.mkdir()
+        stderr = self.root / "cat-file-stderr.private"
+        with patch.object(MODULE, "ROOT", outside), patch.dict(self.environment, {"GIT_CEILING_DIRECTORIES": str(self.root)}):
+            with self.assertRaisesRegex(MODULE.Refused, "^pinned_source_objects_unavailable$"):
+                MODULE.read_pinned_blobs(digests, self.environment, stderr)
+        self.assertIn(b"not a git repository", stderr.read_bytes())
+        self.assertEqual(stat.S_IMODE(stderr.stat().st_mode), 0o600)
+
+    def test_runner_environment_matches_the_validated_build(self):
+        output = self.root / "runner-output"
+        output.mkdir(mode=0o700)
+        with patch.object(MODULE, "reject_remote_context"), patch.object(MODULE, "approved_socket", return_value=Path("/var/run/docker.sock")):
+            runner = MODULE.Runner(output)
+        self.assertEqual(runner.environment["REHEARSAL_INITDB_CONTEXT"], str(output / "initdb-context"))
+        self.assertEqual(runner.environment["REHEARSAL_INITDB_DOCKERFILE"], str(MODULE.INITDB_DOCKERFILE))
+        project, config = RehearsalBoundaryTests().config()
+        config["services"]["initdb"]["build"] = {"context": runner.environment["REHEARSAL_INITDB_CONTEXT"],
+                                                 "dockerfile": runner.environment["REHEARSAL_INITDB_DOCKERFILE"]}
+        MODULE.validate_config(config, project, runner.initdb_context)
+
+
+class RealPinnedBaselineTests(unittest.TestCase):
+    """The real BASE freezes from this repository's history (CI fetches it fully)."""
+
+    def test_real_base_freezes_with_the_database_source_pin(self):
+        listing = subprocess.run(["git", "--no-replace-objects", "ls-tree", "-r", "--name-only", "--full-tree", MODULE.BASE, "--", "backend"],
+                                 cwd=MODULE.ROOT, capture_output=True, check=True, timeout=60).stdout.decode().split()
+        with tempfile.TemporaryDirectory() as raw:
+            runner = MODULE.Runner.__new__(MODULE.Runner)
+            runner.output = Path(raw).resolve()
+            runner.environment = {"PATH": os.environ["PATH"], "HOME": raw}
+            runner.sequence = 0
+            runner.stage = "real_base"
+            runner.docker = ["docker", "--host", "unix:///approved/local.sock"]
+            helpers = runner.pin_sources()
+            self.assertEqual(set(helpers), MODULE.HELPER_FILES)
+            frozen = {"backend/" + file.relative_to(runner.initdb_context).as_posix() for file in runner.initdb_context.rglob("*") if not file.is_dir()}
+            self.assertEqual(frozen, set(listing) | MODULE.HELPER_FILES)
+            database_source = runner.initdb_context / "internal/database/db_init.go"
+            self.assertEqual(hashlib.sha256(database_source.read_bytes()).hexdigest(), MODULE.DB_SOURCE_SHA)
 
 
 if __name__ == "__main__":

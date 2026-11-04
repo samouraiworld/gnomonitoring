@@ -31,18 +31,23 @@ def git_blob_digest(content):
     return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
 
 
-def read_pinned_blobs(digests, environment, timeout=120):
+def read_pinned_blobs(digests, environment, stderr_path=None, timeout=120):
     """Return the exact bytes of each blob from the Git object database.
 
     Build contexts are assembled from these objects, never from the checkout:
     CI and operators check out later revisions whose backend differs from the
-    pin. Callers still re-hash every returned blob against its pinned digest.
+    pin. Replacement refs are ignored, and callers still re-hash every returned
+    blob against its pinned digest.
     """
     if any(not re.fullmatch(r"[0-9a-f]{40}", digest) for digest in digests):
         raise Refused("pinned_source_objects_unavailable")
     request = "".join(digest + "\n" for digest in digests).encode()
-    completed = subprocess.run(["git", "cat-file", "--batch"], cwd=ROOT, env=environment, input=request,
+    completed = subprocess.run(["git", "--no-replace-objects", "cat-file", "--batch"], cwd=ROOT, env=environment, input=request,
                                capture_output=True, timeout=timeout, check=False)
+    if stderr_path is not None:
+        # Blob bytes are public source; only the diagnostics are kept privately.
+        with os.fdopen(os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as handle:
+            handle.write(completed.stderr)
     if completed.returncode != 0 or completed.stderr:
         raise Refused("pinned_source_objects_unavailable")
     data = completed.stdout
@@ -64,9 +69,19 @@ def read_pinned_blobs(digests, environment, timeout=120):
     return blobs
 
 
+def make_private_directories(root, directory):
+    # mkdir(parents=True) ignores the mode of intermediate directories.
+    current = root
+    for part in directory.relative_to(root).parts:
+        current = current / part
+        if current.is_symlink():
+            raise Refused("unexpected_tracked_untracked_or_ignored_build_file")
+        current.mkdir(mode=0o700, exist_ok=True)
+
+
 def write_context_file(context, path, content, mode):
     target = context.joinpath(*PurePosixPath(path).relative_to("backend").parts)
-    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    make_private_directories(context, target.parent)
     descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700 if mode == "100755" else 0o600)
     with os.fdopen(descriptor, "wb") as handle:
         handle.write(content)
@@ -244,11 +259,15 @@ class Runner:
     def initdb_context(self):
         return self.output / "initdb-context"
 
+    def pinned_blobs(self, digests):
+        self.sequence += 1
+        return read_pinned_blobs(digests, self.environment, self.output / f"{self.sequence:03d}-pinned-objects-stderr.private")
+
     def pin_sources(self):
         # Freeze BASE's Git objects plus the explicit helper files into a new
         # private build context. The checkout may be any later revision: none
         # of its other backend bytes, tracked or not, can reach the build.
-        tree, _ = self.command(["git", "ls-tree", "-rz", "--full-tree", BASE, "--", "backend"])
+        tree, _ = self.command(["git", "--no-replace-objects", "ls-tree", "-rz", "--full-tree", BASE, "--", "backend"])
         expected = {}
         for entry in filter(None, tree.split("\0")):
             metadata, path = entry.split("\t", 1)
@@ -257,14 +276,17 @@ class Runner:
             if kind != "blob" or mode not in {"100644", "100755"} or parts[:1] != ("backend",) or ".." in parts or path in HELPER_FILES:
                 raise Refused("unsupported_baseline_build_context_entry")
             expected[path] = (mode, digest)
-        helper_paths = {str(path.relative_to(ROOT)) for path in (ROOT / "backend/cmd/rehearse-initdb").rglob("*") if not path.is_dir()}
+        helper_root = ROOT / "backend/cmd/rehearse-initdb"
+        if any(directory.is_symlink() for directory in (ROOT / "backend", ROOT / "backend/cmd", helper_root)):
+            raise Refused("explicit_helper_source_manifest_required")
+        helper_paths = {str(path.relative_to(ROOT)) for path in helper_root.rglob("*") if not path.is_dir()}
         if helper_paths != HELPER_FILES or any((ROOT / path).is_symlink() for path in helper_paths):
             raise Refused("explicit_helper_source_manifest_required")
         helpers = {path: (ROOT / path).read_bytes() for path in sorted(helper_paths)}
-        blobs = read_pinned_blobs(sorted({digest for _, digest in expected.values()}), self.environment)
+        blobs = self.pinned_blobs(sorted({digest for _, digest in expected.values()}))
         context = self.initdb_context
         if context.exists() or context.is_symlink():
-            raise Refused("unexpected_tracked_untracked_or_ignored_build_file")
+            raise Refused("initdb_context_already_exists")
         context.mkdir(mode=0o700)
         for path, (mode, digest) in sorted(expected.items()):
             content = blobs[digest]
