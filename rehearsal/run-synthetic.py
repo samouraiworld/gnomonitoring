@@ -5,8 +5,9 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
+import re
 import secrets
 import stat
 import subprocess
@@ -17,12 +18,73 @@ BASE = "92ed63fe7eb5ec54327aff36dc2bcaf2e6f24968"
 DB_SOURCE_SHA = "b89ab62f218255680065eaca18db81bfe86c53ded9667bb4c839e59eeb43eff9"
 ROOT = Path(__file__).resolve().parent.parent
 COMPOSE = ROOT / "rehearsal/compose.synthetic.yml"
+INITDB_DOCKERFILE = ROOT / "rehearsal/Dockerfile.initdb"
 VOLUME_TEMPLATE = '{"Name":{{json .Name}},"Driver":{{json .Driver}},"Options":{{json .Options}},"Scope":{{json .Scope}},"Labels":{{json .Labels}}}'
 HELPER_FILES = {"backend/cmd/rehearse-initdb/" + name for name in ["main.go", "guard.go", "guard_test.go", "fd_linux.go", "fd_darwin.go"]}
 
 
 class Refused(Exception):
     pass
+
+
+def git_blob_digest(content):
+    return hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+
+
+def read_pinned_blobs(digests, environment, stderr_path=None, timeout=120):
+    """Return the exact bytes of each blob from the Git object database.
+
+    Build contexts are assembled from these objects, never from the checkout:
+    CI and operators check out later revisions whose backend differs from the
+    pin. Replacement refs are ignored, and callers still re-hash every returned
+    blob against its pinned digest.
+    """
+    if any(not re.fullmatch(r"[0-9a-f]{40}", digest) for digest in digests):
+        raise Refused("pinned_source_objects_unavailable")
+    request = "".join(digest + "\n" for digest in digests).encode()
+    completed = subprocess.run(["git", "--no-replace-objects", "cat-file", "--batch"], cwd=ROOT, env=environment, input=request,
+                               capture_output=True, timeout=timeout, check=False)
+    if stderr_path is not None:
+        # Blob bytes are public source; only the diagnostics are kept privately.
+        with os.fdopen(os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as handle:
+            handle.write(completed.stderr)
+    if completed.returncode != 0 or completed.stderr:
+        raise Refused("pinned_source_objects_unavailable")
+    data = completed.stdout
+    blobs = {}
+    offset = 0
+    for digest in digests:
+        end = data.find(b"\n", offset)
+        header = data[offset:end].split(b" ") if end != -1 else []
+        if len(header) != 3 or header[0] != digest.encode() or header[1] != b"blob" or not header[2].isdigit():
+            raise Refused("pinned_source_objects_unavailable")
+        start = end + 1
+        stop = start + int(header[2])
+        if data[stop:stop + 1] != b"\n":
+            raise Refused("pinned_source_objects_unavailable")
+        blobs[digest] = data[start:stop]
+        offset = stop + 1
+    if offset != len(data):
+        raise Refused("pinned_source_objects_unavailable")
+    return blobs
+
+
+def make_private_directories(root, directory):
+    # mkdir(parents=True) ignores the mode of intermediate directories.
+    current = root
+    for part in directory.relative_to(root).parts:
+        current = current / part
+        if current.is_symlink():
+            raise Refused("unexpected_tracked_untracked_or_ignored_build_file")
+        current.mkdir(mode=0o700, exist_ok=True)
+
+
+def write_context_file(context, path, content, mode):
+    target = context.joinpath(*PurePosixPath(path).relative_to("backend").parts)
+    make_private_directories(context, target.parent)
+    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700 if mode == "100755" else 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(content)
 
 
 def check_output_directory(path):
@@ -51,10 +113,14 @@ def reject_remote_context(environment):
             raise Refused("inherited_docker_context_refused")
 
 
-def validate_config(config, project):
+def validate_config(config, project, initdb_build):
     services = config.get("services", {})
     if set(services) != {"postgres", "initdb"} or set(config.get("volumes", {})) != {"pgdata", "socket", "private_logs"}:
         raise Refused("unexpected_synthetic_services_or_volumes")
+    # The InitDB image must be built only from the private frozen context,
+    # never from the checked-out backend directory.
+    if services["initdb"].get("build") != initdb_build:
+        raise Refused("pinned_initdb_build_context_required")
     for name, service in services.items():
         if service.get("network_mode") != "none" or service.get("user") != "999:999" or service.get("ports") or service.get("privileged") or service.get("pid") or service.get("devices"):
             raise Refused("synthetic_runtime_fence_required")
@@ -130,6 +196,7 @@ class Runner:
         (configuration / "config.json").write_text(json.dumps(settings) + "\n")
         os.chmod(configuration / "config.json", 0o600)
         self.environment.update({"DOCKER_CONFIG": str(configuration), "BUILDX_CONFIG": str(configuration / "buildx")})
+        self.environment.update({"REHEARSAL_INITDB_CONTEXT": str(self.initdb_context), "REHEARSAL_INITDB_DOCKERFILE": str(INITDB_DOCKERFILE)})
         self.environment.update({"REHEARSAL_PROJECT": self.project, "REHEARSAL_CLONE_ID": self.clone_id,
                                  "REHEARSAL_SYNTHETIC_ADMIN_PASSWORD": secrets.token_hex(24), "GIT_OPTIONAL_LOCKS": "0"})
         self.docker = ["docker", "--host", "unix://" + str(socket)]
@@ -188,50 +255,96 @@ class Runner:
         status, _ = self.command(self.docker + ["inspect", "--format", "{{.State.ExitCode}}", container])
         return json.loads(output), int(status.strip())
 
+    @property
+    def initdb_context(self):
+        return self.output / "initdb-context"
+
+    def initdb_build(self):
+        return {"context": str(self.initdb_context), "dockerfile": str(INITDB_DOCKERFILE)}
+
+    def recheck_initdb_dockerfile(self):
+        # The Dockerfile stays in the working tree (Compose must be able to
+        # read it); its bytes must still be the ones recorded by pin_sources.
+        recorded = getattr(self, "initdb_dockerfile_sha256", None)
+        if recorded is None or INITDB_DOCKERFILE.is_symlink() or INITDB_DOCKERFILE.parent.is_symlink() or not INITDB_DOCKERFILE.is_file() \
+                or hashlib.sha256(INITDB_DOCKERFILE.read_bytes()).hexdigest() != recorded:
+            raise Refused("explicit_helper_source_manifest_required")
+
+    def pinned_blobs(self, digests):
+        self.sequence += 1
+        return read_pinned_blobs(digests, self.environment, self.output / f"{self.sequence:03d}-pinned-objects-stderr.private")
+
     def pin_sources(self):
-        # Check the actual working-tree bytes, not only git diff/index flags.
-        tree, _ = self.command(["git", "ls-tree", "-rz", "--full-tree", BASE, "--", "backend"])
+        # Freeze BASE's Git objects plus the explicit helper files into a new
+        # private build context. The checkout may be any later revision: none
+        # of its other backend bytes, tracked or not, can reach the build.
+        tree, _ = self.command(["git", "--no-replace-objects", "ls-tree", "-rz", "--full-tree", BASE, "--", "backend"])
         expected = {}
         for entry in filter(None, tree.split("\0")):
             metadata, path = entry.split("\t", 1)
             mode, kind, digest = metadata.split()
-            if kind != "blob" or mode not in {"100644", "100755"}:
+            parts = PurePosixPath(path).parts
+            if kind != "blob" or mode not in {"100644", "100755"} or parts[:1] != ("backend",) or ".." in parts or path in HELPER_FILES:
                 raise Refused("unsupported_baseline_build_context_entry")
-            expected[path] = digest
-            file = ROOT / path
-            if file.is_symlink() or not file.is_file():
-                raise Refused("baseline_build_context_file_changed")
-            content = file.read_bytes()
-            actual = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
-            if actual != digest:
-                raise Refused("baseline_build_context_file_changed")
-        tracked, _ = self.command(["git", "ls-files", "-z", "--", "backend"])
-        others, _ = self.command(["git", "ls-files", "--others", "--exclude-standard", "-z", "--", "backend"])
-        ignored, _ = self.command(["git", "ls-files", "--others", "--ignored", "--exclude-standard", "-z", "--", "backend"])
-        paths = set(filter(None, (tracked + others + ignored).split("\0")))
-        if paths - set(expected) - HELPER_FILES:
-            raise Refused("unexpected_tracked_untracked_or_ignored_build_file")
-        helper_paths = {str(path.relative_to(ROOT)) for path in (ROOT / "backend/cmd/rehearse-initdb").rglob("*") if not path.is_dir()}
+            expected[path] = (mode, digest)
+        helper_root = ROOT / "backend/cmd/rehearse-initdb"
+        if any(directory.is_symlink() for directory in (ROOT / "backend", ROOT / "backend/cmd", helper_root)):
+            raise Refused("explicit_helper_source_manifest_required")
+        helper_paths = {str(path.relative_to(ROOT)) for path in helper_root.rglob("*") if not path.is_dir()}
         if helper_paths != HELPER_FILES or any((ROOT / path).is_symlink() for path in helper_paths):
             raise Refused("explicit_helper_source_manifest_required")
-        return {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in sorted(helper_paths)}
+        helpers = {path: (ROOT / path).read_bytes() for path in sorted(helper_paths)}
+        # The Dockerfile is rehearsal tooling, like the helpers: taken from the
+        # working tree, recorded by SHA-256 and re-checked before each build.
+        if INITDB_DOCKERFILE.is_symlink() or INITDB_DOCKERFILE.parent.is_symlink() or not INITDB_DOCKERFILE.is_file():
+            raise Refused("explicit_helper_source_manifest_required")
+        dockerfile = INITDB_DOCKERFILE.read_bytes()
+        blobs = self.pinned_blobs(sorted({digest for _, digest in expected.values()}))
+        context = self.initdb_context
+        if context.exists() or context.is_symlink():
+            raise Refused("initdb_context_already_exists")
+        context.mkdir(mode=0o700)
+        for path, (mode, digest) in sorted(expected.items()):
+            content = blobs[digest]
+            if git_blob_digest(content) != digest:
+                raise Refused("baseline_build_context_file_changed")
+            write_context_file(context, path, content, mode)
+        for path, content in helpers.items():
+            write_context_file(context, path, content, "100644")
+        # Verify what docker build will actually receive.
+        frozen = {"backend/" + file.relative_to(context).as_posix() for file in context.rglob("*") if file.is_symlink() or not file.is_dir()}
+        if frozen != set(expected) | HELPER_FILES:
+            raise Refused("unexpected_tracked_untracked_or_ignored_build_file")
+        for path, (_, digest) in expected.items():
+            file = context.joinpath(*PurePosixPath(path).relative_to("backend").parts)
+            if file.is_symlink() or not file.is_file() or git_blob_digest(file.read_bytes()) != digest:
+                raise Refused("baseline_build_context_file_changed")
+        for path, content in helpers.items():
+            if context.joinpath(*PurePosixPath(path).relative_to("backend").parts).read_bytes() != content:
+                raise Refused("explicit_helper_source_manifest_required")
+        database_source = context / "internal/database/db_init.go"
+        if not database_source.is_file() or hashlib.sha256(database_source.read_bytes()).hexdigest() != DB_SOURCE_SHA:
+            raise Refused("database_source_pin_mismatch")
+        provenance = {path: hashlib.sha256(content).hexdigest() for path, content in helpers.items()}
+        self.initdb_dockerfile_sha256 = hashlib.sha256(dockerfile).hexdigest()
+        provenance[str(INITDB_DOCKERFILE.relative_to(ROOT))] = self.initdb_dockerfile_sha256
+        return provenance
 
     def execute(self):
-        if hashlib.sha256((ROOT / "backend/internal/database/db_init.go").read_bytes()).hexdigest() != DB_SOURCE_SHA:
-            raise Refused("database_source_pin_mismatch")
         helper_sources = self.pin_sources()
         operating_system, _ = self.command(self.docker + ["info", "--format", "{{.OSType}}"])
         if operating_system.strip() != "linux":
             raise Refused("linux_local_engine_required")
         self.fresh_volumes()
         config, _ = self.command(self.compose + ["config", "--format", "json"])
-        validate_config(json.loads(config), self.project)
+        validate_config(json.loads(config), self.project, self.initdb_build())
         created = False
         postgres_id = None
         original_error = None
         try:
             created = True
             self.stage = "build_public_fixture_images"
+            self.recheck_initdb_dockerfile()
             self.command(self.compose + ["build", "postgres", "initdb"], timeout=1200)
             self.stage = "create_postgres"
             self.command(self.compose + ["create", "postgres"])
