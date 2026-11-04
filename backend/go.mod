@@ -7,7 +7,7 @@ toolchain go1.26.10
 require (
 	github.com/coreos/go-oidc/v3 v3.15.0
 	github.com/glebarez/sqlite v1.11.0
-	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/machinebox/graphql v0.2.2
@@ -28,7 +28,6 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
-	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -78,7 +77,6 @@ require (
 )
 
 require (
-	github.com/clerk/clerk-sdk-go/v2 v2.4.0
 	github.com/gnolang/gno v0.0.0-20250813140035-2b22f0bd37c7
 	github.com/prometheus/client_golang v1.22.0
 	golang.org/x/net v0.60.0 // indirect
