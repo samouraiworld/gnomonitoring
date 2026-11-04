@@ -40,6 +40,7 @@ class SessionBoundaryTests(unittest.TestCase):
         self.stack.enter_context(mock.patch.object(self.runner, "baseline", return_value=self.baseline))
         self.seal = self.stack.enter_context(mock.patch.object(self.runner, "seal_marker", return_value={"dsn_mode": "0600"}))
         self.stack.enter_context(mock.patch.object(self.runner, "pin_sources", return_value={"fixture.go": "a" * 64}))
+        self.stack.enter_context(mock.patch.object(self.runner, "recheck_initdb_dockerfile"))
         self.initdb = self.stack.enter_context(mock.patch.object(self.runner, "start_initdb", side_effect=[({"pass": 1}, 3), ({"pass": 2}, 0)]))
         def command(arguments, **unused):
             if arguments[-2:] == ["--format", "{{.OSType}}"]:

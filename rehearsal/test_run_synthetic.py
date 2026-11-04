@@ -43,7 +43,8 @@ class RehearsalBoundaryTests(unittest.TestCase):
             if arguments == runner.compose + ["config", "--format", "json"]:
                 return json.dumps(config), 0
             raise MODULE.Refused("original_build_failure")
-        with patch.object(runner, "pin_sources", return_value={}), patch.object(runner, "fresh_volumes"), \
+        with patch.object(runner, "pin_sources", return_value={}), patch.object(runner, "recheck_initdb_dockerfile"), \
+                patch.object(runner, "fresh_volumes"), \
                 patch.object(runner, "command", side_effect=command), \
                 patch.object(runner, "cleanup", side_effect=MODULE.Refused("secondary_cleanup_failure")), \
                 patch.object(MODULE.sys, "stdout", new_callable=io.StringIO) as output:
@@ -65,6 +66,7 @@ class RehearsalBoundaryTests(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
 
     CONTEXT = Path("/private/fixture-output/initdb-context")
+    BUILD = {"context": str(CONTEXT), "dockerfile": str(MODULE.INITDB_DOCKERFILE)}
 
     def config(self):
         project = "gnomon-rehearsal-fixture"
@@ -74,7 +76,7 @@ class RehearsalBoundaryTests(unittest.TestCase):
         }
         config["services"]["postgres"]["environment"] = {"POSTGRES_USER": "rehearsal_admin", "POSTGRES_DB": "postgres", "POSTGRES_PASSWORD": "synthetic", "REHEARSAL_CLONE_ID": "fixture"}
         config["services"]["initdb"]["read_only"] = True
-        config["services"]["initdb"]["build"] = {"context": str(self.CONTEXT), "dockerfile": str(MODULE.INITDB_DOCKERFILE)}
+        config["services"]["initdb"]["build"] = dict(self.BUILD)
         for name in ["postgres", "initdb"]:
             config["services"][name]["volumes"] = [
                 {"type": "volume", "source": "socket", "target": "/run/rehearsal-postgres", "read_only": name == "initdb"},
@@ -84,12 +86,13 @@ class RehearsalBoundaryTests(unittest.TestCase):
 
     def test_compose_requires_none_network_and_fresh_owned_volumes(self):
         project, valid = self.config()
-        MODULE.validate_config(valid, project, self.CONTEXT)
+        MODULE.validate_config(valid, project, self.BUILD)
         changes = [
             lambda c: c["services"]["initdb"].pop("build"),
             lambda c: c["services"]["initdb"]["build"].update(context=str(MODULE.ROOT / "backend")),
             lambda c: c["services"]["initdb"]["build"].update(context="../backend"),
             lambda c: c["services"]["initdb"]["build"].update(dockerfile="Dockerfile"),
+            lambda c: c["services"]["initdb"]["build"].update(dockerfile="../rehearsal/Dockerfile.initdb"),
             lambda c: c["services"]["initdb"]["build"].update(additional_contexts={"source": str(MODULE.ROOT / "backend")}),
             lambda c: c["services"]["postgres"].update(network_mode="host"),
             lambda c: c["services"]["initdb"].update(ports=["5432:5432"]),
@@ -109,7 +112,7 @@ class RehearsalBoundaryTests(unittest.TestCase):
             candidate = copy.deepcopy(valid)
             change(candidate)
             with self.assertRaises(MODULE.Refused):
-                MODULE.validate_config(candidate, project, self.CONTEXT)
+                MODULE.validate_config(candidate, project, self.BUILD)
 
     def test_actual_container_requires_same_fence(self):
         project = "gnomon-rehearsal-fixture"
@@ -206,7 +209,10 @@ class PinnedBuildContextTests(unittest.TestCase):
         (self.root / "backend/internal/database/extra.go").write_bytes(b"package database // untracked\n")
         (self.root / "backend/internal/database/ignored.go").write_bytes(b"package database // ignored\n")
         self.checkout = {path: path_bytes for path, path_bytes in self.snapshot(self.root / "backend").items()}
-        pins = {"ROOT": self.root, "BASE": self.base,
+        self.dockerfile = self.root / "rehearsal/Dockerfile.initdb"
+        self.dockerfile.parent.mkdir()
+        self.dockerfile.write_bytes(b"FROM scratch\n")
+        pins = {"ROOT": self.root, "BASE": self.base, "INITDB_DOCKERFILE": self.dockerfile,
                 "DB_SOURCE_SHA": hashlib.sha256(self.BASELINE["backend/internal/database/db_init.go"]).hexdigest()}
         for name, value in pins.items():
             patcher = patch.object(MODULE, name, value)
@@ -243,7 +249,10 @@ class PinnedBuildContextTests(unittest.TestCase):
     def test_frozen_context_holds_exactly_base_objects_and_helpers(self):
         runner = self.runner()
         helpers = runner.pin_sources()
-        self.assertEqual(helpers, {path: hashlib.sha256(b"package main\n").hexdigest() for path in sorted(MODULE.HELPER_FILES)})
+        expected_helpers = {path: hashlib.sha256(b"package main\n").hexdigest() for path in sorted(MODULE.HELPER_FILES)}
+        expected_helpers["rehearsal/Dockerfile.initdb"] = hashlib.sha256(b"FROM scratch\n").hexdigest()
+        self.assertEqual(helpers, expected_helpers)
+        runner.recheck_initdb_dockerfile()
         expected = {path.removeprefix("backend/"): content for path, content in self.BASELINE.items()}
         expected.update({path.removeprefix("backend/"): b"package main\n" for path in MODULE.HELPER_FILES})
         # Later, tracked-new, untracked and ignored checkout bytes never reach the build.
@@ -291,6 +300,23 @@ class PinnedBuildContextTests(unittest.TestCase):
             original(context, path, content + (b"// changed after freeze\n" if path.endswith("same.go") else b""), mode)
         with patch.object(MODULE, "write_context_file", side_effect=corrupt):
             self.assert_refused("baseline_build_context_file_changed")
+
+    def test_checkout_dockerfile_is_recorded_and_rechecked_before_build(self):
+        changed = b"FROM scratch\nLABEL changed=checkout\n"
+        self.dockerfile.write_bytes(changed)
+        runner = self.runner()
+        with self.assertRaisesRegex(MODULE.Refused, "^explicit_helper_source_manifest_required$"):
+            runner.recheck_initdb_dockerfile()  # nothing recorded yet
+        helpers = runner.pin_sources()
+        self.assertEqual(helpers["rehearsal/Dockerfile.initdb"], hashlib.sha256(changed).hexdigest())
+        self.assertFalse((runner.initdb_context / "Dockerfile.initdb").exists())
+        runner.recheck_initdb_dockerfile()
+        self.dockerfile.write_bytes(b"FROM scratch\nLABEL changed=after-pin\n")
+        with self.assertRaisesRegex(MODULE.Refused, "^explicit_helper_source_manifest_required$"):
+            runner.recheck_initdb_dockerfile()
+        self.dockerfile.unlink()
+        self.dockerfile.symlink_to(self.root / "backend/same.go")
+        self.assert_refused("explicit_helper_source_manifest_required")
 
     def test_database_source_pin_is_checked_on_the_frozen_context(self):
         with patch.object(MODULE, "DB_SOURCE_SHA", "0" * 64):
@@ -353,7 +379,7 @@ class PinnedBuildContextTests(unittest.TestCase):
         project, config = RehearsalBoundaryTests().config()
         config["services"]["initdb"]["build"] = {"context": runner.environment["REHEARSAL_INITDB_CONTEXT"],
                                                  "dockerfile": runner.environment["REHEARSAL_INITDB_DOCKERFILE"]}
-        MODULE.validate_config(config, project, runner.initdb_context)
+        MODULE.validate_config(config, project, runner.initdb_build())
 
 
 class RealPinnedBaselineTests(unittest.TestCase):
@@ -370,7 +396,8 @@ class RealPinnedBaselineTests(unittest.TestCase):
             runner.stage = "real_base"
             runner.docker = ["docker", "--host", "unix:///approved/local.sock"]
             helpers = runner.pin_sources()
-            self.assertEqual(set(helpers), MODULE.HELPER_FILES)
+            self.assertEqual(set(helpers), MODULE.HELPER_FILES | {"rehearsal/Dockerfile.initdb"})
+            runner.recheck_initdb_dockerfile()
             frozen = {"backend/" + file.relative_to(runner.initdb_context).as_posix() for file in runner.initdb_context.rglob("*") if not file.is_dir()}
             self.assertEqual(frozen, set(listing) | MODULE.HELPER_FILES)
             database_source = runner.initdb_context / "internal/database/db_init.go"

@@ -344,7 +344,7 @@ GRANT SELECT ON rehearsal_guard.clone_marker TO rehearsal_owner;""", role="rehea
             raise Refused("linux_local_engine_required")
         self.fresh_volumes()
         config = json.loads(self.command(self.compose + ["config", "--format", "json"])[0])
-        FENCES.validate_config(config, self.project, self.initdb_context)
+        FENCES.validate_config(config, self.project, self.initdb_build())
         frozen = self.output / "resolved-compose.private.json"
         private_write(frozen, (json.dumps(config) + "\n").encode())
         self.compose = self.docker + ["compose", "--project-name", self.project, "--file", str(frozen), "--project-directory", str(HERE)]
@@ -352,6 +352,8 @@ GRANT SELECT ON rehearsal_guard.clone_marker TO rehearsal_owner;""", role="rehea
         self._journal("resources_planned")
         self.stage = "build_empty_clone"
         services = ["postgres", "initdb"] if run_initdb else ["postgres"]
+        if run_initdb:
+            self.recheck_initdb_dockerfile()
         self.command(self.compose + ["build", *services], timeout=1200)
         self.stage = "create_before_start"
         self.command(self.compose + ["create", "postgres"])
@@ -409,6 +411,7 @@ GRANT SELECT ON rehearsal_guard.clone_marker TO rehearsal_owner;""", role="rehea
         if self._report["initdb_provenance"] is None:
             self._report["initdb_provenance"] = self.pin_sources()
             self.stage = "build_initdb_for_session"
+            self.recheck_initdb_dockerfile()
             self.command(self.compose + ["build", "initdb"], timeout=1200)
         self.stage = "initdb_after_verified_restore"
         self.command(self.compose + ["create", "initdb"])

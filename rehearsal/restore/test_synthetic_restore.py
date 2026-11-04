@@ -187,6 +187,8 @@ class SyntheticArchiveRestoreTests(unittest.TestCase):
         for name in helper_names:
             relative = "backend/cmd/rehearse-initdb/" + name
             expected_provenance[relative] = hashlib.sha256((FIXTURE.ROOT / relative).read_bytes()).hexdigest()
+        dockerfile = "rehearsal/Dockerfile.initdb"
+        expected_provenance[dockerfile] = hashlib.sha256((FIXTURE.ROOT / dockerfile).read_bytes()).hexdigest()
         self.assertEqual(summary["initdb_provenance"], expected_provenance)
         phase = summary["initdb"]
         first = phase["first_pass"]

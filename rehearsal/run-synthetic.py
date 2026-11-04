@@ -113,13 +113,13 @@ def reject_remote_context(environment):
             raise Refused("inherited_docker_context_refused")
 
 
-def validate_config(config, project, initdb_context):
+def validate_config(config, project, initdb_build):
     services = config.get("services", {})
     if set(services) != {"postgres", "initdb"} or set(config.get("volumes", {})) != {"pgdata", "socket", "private_logs"}:
         raise Refused("unexpected_synthetic_services_or_volumes")
     # The InitDB image must be built only from the private frozen context,
     # never from the checked-out backend directory.
-    if services["initdb"].get("build") != {"context": str(initdb_context), "dockerfile": str(INITDB_DOCKERFILE)}:
+    if services["initdb"].get("build") != initdb_build:
         raise Refused("pinned_initdb_build_context_required")
     for name, service in services.items():
         if service.get("network_mode") != "none" or service.get("user") != "999:999" or service.get("ports") or service.get("privileged") or service.get("pid") or service.get("devices"):
@@ -259,6 +259,17 @@ class Runner:
     def initdb_context(self):
         return self.output / "initdb-context"
 
+    def initdb_build(self):
+        return {"context": str(self.initdb_context), "dockerfile": str(INITDB_DOCKERFILE)}
+
+    def recheck_initdb_dockerfile(self):
+        # The Dockerfile stays in the working tree (Compose must be able to
+        # read it); its bytes must still be the ones recorded by pin_sources.
+        recorded = getattr(self, "initdb_dockerfile_sha256", None)
+        if recorded is None or INITDB_DOCKERFILE.is_symlink() or not INITDB_DOCKERFILE.is_file() \
+                or hashlib.sha256(INITDB_DOCKERFILE.read_bytes()).hexdigest() != recorded:
+            raise Refused("explicit_helper_source_manifest_required")
+
     def pinned_blobs(self, digests):
         self.sequence += 1
         return read_pinned_blobs(digests, self.environment, self.output / f"{self.sequence:03d}-pinned-objects-stderr.private")
@@ -283,6 +294,11 @@ class Runner:
         if helper_paths != HELPER_FILES or any((ROOT / path).is_symlink() for path in helper_paths):
             raise Refused("explicit_helper_source_manifest_required")
         helpers = {path: (ROOT / path).read_bytes() for path in sorted(helper_paths)}
+        # The Dockerfile is rehearsal tooling, like the helpers: taken from the
+        # working tree, recorded by SHA-256 and re-checked before each build.
+        if INITDB_DOCKERFILE.is_symlink() or not INITDB_DOCKERFILE.is_file():
+            raise Refused("explicit_helper_source_manifest_required")
+        dockerfile = INITDB_DOCKERFILE.read_bytes()
         blobs = self.pinned_blobs(sorted({digest for _, digest in expected.values()}))
         context = self.initdb_context
         if context.exists() or context.is_symlink():
@@ -309,7 +325,10 @@ class Runner:
         database_source = context / "internal/database/db_init.go"
         if not database_source.is_file() or hashlib.sha256(database_source.read_bytes()).hexdigest() != DB_SOURCE_SHA:
             raise Refused("database_source_pin_mismatch")
-        return {path: hashlib.sha256(content).hexdigest() for path, content in helpers.items()}
+        provenance = {path: hashlib.sha256(content).hexdigest() for path, content in helpers.items()}
+        self.initdb_dockerfile_sha256 = hashlib.sha256(dockerfile).hexdigest()
+        provenance[str(INITDB_DOCKERFILE.relative_to(ROOT))] = self.initdb_dockerfile_sha256
+        return provenance
 
     def execute(self):
         helper_sources = self.pin_sources()
@@ -318,13 +337,14 @@ class Runner:
             raise Refused("linux_local_engine_required")
         self.fresh_volumes()
         config, _ = self.command(self.compose + ["config", "--format", "json"])
-        validate_config(json.loads(config), self.project, self.initdb_context)
+        validate_config(json.loads(config), self.project, self.initdb_build())
         created = False
         postgres_id = None
         original_error = None
         try:
             created = True
             self.stage = "build_public_fixture_images"
+            self.recheck_initdb_dockerfile()
             self.command(self.compose + ["build", "postgres", "initdb"], timeout=1200)
             self.stage = "create_postgres"
             self.command(self.compose + ["create", "postgres"])
