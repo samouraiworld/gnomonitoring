@@ -41,8 +41,9 @@ services:
   initdb:
     image: ${REHEARSAL_PROJECT:?}-initdb:local-only
     build:
-      context: ../../backend
-      dockerfile: ../rehearsal/Dockerfile.initdb
+      # Private context frozen from the pinned Git objects by the runner.
+      context: ${REHEARSAL_INITDB_CONTEXT:?}
+      dockerfile: ${REHEARSAL_INITDB_DOCKERFILE:?}
     network_mode: none
     user: '999:999'
     read_only: true
