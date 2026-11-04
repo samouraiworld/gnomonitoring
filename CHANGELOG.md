@@ -93,8 +93,11 @@ Entries are ordered newest-first within each section.
   `pg_dump -Fc` from the Postgres container into `age` (public keys only, no
   plaintext on disk), uploads `postgres/gnomonitoring-<UTC>.dump.age`, checks
   the stored size, and posts to a Discord webhook when a run fails. Config is a
-  root-only env file read as data; the webhook never appears on argv.
-  `pg-restore-test.sh` restores a backup into a throwaway `postgres:16`
+  root-only env file read as data; the webhook never appears on argv. An
+  optional `METRICS_FILE` publishes
+  `gnomonitoring_pg_backup_last_success_timestamp_seconds` for a
+  node_exporter / Alloy textfile collector, so that Grafana can alert when no
+  backup ran at all. `pg-restore-test.sh` restores a backup into a throwaway `postgres:16`
   container and compares row counts with `pg-row-counts.sh` output;
   `e2e-test.sh` runs the whole chain locally against MinIO. Install, retention
   and disaster recovery: `ops/backup/README.md`.

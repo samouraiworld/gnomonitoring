@@ -20,8 +20,8 @@
 # On any failure the script exits non-zero and, once DISCORD_WEBHOOK_URL has
 # been read from a config file owned by root, posts a message to it. A run that
 # never starts (cron down, missing script or config) cannot notify: use
-# HEARTBEAT_URL for that. Install, restore and configuration:
-# ops/backup/README.md.
+# HEARTBEAT_URL or METRICS_FILE (a last-success metric for an external alert)
+# for that. Install, restore and configuration: ops/backup/README.md.
 set -euo pipefail
 umask 077
 
@@ -41,6 +41,7 @@ AGE_RECIPIENTS_FILE=/etc/gnomonitoring/pg-backup.recipients
 DISCORD_WEBHOOK_URL=
 NOTIFY_ON_SUCCESS=false
 HEARTBEAT_URL=
+METRICS_FILE=
 WORK_DIR=/var/tmp
 LOCK_FILE=/run/gnomonitoring-pg-backup.lock
 DUMP_TIMEOUT=4h
@@ -50,6 +51,8 @@ FREE_SPACE_MARGIN_MB=1024
 STEP=start
 TMP_DIR=
 WEBHOOK_READY=false
+METRICS_PROBLEM=
+METRICS_TMP=
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
@@ -107,6 +110,9 @@ on_exit() {
 	if [[ -n $TMP_DIR ]]; then
 		rm -rf -- "$TMP_DIR" || log "could not remove $TMP_DIR"
 	fi
+	if [[ -n $METRICS_TMP ]]; then
+		rm -f -- "$METRICS_TMP" || log "could not remove $METRICS_TMP"
+	fi
 	if ((status != 0)); then
 		log "backup FAILED at step '$STEP' (exit $status)"
 		send_discord "🔴 **gnomonitoring Postgres backup FAILED** on \`$(hostname)\`
@@ -154,7 +160,7 @@ load_config() {
 		fi
 		case $key in
 		PG_CONTAINER | PG_USER | PG_DB | S3_BUCKET | S3_PREFIX | S3_ENDPOINT | S3_REGION | AWS_PROFILE | \
-			AGE_RECIPIENTS_FILE | DISCORD_WEBHOOK_URL | NOTIFY_ON_SUCCESS | HEARTBEAT_URL | WORK_DIR | \
+			AGE_RECIPIENTS_FILE | DISCORD_WEBHOOK_URL | NOTIFY_ON_SUCCESS | HEARTBEAT_URL | METRICS_FILE | WORK_DIR | \
 			LOCK_FILE | DUMP_TIMEOUT | FREE_SPACE_PERCENT | FREE_SPACE_MARGIN_MB)
 			printf -v "$key" '%s' "$value"
 			;;
@@ -191,6 +197,68 @@ check_recipients() {
 	RECIPIENT_COUNT=$keys
 }
 
+# metrics_dir_problem prints why METRICS_FILE cannot be written safely, or
+# nothing. Every directory from the file's up to / must be a real directory
+# owned by root (or the current user), and not writable by group or others
+# (a sticky ancestor such as /tmp aside): otherwise its owner could swap the
+# temporary file for a symlink and make root overwrite another file.
+metrics_dir_problem() {
+	local dir=${METRICS_FILE%/*} path owner mode
+	if [[ -L $METRICS_FILE || (-e $METRICS_FILE && ! -f $METRICS_FILE) ]]; then
+		echo "$METRICS_FILE exists and is not a regular file"
+		return
+	fi
+	path=${dir:-/}
+	while :; do
+		if [[ -L $path || ! -d $path ]]; then
+			echo "$path is missing, a symlink or not a directory"
+			return
+		fi
+		owner=$(stat -c %u -- "$path")
+		mode=$(stat -c %a -- "$path")
+		if [[ $owner != 0 && $owner != "$(id -u)" ]]; then
+			echo "$path must be owned by root"
+			return
+		fi
+		if (((8#$mode & 8#022) != 0)) && [[ $path == "${dir:-/}" || $(((8#$mode & 8#1000) == 0)) == 1 ]]; then
+			echo "$path must not be writable by group or others"
+			return
+		fi
+		[[ $path != / ]] || break
+		path=${path%/*}
+		path=${path:-/}
+	done
+	[[ -w ${dir:-/} ]] || echo "${dir:-/} is not writable"
+}
+
+# write_metrics publishes the last successful run in the Prometheus text format
+# (node_exporter / Alloy textfile collector). The file is written beside its
+# target under a name the collector ignores, then renamed over it, so that a
+# scrape never reads half a file.
+write_metrics() {
+	local size=$1 now
+	now=$(date +%s)
+	[[ $now =~ ^[0-9]+$ ]] || return 1
+	METRICS_TMP=$(mktemp -- "${METRICS_FILE%/*}/.gnomonitoring-pg-backup.XXXXXX") || return 1
+	if printf '%s\n' \
+		'# HELP gnomonitoring_pg_backup_last_success_timestamp_seconds Unix time of the last successful Postgres backup.' \
+		'# TYPE gnomonitoring_pg_backup_last_success_timestamp_seconds gauge' \
+		"gnomonitoring_pg_backup_last_success_timestamp_seconds $now" \
+		'# HELP gnomonitoring_pg_backup_last_size_bytes Size of the last uploaded encrypted backup.' \
+		'# TYPE gnomonitoring_pg_backup_last_size_bytes gauge' \
+		"gnomonitoring_pg_backup_last_size_bytes $size" \
+		'# HELP gnomonitoring_pg_backup_last_duration_seconds Duration of the last successful backup run.' \
+		'# TYPE gnomonitoring_pg_backup_last_duration_seconds gauge' \
+		"gnomonitoring_pg_backup_last_duration_seconds $SECONDS" >"$METRICS_TMP" &&
+		chmod 0644 -- "$METRICS_TMP" && mv -fT -- "$METRICS_TMP" "$METRICS_FILE"; then
+		METRICS_TMP=
+		return 0
+	fi
+	rm -f -- "$METRICS_TMP"
+	METRICS_TMP=
+	return 1
+}
+
 # duration_seconds converts a DUMP_TIMEOUT value (3600, 90m, 4h, 1d) to seconds.
 duration_seconds() {
 	local n=$((10#${1%[smhd]}))
@@ -224,6 +292,10 @@ validate_config() {
 	[[ -z $AWS_PROFILE || $AWS_PROFILE =~ ^[A-Za-z0-9_.-]+$ ]] || die "AWS_PROFILE has an invalid value"
 	if [[ -n $HEARTBEAT_URL ]]; then
 		valid_url "$HEARTBEAT_URL" || die "HEARTBEAT_URL must be an https URL"
+	fi
+	if [[ -n $METRICS_FILE ]]; then
+		[[ $METRICS_FILE =~ ^/[A-Za-z0-9._/-]+\.prom$ ]] || die "METRICS_FILE must be an absolute path ending in .prom"
+		METRICS_PROBLEM=$(metrics_dir_problem)
 	fi
 	[[ $NOTIFY_ON_SUCCESS =~ ^(true|false)$ ]] || die "NOTIFY_ON_SUCCESS must be true or false"
 	[[ $DUMP_TIMEOUT =~ ^[0-9]+[smhd]?$ ]] || die "DUMP_TIMEOUT must look like 4h, 90m or 3600"
@@ -274,6 +346,13 @@ preflight() {
 	stale=$(find "$WORK_DIR" -maxdepth 1 -type d -name 'gnomonitoring-pg-backup.*' -mmin +1440 | wc -l)
 	((stale == 0)) ||
 		log "WARNING: $stale gnomonitoring-pg-backup.* directories older than a day in $WORK_DIR (a run was killed); remove them"
+	# A metrics problem must not cost a backup: warn, and run without metrics.
+	if [[ -n $METRICS_PROBLEM ]]; then
+		log "WARNING: metrics disabled for this run: $METRICS_PROBLEM"
+		send_discord "⚠️ gnomonitoring Postgres backup on \`$(hostname)\`: metrics file disabled ($METRICS_PROBLEM); the last-success alert will fire" ||
+			log "the metrics warning could not be sent"
+		METRICS_FILE=
+	fi
 	log "pre-flight OK: bucket $S3_BUCKET reachable, $((avail / 1024 / 1024)) MiB free in $WORK_DIR"
 }
 
@@ -337,6 +416,15 @@ run_backup() {
 	fi
 	if [[ -n $HEARTBEAT_URL ]]; then
 		curl_secret_url "$HEARTBEAT_URL" || log "the heartbeat could not be sent"
+	fi
+	if [[ -n $METRICS_FILE ]]; then
+		# The backup itself is safe: say so, so that the stale-metric alert
+		# that follows is not read as a missing backup.
+		write_metrics "$size" || {
+			log "WARNING: could not write $METRICS_FILE"
+			send_discord "⚠️ gnomonitoring Postgres backup OK on \`$(hostname)\`, but the metrics file \`$METRICS_FILE\` could not be written: the last-success alert will fire" ||
+				log "the metrics warning could not be sent"
+		}
 	fi
 	log "backup OK: s3://$S3_BUCKET/$key"
 }

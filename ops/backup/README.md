@@ -200,7 +200,51 @@ It prints `ERROR: container gnomonitoring-missing is not running` and
 ### 6. Heartbeat (recommended)
 
 The Discord message only covers a run that starts. To be told when no backup
-ran at all, create a check on a dead-man's-switch service (for example
+ran at all (cron stopped, server down), something outside the script must
+notice the silence. Two ways, both without code changes:
+
+**A last-success metric, alerted by Grafana.** With node_exporter or Grafana
+Alloy on the server, give `pg-backup.env` a `METRICS_FILE` in the textfile
+collector's directory. That directory and each parent must be owned by root
+and not writable by group or others (else the run warns and skips the metric,
+since root writes there). After each successful run the script rewrites it with
+`gnomonitoring_pg_backup_last_success_timestamp_seconds`, `_last_size_bytes`
+and `_last_duration_seconds`. For Alloy, the directory is set in the
+`prometheus.exporter.unix` block of its config (`/etc/alloy/config.alloy`):
+
+```alloy
+prometheus.exporter.unix "<existing label>" {
+  textfile {
+    directory = "/var/lib/node_exporter/textfile_collector"
+  }
+}
+```
+
+```sh
+install -d -m 0755 -o root -g root /var/lib/node_exporter/textfile_collector
+echo 'METRICS_FILE=/var/lib/node_exporter/textfile_collector/gnomonitoring_pg_backup.prom' >> /etc/gnomonitoring/pg-backup.env
+systemctl reload alloy    # or restart, after editing its config
+```
+
+If the Alloy config filters metric names (a `prometheus.relabel` rule that
+keeps only listed `__name__` values), add `gnomonitoring_pg_backup_.*` to it.
+
+Run one backup by hand (`pg-backup-scaleway.sh`), or wait for the first
+scheduled run once step 7 is done. Then find the series in Grafana *Explore*
+and note its `instance` (or `job`) label. Then create an alert rule on that data source:
+
+- query `time() - max(gnomonitoring_pg_backup_last_success_timestamp_seconds{instance="<this server>"})`
+  (scoped to this server, so that a copy elsewhere cannot keep it healthy);
+- condition `> 108000` (30 hours: a day, plus a slow run, plus a daylight-saving shift);
+- evaluated every 10 minutes with a 10-minute pending period (a single missed
+  scrape, such as an Alloy restart, does not page), **no data** set to
+  *Alerting* (the metric stops arriving when the server or Alloy is down);
+- sent to the Discord contact point.
+
+Test the whole path once: set the condition to `> 60`, wait for the alert in
+Discord, then set it back to `> 108000`.
+
+**A dead-man's-switch service.** Create a check (for example on
 healthchecks.io: period 1 day, grace 2 hours, its alert sent to the same
 Discord channel), then add its ping URL to `pg-backup.env`:
 `HEARTBEAT_URL=https://hc-ping.com/...` (with the editor, it is a credential
@@ -355,7 +399,7 @@ itself only talks to the loopback and reads no production data. It uses a
 `postgres:16` schema created by the backend's own `database.InitDB`, MinIO as
 the object store and a local listener as the Discord webhook. It checks the
 pre-flight, a backup run, the ciphertext and its size, the empty work
-directory, the notifications, an exact restore, the drift tolerance, a wrong
+directory, the notifications, the metrics file, an exact restore, the drift tolerance, a wrong
 key, and that these fail and notify: a missing container, an overlapping run,
 a world-readable config, an unknown config key, a malformed recipient, and a
 dump timeout (which must leave no `pg_dump` session behind). Run shellcheck

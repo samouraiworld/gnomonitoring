@@ -214,7 +214,8 @@ age-keygen -y "$tmp/key.txt" >"$tmp/recipients"
 chmod 644 "$tmp/recipients"
 age-keygen -o "$tmp/other-key.txt" 2>/dev/null
 
-mkdir -p "$tmp/work"
+mkdir -p "$tmp/work" "$tmp/metrics"
+chmod 755 "$tmp/metrics"
 cat >"$tmp/pg-backup.env" <<EOF
 PG_CONTAINER=$pg
 S3_BUCKET=gnomonitoring-e2e
@@ -225,6 +226,7 @@ DISCORD_WEBHOOK_URL="$hook_url"
 NOTIFY_ON_SUCCESS=true
 WORK_DIR=$tmp/work
 LOCK_FILE=$tmp/backup.lock
+METRICS_FILE=$tmp/metrics/gnomonitoring_pg_backup.prom
 EOF
 chmod 600 "$tmp/pg-backup.env"
 backup=("$here/pg-backup-scaleway.sh" --config "$tmp/pg-backup.env")
@@ -256,6 +258,15 @@ if [[ $(messages) == 1 ]] && last_message | grep -q 'backup OK'; then
 	pass "success notification sent"
 else
 	fail "success notification missing"
+fi
+metric_ts() { sed -n 's/^gnomonitoring_pg_backup_last_success_timestamp_seconds //p' "$tmp/metrics/gnomonitoring_pg_backup.prom"; }
+success_ts=$(metric_ts 2>/dev/null || true)
+if [[ $success_ts =~ ^[0-9]+$ ]] && (($(date +%s) - success_ts < 300)) &&
+	grep -q "^gnomonitoring_pg_backup_last_size_bytes $dump_bytes\$" "$tmp/metrics/gnomonitoring_pg_backup.prom" &&
+	[[ $(stat -c %a "$tmp/metrics/gnomonitoring_pg_backup.prom") == 644 && $(find "$tmp/metrics" -mindepth 1 | wc -l) == 1 ]]; then
+	pass "metrics file written (timestamp, size, mode 0644, no temporary file left)"
+else
+	fail "metrics file missing or wrong"
 fi
 
 # A foreign name under the prefix must not be taken for the latest backup.
@@ -350,6 +361,31 @@ sed "s|^AGE_RECIPIENTS_FILE=.*|AGE_RECIPIENTS_FILE=$tmp/bad-recipients|" "$tmp/p
 chmod 600 "$tmp/bad-recipients.env"
 expect_config_failure "a malformed recipient" "$tmp/bad-recipients.env"
 
+sed "s|^METRICS_FILE=.*|METRICS_FILE=relative.prom|" "$tmp/pg-backup.env" >"$tmp/relative-metrics.env"
+chmod 600 "$tmp/relative-metrics.env"
+expect_config_failure "a relative METRICS_FILE" "$tmp/relative-metrics.env"
+
+# expect_metrics_warning NAME CONFIG: the run goes on without metrics and warns once.
+expect_metrics_warning() {
+	local name=$1 config=$2 before
+	before=$(messages)
+	if "$here/pg-backup-scaleway.sh" --config "$config" --check 2>"$tmp/metrics.err" &&
+		[[ $(messages) == $((before + 1)) ]] && last_message | grep -q 'metrics file disabled'; then
+		pass "$name: metrics disabled with a warning, the run goes on"
+	else
+		fail "$name: $(grep WARNING "$tmp/metrics.err" | tail -n 1)"
+	fi
+}
+
+log "unsafe metrics locations are refused without stopping the backup"
+mkdir -p "$tmp/metrics-shared" "$tmp/metrics-dir/target.prom"
+chmod 775 "$tmp/metrics-shared"
+sed "s|^METRICS_FILE=.*|METRICS_FILE=$tmp/metrics-shared/m.prom|" "$tmp/pg-backup.env" >"$tmp/shared-metrics.env"
+sed "s|^METRICS_FILE=.*|METRICS_FILE=$tmp/metrics-dir/target.prom|" "$tmp/pg-backup.env" >"$tmp/dir-metrics.env"
+chmod 600 "$tmp/shared-metrics.env" "$tmp/dir-metrics.env"
+expect_metrics_warning "a group-writable metrics directory" "$tmp/shared-metrics.env"
+expect_metrics_warning "a METRICS_FILE that is a directory" "$tmp/dir-metrics.env"
+
 log "dump timeout: pg_dump blocked behind a table lock"
 docker exec -d -e PGAPPNAME=e2e-locker "$pg" psql -X -q -U gnomonitoring -d gnomonitoring \
 	-c 'BEGIN; LOCK TABLE users IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(120); COMMIT;'
@@ -375,6 +411,12 @@ left=$(docker exec "$pg" psql -X -A -t -q -U gnomonitoring -d gnomonitoring -c \
 if [[ $left == 0 ]]; then pass "no pg_dump session left after the timeout"; else fail "$left pg_dump session(s) left"; fi
 docker exec "$pg" psql -X -A -t -q -U gnomonitoring -d gnomonitoring -c \
 	"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'e2e-locker'" >/dev/null
+
+if [[ -n $success_ts && $(metric_ts) == "$success_ts" ]]; then
+	pass "failed runs leave the last-success metric unchanged"
+else
+	fail "a failed run changed the last-success metric"
+fi
 
 log "summary"
 echo "daily_participations rows: $rows, source database: $db_size"
