@@ -266,7 +266,7 @@ class Runner:
         # The Dockerfile stays in the working tree (Compose must be able to
         # read it); its bytes must still be the ones recorded by pin_sources.
         recorded = getattr(self, "initdb_dockerfile_sha256", None)
-        if recorded is None or INITDB_DOCKERFILE.is_symlink() or not INITDB_DOCKERFILE.is_file() \
+        if recorded is None or INITDB_DOCKERFILE.is_symlink() or INITDB_DOCKERFILE.parent.is_symlink() or not INITDB_DOCKERFILE.is_file() \
                 or hashlib.sha256(INITDB_DOCKERFILE.read_bytes()).hexdigest() != recorded:
             raise Refused("explicit_helper_source_manifest_required")
 
@@ -296,7 +296,7 @@ class Runner:
         helpers = {path: (ROOT / path).read_bytes() for path in sorted(helper_paths)}
         # The Dockerfile is rehearsal tooling, like the helpers: taken from the
         # working tree, recorded by SHA-256 and re-checked before each build.
-        if INITDB_DOCKERFILE.is_symlink() or not INITDB_DOCKERFILE.is_file():
+        if INITDB_DOCKERFILE.is_symlink() or INITDB_DOCKERFILE.parent.is_symlink() or not INITDB_DOCKERFILE.is_file():
             raise Refused("explicit_helper_source_manifest_required")
         dockerfile = INITDB_DOCKERFILE.read_bytes()
         blobs = self.pinned_blobs(sorted({digest for _, digest in expected.values()}))

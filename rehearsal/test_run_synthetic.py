@@ -37,13 +37,16 @@ class RehearsalBoundaryTests(unittest.TestCase):
         runner.compose = runner.docker + ["compose"]
         project, config = self.config()
         runner.project = project
+        events = []
         def command(arguments, **unused):
+            if "build" in arguments:
+                events.append("build")
             if arguments == runner.docker + ["info", "--format", "{{.OSType}}"]:
                 return "linux", 0
             if arguments == runner.compose + ["config", "--format", "json"]:
                 return json.dumps(config), 0
             raise MODULE.Refused("original_build_failure")
-        with patch.object(runner, "pin_sources", return_value={}), patch.object(runner, "recheck_initdb_dockerfile"), \
+        with patch.object(runner, "pin_sources", return_value={}), patch.object(runner, "recheck_initdb_dockerfile", side_effect=lambda: events.append("recheck")), \
                 patch.object(runner, "fresh_volumes"), \
                 patch.object(runner, "command", side_effect=command), \
                 patch.object(runner, "cleanup", side_effect=MODULE.Refused("secondary_cleanup_failure")), \
@@ -51,6 +54,7 @@ class RehearsalBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(MODULE.Refused, "^original_build_failure$"):
                 runner.execute()
             self.assertEqual(json.loads(output.getvalue()), {"status": "synthetic_cleanup_failed"})
+        self.assertEqual(events, ["recheck", "build"])
 
     def test_volume_template_accepts_docker_struct_and_raw_map(self):
         renderer = Path(__file__).with_name("render_volume_template.go")
@@ -316,6 +320,13 @@ class PinnedBuildContextTests(unittest.TestCase):
             runner.recheck_initdb_dockerfile()
         self.dockerfile.unlink()
         self.dockerfile.symlink_to(self.root / "backend/same.go")
+        self.assert_refused("explicit_helper_source_manifest_required")
+        # A symlinked rehearsal/ directory would redirect the read.
+        self.dockerfile.unlink()
+        self.dockerfile.write_bytes(b"FROM scratch\n")
+        moved = self.root / "elsewhere-rehearsal"
+        self.dockerfile.parent.rename(moved)
+        self.dockerfile.parent.symlink_to(moved, target_is_directory=True)
         self.assert_refused("explicit_helper_source_manifest_required")
 
     def test_database_source_pin_is_checked_on_the_frozen_context(self):
