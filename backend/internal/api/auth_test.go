@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/clerkauth"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/clerkauth/clerktest"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/keycloakauth"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/keycloakauth/kctest"
 	"github.com/stretchr/testify/assert"
@@ -19,6 +20,56 @@ func newTestVerifier(t *testing.T, realm *kctest.Realm) *keycloakauth.Verifier {
 	v, err := keycloakauth.New(context.Background(), realm.Issuer, []string{keycloakauth.PanelClientID})
 	require.NoError(t, err)
 	return v
+}
+
+// newTestClerk starts a fake Clerk Backend API and a client pointed at it.
+func newTestClerk(t *testing.T) (*clerktest.API, *clerkauth.Client) {
+	t.Helper()
+	api := clerktest.NewAPI(t)
+	c, err := clerkauth.New(api.URL, clerktest.SecretKey)
+	require.NoError(t, err)
+	return api, c
+}
+
+// ---------------------------------------------------------------------------
+// adminRoleMiddleware (Clerk)
+// ---------------------------------------------------------------------------
+
+func TestAdminRoleMiddleware(t *testing.T) {
+	api, clerkClient := newTestClerk(t)
+	api.SetUser("user_admin", `{"role":"admin"}`)
+	api.SetUser("user_member", `{"role":"member"}`)
+	api.SetUser("user_no_metadata", `{}`)
+
+	chain := clerkClient.Middleware(adminRoleMiddleware(clerkClient)(dummyOKHandler))
+
+	tests := []struct {
+		name    string
+		subject string
+		want    int
+	}{
+		{"admin", "user_admin", http.StatusOK},
+		{"other role", "user_member", http.StatusForbidden},
+		{"no role", "user_no_metadata", http.StatusForbidden},
+		{"user lookup fails", "user_unknown", http.StatusUnauthorized},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
+			req.Header.Set("Authorization", "Bearer "+api.Token(t, tt.subject))
+			w := httptest.NewRecorder()
+			chain.ServeHTTP(w, req)
+			assert.Equal(t, tt.want, w.Code)
+		})
+	}
+}
+
+func TestAdminRoleMiddleware_RejectsMissingClaims(t *testing.T) {
+	_, clerkClient := newTestClerk(t)
+
+	w := httptest.NewRecorder()
+	adminRoleMiddleware(clerkClient)(dummyOKHandler).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/status", nil))
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +143,8 @@ func TestDualAccept_AcceptsKeycloakToken(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := dualAccept(verifier, clerkhttp.RequireHeaderAuthorization())(next)
+	_, clerkClient := newTestClerk(t)
+	handler := dualAccept(verifier, clerkClient.Middleware)(next)
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
 	req.Header.Set("Authorization", "Bearer "+realm.Token(t, "kc-sub-1", map[string]any{"clerk_user_id": "user_2abc"}))
@@ -137,11 +189,38 @@ func TestDualAccept_FallsBackToClerkForNonKeycloakToken(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// A real Clerk session token that Keycloak rejects is verified by the Clerk
+// middleware and reaches the handler with Clerk claims only.
+func TestDualAccept_ClerkTokenIsVerifiedByClerk(t *testing.T) {
+	realm := kctest.NewRealm(t)
+	verifier := newTestVerifier(t, realm)
+	api, clerkClient := newTestClerk(t)
+
+	var seenUserID string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, hasKC := keycloakauth.ClaimsFromContext(r.Context())
+		assert.False(t, hasKC)
+		claims, ok := clerkauth.ClaimsFromContext(r.Context())
+		require.True(t, ok)
+		seenUserID = claims.Subject
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/users", nil)
+	req.Header.Set("Authorization", "Bearer "+api.Token(t, "user_2abc"))
+	w := httptest.NewRecorder()
+	dualAccept(verifier, clerkClient.Middleware)(next).ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "user_2abc", seenUserID)
+}
+
 func TestDualAccept_NoTokenIsRejectedByClerk(t *testing.T) {
 	realm := kctest.NewRealm(t)
 	verifier := newTestVerifier(t, realm)
 
-	handler := dualAccept(verifier, clerkhttp.RequireHeaderAuthorization())(dummyOKHandler)
+	_, clerkClient := newTestClerk(t)
+	handler := dualAccept(verifier, clerkClient.Middleware)(dummyOKHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/users", nil)
 	w := httptest.NewRecorder()
@@ -191,6 +270,18 @@ func TestAuthUserIDFromContext_Keycloak(t *testing.T) {
 	})
 }
 
+func TestAuthUserIDFromContext_Clerk(t *testing.T) {
+	prevDevMode := internal.Config.DevMode
+	internal.Config.DevMode = false
+	defer func() { internal.Config.DevMode = prevDevMode }()
+
+	ctx := clerkauth.NewClaimsContext(context.Background(), &clerkauth.Claims{Subject: "user_2abc"})
+	got, err := authUserIDFromContext(httptest.NewRequest(http.MethodGet, "/users", nil).WithContext(ctx))
+
+	require.NoError(t, err)
+	assert.Equal(t, "user_2abc", got)
+}
+
 func TestAuthUserIDFromContext_DevModeUnchanged(t *testing.T) {
 	prevDevMode := internal.Config.DevMode
 	internal.Config.DevMode = true
@@ -211,21 +302,51 @@ func TestAuthUserIDFromContext_DevModeUnchanged(t *testing.T) {
 // buildAuthSetup
 // ---------------------------------------------------------------------------
 
-func TestBuildAuthSetup_ClerkModeIsUnchanged(t *testing.T) {
-	prev := internal.Config
-	defer func() { internal.Config = prev }()
+// Clerk mode answers as clerk-sdk-go's middleware did: 403 without a token,
+// 401 for a refused one, and the admin role read live from the user's
+// public metadata.
+func TestBuildAuthSetup_ClerkMode(t *testing.T) {
+	api := clerktest.NewAPI(t)
+	api.SetUser("user_admin", `{"role":"admin"}`)
+	api.SetUser("user_member", `{}`)
+
+	prev, prevURL := internal.Config, clerkAPIURL
+	defer func() { internal.Config, clerkAPIURL = prev, prevURL }()
 	internal.Config.AuthProvider = internal.AuthProviderClerk
-	internal.Config.ClerkSecretKey = "sk_test_dummy"
+	internal.Config.ClerkSecretKey = clerktest.SecretKey
+	internal.Config.DevMode = false
+	clerkAPIURL = api.URL
 
 	auth, err := buildAuthSetup(context.Background())
 	require.NoError(t, err)
 
-	// A request with no Authorization header must still be rejected by the
-	// Clerk middleware exactly as before this change.
-	req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
-	w := httptest.NewRecorder()
-	auth.admin(auth.adminRole(dummyOKHandler)).ServeHTTP(w, req)
-	assert.NotEqual(t, http.StatusOK, w.Code)
+	adminChain := auth.admin(auth.adminRole(dummyOKHandler))
+	generalChain := auth.general(dummyOKHandler)
+
+	tests := []struct {
+		name          string
+		chain         http.Handler
+		authorization string
+		want          int
+	}{
+		{"admin token reaches /admin", adminChain, "Bearer " + api.Token(t, "user_admin"), http.StatusOK},
+		{"non-admin gets 403 on /admin", adminChain, "Bearer " + api.Token(t, "user_member"), http.StatusForbidden},
+		{"no token gets 403 on /admin", adminChain, "", http.StatusForbidden},
+		{"refused token gets 401 on /admin", adminChain, "Bearer " + api.TokenSignedByStranger(t, "user_admin"), http.StatusUnauthorized},
+		{"session token reaches a general route", generalChain, "Bearer " + api.Token(t, "user_member"), http.StatusOK},
+		{"no token gets 403 on a general route", generalChain, "", http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
+			if tt.authorization != "" {
+				req.Header.Set("Authorization", tt.authorization)
+			}
+			w := httptest.NewRecorder()
+			tt.chain.ServeHTTP(w, req)
+			assert.Equal(t, tt.want, w.Code)
+		})
+	}
 }
 
 // An unreachable issuer must not stop startup (monitoring and alerting would go

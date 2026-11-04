@@ -6,9 +6,8 @@ import (
 	"log"
 	"net/http"
 
-	clerk "github.com/clerk/clerk-sdk-go/v2"
-	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/clerkauth"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/keycloakauth"
 )
 
@@ -31,6 +30,9 @@ type authSetup struct {
 	adminRole middleware
 }
 
+// clerkAPIURL is Clerk's Backend API; tests point it at a clerktest.API.
+var clerkAPIURL = clerkauth.DefaultAPIURL
+
 // buildAuthSetup wires the middlewares for the configured auth_provider.
 //
 // The asymmetry between `general` and `admin` is deliberate, and is the whole
@@ -41,18 +43,20 @@ type authSetup struct {
 // own Clerk sessions; those apps migrate on their own schedule, so until they
 // do, the general routes must accept both token types or they break with 401s.
 func buildAuthSetup(ctx context.Context) (*authSetup, error) {
-	// Clerk's key is needed whenever any Clerk path can still run: in Clerk
-	// mode, and in Keycloak mode while the general-route fallback is on. Set
-	// unconditionally, exactly as StartWebhookAPI did before this switch
-	// existed, so Clerk mode's behaviour is bit-for-bit unchanged.
-	clerk.SetKey(internal.Config.ClerkSecretKey)
+	// Clerk is needed whenever any Clerk path can still run: in Clerk mode, and
+	// in Keycloak mode while the general-route fallback is on. Built
+	// unconditionally; it makes no request before the first Clerk token.
+	clerkClient, err := clerkauth.New(clerkAPIURL, internal.Config.ClerkSecretKey)
+	if err != nil {
+		return nil, err
+	}
 
 	if internal.Config.AuthProvider != internal.AuthProviderKeycloak {
-		clerkProtect := middleware(clerkhttp.RequireHeaderAuthorization())
+		clerkProtect := middleware(clerkClient.Middleware)
 		return &authSetup{
 			general:   clerkProtect,
 			admin:     clerkProtect,
-			adminRole: adminRoleMiddleware,
+			adminRole: adminRoleMiddleware(clerkClient),
 		}, nil
 	}
 
@@ -71,7 +75,7 @@ func buildAuthSetup(ctx context.Context) (*authSetup, error) {
 			log.Printf("[auth] WARNING: keycloak_clerk_fallback is on but clerk_secret_key is empty; " +
 				"memba and gnolove callers presenting Clerk tokens will get 401")
 		}
-		general = dualAccept(verifier, clerkhttp.RequireHeaderAuthorization())
+		general = dualAccept(verifier, clerkClient.Middleware)
 		log.Printf("[auth] general routes accept Keycloak tokens, falling back to Clerk")
 	} else {
 		log.Printf("[auth] general routes accept Keycloak tokens only (Clerk fallback disabled)")
@@ -124,7 +128,7 @@ func dualAccept(verifier tokenVerifier, clerkProtect func(http.Handler) http.Han
 }
 
 // keycloakAdminRoleMiddleware replaces the Clerk path's live API call
-// (clerkuser.Get + publicMetadata.role check) with a role claim already present
+// (a Clerk user lookup + publicMetadata.role check) with a role claim already present
 // in the validated token — no network round-trip per admin request. Must be
 // chained after a middleware that put Keycloak claims on the context.
 func keycloakAdminRoleMiddleware(next http.Handler) http.Handler {

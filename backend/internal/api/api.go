@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	clerk "github.com/clerk/clerk-sdk-go/v2"
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/clerkauth"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/gnovalidator"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/keycloakauth"
@@ -108,7 +108,7 @@ func authUserIDFromContext(r *http.Request) (string, error) {
 		return kcClaims.EffectiveUserID(), nil
 	}
 
-	claims, ok := clerk.SessionClaimsFromContext(r.Context())
+	claims, ok := clerkauth.ClaimsFromContext(r.Context())
 	if !ok {
 		return "", fmt.Errorf("unauthorized: missing session claims")
 	}
@@ -1351,7 +1351,7 @@ func EnableCORS(w http.ResponseWriter, r ...*http.Request) {
 
 // corsThenAuth runs EnableCORS and short-circuits OPTIONS preflight with
 // 200 OK before the auth middleware runs. This is required because
-// clerkhttp.RequireHeaderAuthorization returns 403 for preflight requests
+// the Clerk middleware returns 403 for preflight requests
 // (browsers never send Authorization on OPTIONS), which would otherwise
 // prevent EnableCORS from running and break CORS for the real request.
 func corsThenAuth(next http.Handler, protect func(http.Handler) http.Handler) http.Handler {
