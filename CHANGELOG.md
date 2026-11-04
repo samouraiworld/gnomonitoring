@@ -263,6 +263,11 @@ Entries are ordered newest-first within each section.
   v4.1.4 to v4.1.6, which refuses private key material in a header JWK (same
   CVE).
 
+- **Panel image ships libexpat 2.10.0** — the nginx alpine 3.24 base still
+  carries libexpat 2.9.0 (CVE-2026-113351, CVE-2026-117610, CVE-2026-118370,
+  all HIGH), which failed the "Security gate" image scan. The serve stage now
+  upgrades it to `2.10.0-r0`, pinned next to the existing brotli/curl fixes.
+
 - **Telegram validator lists no longer reorder the shared cache** — the
   participation, uptime, operation time, tx contribution and missing blocks
   lists sorted the slice cached in `metricsCache` in place when no filter
