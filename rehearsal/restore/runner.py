@@ -344,7 +344,7 @@ GRANT SELECT ON rehearsal_guard.clone_marker TO rehearsal_owner;""", role="rehea
             raise Refused("linux_local_engine_required")
         self.fresh_volumes()
         config = json.loads(self.command(self.compose + ["config", "--format", "json"])[0])
-        FENCES.validate_config(config, self.project)
+        FENCES.validate_config(config, self.project, self.initdb_context)
         frozen = self.output / "resolved-compose.private.json"
         private_write(frozen, (json.dumps(config) + "\n").encode())
         self.compose = self.docker + ["compose", "--project-name", self.project, "--file", str(frozen), "--project-directory", str(HERE)]

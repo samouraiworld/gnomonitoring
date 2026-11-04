@@ -160,7 +160,8 @@ class ApplicationRunner:
         self.configure_connection_budget()
         self.restore.stage = "application_build_context"
         context = self.output / "backend-context"
-        provenance = PROVENANCE.freeze_backend(ROOT, context, self.command, Refused)
+        provenance = PROVENANCE.freeze_backend(
+            context, self.command, lambda digests: RESTORE.FENCES.read_pinned_blobs(digests, self.restore.environment), Refused)
         self.report["backend_source"] = provenance
         tags = {role: self.project + "-" + role + ":local-only" for role in ("baseline", "candidate", "mocks")}
         self.tags = tags
