@@ -35,6 +35,19 @@ const apiVersion = "2025-04-10"
 // client did. http.DefaultClient has no timeout.
 const requestTimeout = 5 * time.Second
 
+// maxTokenBytes caps the bearer token parsed. A Clerk session token must fit
+// in a 4 KB cookie.
+const maxTokenBytes = 8 << 10
+
+// signatureAlgorithms is every JWS algorithm go-jose parses. A token is parsed
+// with any of them, so that one signed with another algorithm is refused
+// (401) rather than taken for one that does not parse (403), as clerk-sdk-go
+// answered; only RS256 is ever verified.
+var signatureAlgorithms = []jose.SignatureAlgorithm{
+	jose.RS256, jose.RS384, jose.RS512, jose.PS256, jose.PS384, jose.PS512,
+	jose.ES256, jose.ES384, jose.ES512, jose.EdDSA, jose.HS256, jose.HS384, jose.HS512,
+}
+
 // maxUserResponseBytes caps the user lookup response read into memory.
 const maxUserResponseBytes = 1 << 20
 
@@ -104,17 +117,27 @@ func (c *Client) VerifyToken(ctx context.Context, rawToken string) (*Claims, err
 	if c.secretKey == "" {
 		return nil, errors.New("clerkauth: clerk_secret_key is empty")
 	}
-	token, err := jwt.ParseSigned(rawToken, []jose.SignatureAlgorithm{jose.RS256})
+	if len(rawToken) > maxTokenBytes {
+		return nil, fmt.Errorf("%w: token is %d bytes, more than %d", errMalformed, len(rawToken), maxTokenBytes)
+	}
+	token, err := jwt.ParseSigned(rawToken, signatureAlgorithms)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errMalformed, err)
 	}
-	kid := token.Headers[0].KeyID
-	if kid == "" {
+	header := token.Headers[0]
+	if header.Algorithm != string(jose.RS256) {
+		return nil, fmt.Errorf("clerkauth: token signed with %s, not RS256", header.Algorithm)
+	}
+	if header.KeyID == "" {
 		return nil, errors.New("clerkauth: token names no key (kid)")
 	}
-	key, err := c.keys.key(ctx, kid)
+	key, err := c.keys.key(ctx, header.KeyID)
 	if err != nil {
 		return nil, err
+	}
+	// clerk-sdk-go required the key's own alg to match the token's.
+	if key.Algorithm != string(jose.RS256) || key.Use == "enc" {
+		return nil, fmt.Errorf("clerkauth: key %q is not an RS256 signing key", header.KeyID)
 	}
 
 	var registered jwt.Claims

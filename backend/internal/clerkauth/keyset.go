@@ -141,5 +141,10 @@ func (s *keySet) fetch(ctx context.Context) (map[string]jose.JSONWebKey, error) 
 			keys[key.KeyID] = key
 		}
 	}
+	// An instance always has a signing key: an empty set is a fault, not a
+	// withdrawal of every key, so the cached keys stay as on a failed fetch.
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("clerkauth: fetch JWKS: no key with a kid")
+	}
 	return keys, nil
 }

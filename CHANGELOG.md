@@ -262,13 +262,19 @@ Entries are ordered newest-first within each section.
   with a direct `GET /users/{id}`. Same checks as the SDK (RS256 signature by
   the key named by `kid`, `exp`/`nbf`/`iat` with no leeway, Clerk issuer),
   same one-hour key cache (kept 24 hours more while the JWKS cannot be
-  fetched, so a Backend API outage does not refuse every user) and same answers (`403` without a token or for one
-  that does not parse, `401` for a refused one). Stricter: a token without
-  `exp` or `sub` is refused. A token naming an unknown key refetches the JWKS
-  at most once every 10 seconds. No configuration change. go-jose v4 goes from
+  fetched, so a Backend API outage does not refuse every user) and same
+  answers (`403` without a token or for one that does not parse, `401` for a
+  refused one). Stricter: a token without `exp` or `sub` is refused, a token
+  over 8 KiB is refused unparsed (`403`), and an empty JWKS keeps the cached
+  keys. A token naming an unknown key refetches the JWKS at most once every
+  10 seconds. No configuration change. go-jose v4 goes from
   v4.1.4 to v4.1.6, which refuses private key material in a header JWK (same
   CVE).
 
+- **Panel image ships libexpat 2.10.0** — the nginx alpine 3.24 base still
+  carries libexpat 2.9.0 (CVE-2026-113351, CVE-2026-117610, CVE-2026-118370,
+  all HIGH), which failed the "Security gate" image scan. The serve stage now
+  upgrades it to `2.10.0-r0`, pinned next to the existing brotli/curl fixes.
 - **A validator's first CRITICAL is no longer silenced by its own WARNING** —
   the dead-validator silence treated any earlier WARNING/CRITICAL as a prior
   incident, including the WARNING of the same incident. A validator that

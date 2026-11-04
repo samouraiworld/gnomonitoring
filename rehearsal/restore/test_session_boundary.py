@@ -40,8 +40,12 @@ class SessionBoundaryTests(unittest.TestCase):
         self.stack.enter_context(mock.patch.object(self.runner, "baseline", return_value=self.baseline))
         self.seal = self.stack.enter_context(mock.patch.object(self.runner, "seal_marker", return_value={"dsn_mode": "0600"}))
         self.stack.enter_context(mock.patch.object(self.runner, "pin_sources", return_value={"fixture.go": "a" * 64}))
+        self.events = []
+        self.stack.enter_context(mock.patch.object(self.runner, "recheck_initdb_dockerfile", side_effect=lambda: self.events.append("recheck")))
         self.initdb = self.stack.enter_context(mock.patch.object(self.runner, "start_initdb", side_effect=[({"pass": 1}, 3), ({"pass": 2}, 0)]))
         def command(arguments, **unused):
+            if "build" in arguments:
+                self.events.append("build:" + ",".join(arguments[arguments.index("build") + 1:]))
             if arguments[-2:] == ["--format", "{{.OSType}}"]:
                 return "linux", 0
             if arguments[-3:] == ["config", "--format", "json"]:
@@ -166,9 +170,12 @@ class SessionBoundaryTests(unittest.TestCase):
             self.assertEqual(before, session.baseline)
             self.assertEqual(session.report["initdb_provenance"], {"fixture.go": "a" * 64})
         self.assertTrue(json.loads(self.summary().read_text())["initdb"]["review_required"])
+        # The restore-only build happens first; the InitDB build is re-checked right before it.
+        self.assertEqual(self.events, ["build:postgres", "recheck", "build:initdb"])
 
     def test_execute_keeps_optional_initdb_contract(self):
         report = self.runner.execute(run_initdb=True)
+        self.assertEqual(self.events, ["recheck", "build:postgres,initdb"])
         self.assertTrue(report["initdb"]["review_required"])
         self.assertTrue(report["owned_resources_cleanup_verified"])
         self.cleanup.assert_called_once()

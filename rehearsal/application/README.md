@@ -4,7 +4,9 @@ This opt-in suite runs the unchanged backend binary on a newly generated,
 restored invented archive. RPC, GraphQL/WebSocket and both Telegram bots use
 local protocol fixtures. It never loads an operator dump, production config,
 token or endpoint. Images are built locally; no registry login or publication
-is performed.
+is performed. The backend image is built from the Git objects of the pinned
+revision recorded in the summary, never from the checked-out `backend/`
+directory.
 
 The runtime owns every container, volume and image tag it creates. The mock
 container is the `network:none` namespace anchor; backend and probes share that
