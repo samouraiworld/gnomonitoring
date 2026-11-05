@@ -102,7 +102,7 @@ func InsertWebhook(userID, url, description, type_ string, args ...interface{}) 
 		return fmt.Errorf("InsertWebhook: db argument is required")
 	}
 
-	return db.Create(&webhook).Error
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error { return tx.Create(&webhook).Error })
 }
 
 func LoadWebhooks(db *gorm.DB) ([]WebhookGovDAO, error) {
@@ -111,10 +111,19 @@ func LoadWebhooks(db *gorm.DB) ([]WebhookGovDAO, error) {
 	return webhooks, err
 }
 func UpdateLastCheckedID(url string, newID int, db *gorm.DB) error {
-	return db.Model(&WebhookGovDAO{}).
-		Where("url = ?", url).
-		Update("last_checked_id", newID).
-		Error
+	var rows []WebhookGovDAO
+	if err := db.Select("id", "user_id").Where("url = ?", url).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		err := withActiveAccountWrite(db, row.UserID, func(tx *gorm.DB) error {
+			return tx.Model(&WebhookGovDAO{}).Where("id = ? AND user_id = ? AND url = ?", row.ID, row.UserID, url).Update("last_checked_id", newID).Error
+		})
+		if err != nil && !errors.Is(err, ErrAccountErased) {
+			return err
+		}
+	}
+	return nil
 }
 
 // ListWebhooks returns GovDAO webhooks for a user. An optional chainID argument
@@ -137,32 +146,36 @@ func ListWebhooks(db *gorm.DB, userID string, chainID ...string) ([]WebhookGovDA
 }
 
 func DeleteWebhook(id int, userID string, db *gorm.DB) error {
-	err := db.
-		Where("id = ? AND user_id = ?", id, userID).
-		Delete(&WebhookGovDAO{}).
-		Error
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		err := tx.
+			Where("id = ? AND user_id = ?", id, userID).
+			Delete(&WebhookGovDAO{}).
+			Error
 
-	return err
+		return err
+	})
 }
 
 // // ==========================webhooks_validator ===============================================
 
 func InsertMonitoringWebhook(userID, url, description, typ, chainID string, db *gorm.DB) error {
-	wh := WebhookValidator{
-		UserID:      userID,
-		URL:         url,
-		Description: description,
-		Type:        typ,
-	}
-	if chainID != "" {
-		wh.ChainID = &chainID
-	}
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		wh := WebhookValidator{
+			UserID:      userID,
+			URL:         url,
+			Description: description,
+			Type:        typ,
+		}
+		if chainID != "" {
+			wh.ChainID = &chainID
+		}
 
-	if err := createHourReport(db, userID); err != nil {
-		log.Printf("⚠️ createHourReport: %v", err)
-	}
+		if err := createHourReport(tx, userID); err != nil {
+			return err
+		}
 
-	return db.Create(&wh).Error
+		return tx.Create(&wh).Error
+	})
 }
 
 // DeleteMonitoringWebhook removes a validator webhook and, in the same
@@ -170,7 +183,7 @@ func InsertMonitoringWebhook(userID, url, description, typ, chainID string, db *
 // linger with an id_webhook that matches nothing, permanently unable to
 // fire a mention (see SendAllValidatorAlerts' id_webhook match in fonction.go).
 func DeleteMonitoringWebhook(id int, userID string, db *gorm.DB) error {
-	return db.Transaction(func(tx *gorm.DB) error {
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
 		// NoWebhookLinked never identifies a real webhook, and matching it
 		// against id_webhook would sweep up every contact the user
 		// deliberately left unlinked, not just the ones tied to this webhook.
@@ -204,27 +217,29 @@ func ListMonitoringWebhooks(db *gorm.DB, userID string, chainID ...string) ([]We
 // chainID is optional (nil means do not update the chain_id column). tablename must
 // be either "webhook_gov_daos" or "webhook_validators".
 func UpdateMonitoringWebhook(db *gorm.DB, id int, userID, description, newURL, newType string, chainID *string, tablename string) error {
-	updates := map[string]interface{}{
-		"url":         newURL,
-		"description": description,
-		"type":        newType,
-	}
-	if chainID != nil {
-		updates["chain_id"] = chainID
-	}
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		updates := map[string]interface{}{
+			"url":         newURL,
+			"description": description,
+			"type":        newType,
+		}
+		if chainID != nil {
+			updates["chain_id"] = chainID
+		}
 
-	switch tablename {
-	case "webhook_gov_daos":
-		return db.Model(&WebhookGovDAO{}).
-			Where("id = ? AND user_id = ?", id, userID).
-			Updates(updates).Error
-	case "webhook_validators":
-		return db.Model(&WebhookValidator{}).
-			Where("id = ? AND user_id = ?", id, userID).
-			Updates(updates).Error
-	default:
-		return fmt.Errorf("unknown table: %q", tablename)
-	}
+		switch tablename {
+		case "webhook_gov_daos":
+			return tx.Model(&WebhookGovDAO{}).
+				Where("id = ? AND user_id = ?", id, userID).
+				Updates(updates).Error
+		case "webhook_validators":
+			return tx.Model(&WebhookValidator{}).
+				Where("id = ? AND user_id = ?", id, userID).
+				Updates(updates).Error
+		default:
+			return fmt.Errorf("unknown table: %q", tablename)
+		}
+	})
 }
 
 func GetWebhookByID(db *gorm.DB, userID, table string) (*WebhookValidator, error) {
@@ -259,40 +274,40 @@ func GetUserWebhookChains(db *gorm.DB, userID string) ([]string, error) {
 // ============================== USERS ===================================================
 
 func InsertUser(userID, email, name string, db *gorm.DB) error {
-	u := User{
-		UserID: userID,
-		Email:  email,
-		Name:   name,
-	}
-	err := db.Create(&u).Error
-	if err != nil {
-		return err
-	}
-	return createHourReport(db, userID)
-}
-func DeleteUser(userID string, db *gorm.DB) error {
-	return db.Transaction(func(tx *gorm.DB) error {
-		tables := []any{
-			&WebhookGovDAO{}, &WebhookValidator{},
-			&AlertContact{}, &HourReport{},
-			&User{},
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		u := User{
+			UserID: userID,
+			Email:  email,
+			Name:   name,
 		}
-		for _, model := range tables {
-			if err := tx.Where("user_id = ?", userID).Delete(model).Error; err != nil {
-				return err
-			}
+		err := tx.Create(&u).Error
+		if err != nil {
+			return err
 		}
-		return nil
+		return createHourReport(tx, userID)
 	})
 }
+func DeleteUser(userID string, db *gorm.DB) error {
+	return withAccountLock(db, userID, func(tx *gorm.DB, _ string) error { return deleteUserRows(tx, userID) })
+}
+func deleteUserRows(tx *gorm.DB, userID string) error {
+	for _, model := range []any{&WebhookGovDAO{}, &WebhookValidator{}, &AlertContact{}, &HourReport{}, &User{}} {
+		if err := tx.Where("user_id = ?", userID).Delete(model).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func UpdateUser(db *gorm.DB, name, email, userID string) error {
-	return db.
-		Model(&User{}).
-		Where("user_id = ?", userID).
-		Updates(map[string]interface{}{
-			"nameuser": name,
-			"email":    email,
-		}).Error
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		return tx.
+			Model(&User{}).
+			Where("user_id = ?", userID).
+			Updates(map[string]interface{}{
+				"nameuser": name,
+				"email":    email,
+			}).Error
+	})
 }
 func GetUserById(db *gorm.DB, userID string) (*User, error) {
 	var usr User
@@ -311,19 +326,21 @@ func GetUserById(db *gorm.DB, userID string) (*User, error) {
 
 // ============================== Report Hour =============================================
 func UpdateHeureReport(db *gorm.DB, h, m int, t, userID string) error {
-	// Validate timezone
-	if _, err := time.LoadLocation(t); err != nil {
-		log.Printf("Invalid timezone '%s', defaulting to UTC", t)
-		t = "UTC"
-	}
-	return db.
-		Model(&HourReport{}).
-		Where("user_id = ?", userID).
-		Updates(map[string]interface{}{
-			"daily_report_hour":   h,
-			"daily_report_minute": m,
-			"timezone":            t,
-		}).Error
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		// Validate timezone
+		if _, err := time.LoadLocation(t); err != nil {
+			log.Printf("Invalid timezone '%s', defaulting to UTC", t)
+			t = "UTC"
+		}
+		return tx.
+			Model(&HourReport{}).
+			Where("user_id = ?", userID).
+			Updates(map[string]interface{}{
+				"daily_report_hour":   h,
+				"daily_report_minute": m,
+				"timezone":            t,
+			}).Error
+	})
 }
 func GetHourReport(db *gorm.DB, userID string) (*HourReport, error) {
 	var hr HourReport
@@ -336,7 +353,7 @@ func GetHourReport(db *gorm.DB, userID string) (*HourReport, error) {
 	return &hr, nil
 }
 func createHourReport(db *gorm.DB, userID string) error {
-	return db.Create(&HourReport{UserID: userID}).Error
+	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&HourReport{UserID: userID}).Error
 }
 
 // ============================== Alert_contact =============================================
@@ -348,14 +365,16 @@ func createHourReport(db *gorm.DB, userID string) error {
 const NoWebhookLinked = 0
 
 func InsertAlertContact(db *gorm.DB, userID, moniker, namecontact, mentionTag string, idwebhook int) error {
-	contact := AlertContact{
-		UserID:      userID,
-		Moniker:     moniker,
-		NameContact: namecontact,
-		MentionTag:  mentionTag,
-		IDwebhook:   idwebhook,
-	}
-	return db.Create(&contact).Error
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		contact := AlertContact{
+			UserID:      userID,
+			Moniker:     moniker,
+			NameContact: namecontact,
+			MentionTag:  mentionTag,
+			IDwebhook:   idwebhook,
+		}
+		return tx.Create(&contact).Error
+	})
 }
 
 // GetAlertContact returns the caller's contact with this id, or (nil, nil)
@@ -389,25 +408,29 @@ func ListAlertContacts(db *gorm.DB, userID string) ([]AlertContact, error) {
 var ErrAlertContactNotFound = errors.New("alert contact not found")
 
 func UpdateAlertContact(db *gorm.DB, id int, userID, moniker, namecontact, mentionTag string, idwebhook int) error {
-	res := db.
-		Model(&AlertContact{}).
-		Where("id = ? AND user_id = ?", id, userID).
-		Updates(map[string]interface{}{
-			"moniker":     moniker,
-			"namecontact": namecontact,
-			"mention_tag": mentionTag,
-			"id_webhook":  idwebhook,
-		})
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrAlertContactNotFound
-	}
-	return nil
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		res := tx.
+			Model(&AlertContact{}).
+			Where("id = ? AND user_id = ?", id, userID).
+			Updates(map[string]interface{}{
+				"moniker":     moniker,
+				"namecontact": namecontact,
+				"mention_tag": mentionTag,
+				"id_webhook":  idwebhook,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrAlertContactNotFound
+		}
+		return nil
+	})
 }
 func DeleteAlertContact(db *gorm.DB, id int, userID string) error {
-	return db.Where("id = ? AND user_id = ?", id, userID).Delete(&AlertContact{}).Error
+	return withActiveAccountWrite(db, userID, func(tx *gorm.DB) error {
+		return tx.Where("id = ? AND user_id = ?", id, userID).Delete(&AlertContact{}).Error
+	})
 }
 
 // UpsertFirstActiveBlock sets first_active_block for a validator if it is

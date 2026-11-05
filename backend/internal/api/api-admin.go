@@ -641,6 +641,9 @@ func handleDeleteWebhook(w http.ResponseWriter, r *http.Request, db *gorm.DB, ki
 		return
 	}
 	if err := database.DeleteWebhookAdmin(db, kind, id); err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -654,6 +657,9 @@ func handleResetGovDAOWebhook(w http.ResponseWriter, r *http.Request, db *gorm.D
 		return
 	}
 	if err := database.ResetGovDAOLastCheckedID(db, id); err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -793,6 +799,9 @@ func handlePutSchedule(w http.ResponseWriter, r *http.Request, db *gorm.DB, user
 		return
 	}
 	if err := database.UpdateHourReportAdmin(db, userID, body.Hour, body.Minute, body.Timezone); err != nil {
+		if writeAccountErasureError(w, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
