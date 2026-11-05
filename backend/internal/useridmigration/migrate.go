@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 )
@@ -170,6 +171,16 @@ func Run(ctx context.Context, db *gorm.DB, pairs []Pair, opts Options) (*Report,
 		}
 
 		report.Unmapped = findUnmapped(pairs, counts)
+
+		// Check the schema again: a user_id table (or the erasure table)
+		// created while the run waited for its locks would be left behind.
+		again, err := checkSchema(tx)
+		if err != nil {
+			return fmt.Errorf("schema changed during the run: %w", err)
+		}
+		if again != hasErasure {
+			return fmt.Errorf("schema changed during the run: %s appeared or disappeared", ErasureTable)
+		}
 
 		if !opts.Apply {
 			return errDryRun
@@ -449,12 +460,12 @@ func (p *textWriter) printf(format string, args ...any) {
 	}
 }
 
-// printableID returns id as is when it holds only printable, non-space
-// characters, and Go-quoted otherwise, so a stored id cannot forge report
+// printableID returns id as is when it is valid UTF-8 made of printable,
+// non-space characters, and Go-quoted otherwise, so a stored id cannot forge report
 // lines or send terminal escapes.
 func printableID(id string) string {
-	if id == "" {
-		return `""`
+	if id == "" || !utf8.ValidString(id) {
+		return strconv.Quote(id)
 	}
 	for _, r := range id {
 		if !unicode.IsPrint(r) || unicode.IsSpace(r) {

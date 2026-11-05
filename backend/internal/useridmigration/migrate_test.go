@@ -515,3 +515,35 @@ func TestRun_SeesRowsCommittedWhileWaitingForLocks(t *testing.T) {
 	assert.Equal(t, int64(0), countRows(t, db, "alert_contacts", clerkAlice))
 	assert.Equal(t, int64(2), countRows(t, db, "alert_contacts", subA))
 }
+
+func TestRun_RefusesUserIDTableCreatedWhileWaitingForLocks(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	seedUser(t, db, clerkAlice, emailAlice)
+	holder := db.Begin()
+	require.NoError(t, holder.Error)
+	require.NoError(t, holder.Exec("LOCK TABLE users IN ACCESS EXCLUSIVE MODE").Error)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Run(context.Background(), db, []Pair{alice}, Options{Apply: true, LockTimeout: 5 * time.Second})
+		done <- err
+	}()
+	time.Sleep(300 * time.Millisecond)
+	require.NoError(t, db.Exec("CREATE TABLE extra_late (id serial PRIMARY KEY, user_id text)").Error)
+	require.NoError(t, holder.Rollback().Error)
+	err := <-done
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "schema changed during the run")
+	assert.Contains(t, err.Error(), "extra_late")
+	requireRowsUnder(t, db, clerkAlice, 1)
+	requireRowsUnder(t, db, subA, 0)
+}
+
+func TestPrintableID(t *testing.T) {
+	assert.Equal(t, "user_2alice", printableID("user_2alice"))
+	assert.Equal(t, `""`, printableID(""))
+	assert.Equal(t, `"a b"`, printableID("a b"))
+	assert.Equal(t, `"\x1b[31m"`, printableID("\x1b[31m"))
+	assert.Equal(t, `"user_\xff"`, printableID("user_\xff"))
+}
