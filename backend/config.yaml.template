@@ -17,9 +17,9 @@ trusted_proxy_header: ""
 # ---------------------------------------------------------------------------
 # auth_provider selects which identity provider protects the API.
 #   "clerk"    — the historical provider (default when this key is absent)
-#   "keycloak" — the gno-world Keycloak realm
+#   "keycloak" — the samourai-app Keycloak realm
 # Switching is a config edit, not a code change: both paths ship in the binary,
-# so a failed cutover rolls back by setting this key back to "clerk".
+# coordinate provider changes with the panel; see docs/authentication.md.
 auth_provider: "clerk"
 
 # --- Clerk (used when auth_provider: clerk, and by the fallback below) ---
@@ -27,27 +27,26 @@ clerk_secret_key: "sk_test...."  # change me
 # Admin access: set { "role": "admin" } in Clerk dashboard → User → Public metadata
 
 # --- Keycloak (required when auth_provider: keycloak) ---
-keycloak_issuer: ""  # e.g. "https://auth.samourai.app/realms/gno-world"
+keycloak_issuer: ""  # e.g. "https://auth.kodera.io/realms/samourai-app"
 # Admin access: assign the "admin" role scoped to the gnomonitoring-panel
 # CLIENT — Keycloak admin console → Clients → gnomonitoring-panel → Users in
 # role, or Users → <user> → Role mapping → Filter by clients → Assign role.
-# NOT the realm-wide role filter: gno-world is shared with memba and gnolove,
-# and a realm-wide admin role would grant admin on all three.
+# NOT the realm-wide role filter: samourai-app is shared by multiple clients.
 #
 # keycloak_clerk_fallback keeps the general routes (/webhooks/govdao,
 # /webhooks/validator, /users, /alert-contacts, /usersH) accepting Clerk tokens
-# in addition to Keycloak ones. Those routes are called by memba's /alerts page
-# and gnolove's leaderboard-webhooks route with tokens from *their* Clerk
-# sessions; turning this off before both apps have cut over to Keycloak breaks
-# them with 401s. /admin/* is never dual-accept — the panel cuts over with this
-# backend. Defaults to true when absent.
+# in addition to Keycloak ones. Memba's optional account and alerts still use
+# Clerk sessions. Gnolove removed its Clerk routes in #236 (2026-11-02); this
+# does not migrate Memba. Keep the bridge until every remaining caller has
+# migrated or been retired and real sessions have been checked. /admin/* is
+# never dual-accept. Defaults to true when absent.
 keycloak_clerk_fallback: true
 
 # keycloak_allowed_clients restricts which realm clients' tokens are accepted.
-# gno-world is shared with memba and gnolove, so without this every present and
+# samourai-app is shared by multiple clients, so without this every present and
 # future client in the realm could authenticate here. Defaults to
-# ["gnomonitoring-panel"]; add "memba-web" / "gnolove-web" as those apps cut
-# over. An empty list accepts any client in the realm — deliberate opt-out only.
+# ["gnomonitoring-panel"]; add only actual client IDs reviewed for a completed
+# migration. An empty list accepts any client in the realm — deliberate opt-out only.
 keycloak_allowed_clients:
   - "gnomonitoring-panel"
 
