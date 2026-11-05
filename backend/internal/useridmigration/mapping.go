@@ -5,7 +5,8 @@
 // runs with the backend stopped, inside one database transaction, and is a
 // dry-run unless the operator asks to apply. The mapping it reads pairs each
 // Clerk user id with its Keycloak sub; it holds personal identifiers and is
-// never committed, pasted into an issue or a pull request, or logged.
+// never committed, pasted into an issue or a pull request, or logged. The
+// report repeats those ids (never emails or URLs) and is handled the same way.
 package useridmigration
 
 import (

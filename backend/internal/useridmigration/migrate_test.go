@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -13,7 +14,9 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 const (
@@ -408,4 +411,107 @@ func TestReport_WriteText(t *testing.T) {
 	text = out.String()
 	assert.True(t, strings.HasPrefix(text, "migrate-user-ids: mode=apply direction=reverse pairs=2\n"), text)
 	assert.True(t, strings.HasSuffix(text, "\nresult: committed\n"), text)
+}
+
+func TestRun_ConflictAcrossTablesSkipsWholeUser(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	require.NoError(t, db.Create(&database.User{UserID: clerkAlice, Name: "alice", Email: emailAlice}).Error)
+	require.NoError(t, db.Create(&database.HourReport{UserID: clerkAlice, DailyReportHour: 9}).Error)
+	addContact(t, db, subA, 0)
+
+	report := run(t, db, []Pair{alice}, Options{Apply: true})
+
+	res := userResult(t, report, clerkAlice)
+	assert.Equal(t, StatusConflict, res.Status)
+	assert.Equal(t, []string{"alert_contacts"}, res.ConflictTables)
+	assert.Empty(t, res.Moved)
+	assert.Equal(t, int64(1), countRows(t, db, "users", clerkAlice))
+	assert.Equal(t, int64(1), countRows(t, db, "hour_reports", clerkAlice))
+	assert.Equal(t, int64(0), countRows(t, db, "users", subA))
+}
+
+func TestRun_ErasureMarkerAgainstDataIsAConflict(t *testing.T) {
+	t.Run("marker under the target, rows under the source", func(t *testing.T) {
+		db := testoutils.NewTestDB(t)
+		createErasureTable(t, db)
+		insertErasure(t, db, subA)
+		seedUser(t, db, clerkAlice, emailAlice)
+
+		report := run(t, db, []Pair{alice}, Options{Apply: true})
+
+		res := userResult(t, report, clerkAlice)
+		assert.Equal(t, StatusConflict, res.Status)
+		assert.Equal(t, []string{ErasureTable}, res.ConflictTables)
+		requireRowsUnder(t, db, clerkAlice, 1)
+		assert.Equal(t, []string{ErasureDigest(subA)}, erasureDigests(t, db))
+	})
+	t.Run("marker under the source, rows under the target", func(t *testing.T) {
+		db := testoutils.NewTestDB(t)
+		createErasureTable(t, db)
+		insertErasure(t, db, clerkAlice)
+		seedUser(t, db, subA, emailAlice)
+
+		report := run(t, db, []Pair{alice}, Options{Apply: true})
+
+		res := userResult(t, report, clerkAlice)
+		assert.Equal(t, StatusConflict, res.Status)
+		assert.Equal(t, Tables, res.ConflictTables)
+		assert.Equal(t, []string{ErasureDigest(clerkAlice)}, erasureDigests(t, db))
+	})
+}
+
+func TestReport_WriteTextQuotesUnprintableIDs(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	seedUser(t, db, clerkAlice, emailAlice)
+	forged := "user_2x\nMIGRATED forged -> forged: users=1"
+	require.NoError(t, db.Create(&database.WebhookValidator{UserID: forged, URL: "https://hooks.example.test/f", Type: "discord"}).Error)
+
+	report := run(t, db, []Pair{alice}, Options{})
+	var out bytes.Buffer
+	require.NoError(t, report.WriteText(&out))
+
+	assert.NotContains(t, out.String(), "\nMIGRATED forged")
+	assert.Contains(t, out.String(), "UNMAPPED \"user_2x\\nMIGRATED forged -> forged: users=1\" clerk-like=true: webhook_validators=1\n")
+}
+
+// A database or role default of REPEATABLE READ must not let the snapshot
+// predate LOCK TABLE: rows committed while Run waits for the lock are moved too.
+func TestRun_SeesRowsCommittedWhileWaitingForLocks(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	seedUser(t, db, clerkAlice, emailAlice)
+	base := os.Getenv("TEST_DATABASE_DSN")
+	if base == "" {
+		base = "host=localhost port=5432 user=gnomonitoring password=gnomonitoring dbname=gnomonitoring_test sslmode=disable"
+	}
+	var schema string
+	require.NoError(t, db.Raw("SELECT current_schema()").Scan(&schema).Error)
+	rr, err := gorm.Open(postgres.Open(base+" search_path="+schema+" default_transaction_isolation='repeatable read'"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if sqlDB, err := rr.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	holder := db.Begin()
+	require.NoError(t, holder.Error)
+	require.NoError(t, holder.Create(&database.AlertContact{UserID: clerkAlice, Moniker: "late", NameContact: "late"}).Error)
+
+	type result struct {
+		report *Report
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		r, err := Run(context.Background(), rr, []Pair{alice}, Options{Apply: true, LockTimeout: 5 * time.Second})
+		done <- result{r, err}
+	}()
+	time.Sleep(300 * time.Millisecond)
+	require.NoError(t, holder.Commit().Error)
+	got := <-done
+
+	require.NoError(t, got.err)
+	assert.Equal(t, int64(2), userResult(t, got.report, clerkAlice).Moved["alert_contacts"])
+	assert.Equal(t, int64(0), countRows(t, db, "alert_contacts", clerkAlice))
+	assert.Equal(t, int64(2), countRows(t, db, "alert_contacts", subA))
 }

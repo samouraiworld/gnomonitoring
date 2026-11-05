@@ -46,6 +46,16 @@ func TestRun_PositionalArgumentIsUsageError(t *testing.T) {
 	assert.Equal(t, 2, run([]string{"--mapping", "m.csv", "apply"}, &out, &errb))
 }
 
+// An unquoted DSN splits into positional arguments; the error must not echo
+// them, since one of them may be the password.
+func TestRun_UnquotedDSNDoesNotEchoPassword(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := run([]string{"--mapping", "m.csv", "--dsn", "host=db", "password=s3cret", "dbname=x"}, &out, &errb)
+	assert.Equal(t, 2, code)
+	assert.NotContains(t, errb.String(), "s3cret")
+	assert.Contains(t, errb.String(), "quote the --dsn value")
+}
+
 func TestRun_NegativeLockTimeoutIsUsageError(t *testing.T) {
 	var out, errb bytes.Buffer
 	assert.Equal(t, 2, run([]string{"--mapping", "m.csv", "--lock-timeout", "-1s"}, &out, &errb))
@@ -154,5 +164,6 @@ func TestRun_DatabaseErrorExitsOne(t *testing.T) {
 	var out, errb bytes.Buffer
 	assert.Equal(t, 1, run([]string{"--mapping", mapping, "--dsn", schemaDSN(t, db), "--apply"}, &out, &errb))
 	assert.Contains(t, errb.String(), "extra_things")
+	assert.Contains(t, errb.String(), "run again without --apply")
 	assert.Empty(t, out.String())
 }

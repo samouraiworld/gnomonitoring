@@ -103,8 +103,11 @@ Entries are ordered newest-first within each section.
   in one transaction, is a dry-run unless `--apply` is given, is idempotent,
   and `--reverse` undoes it with the same mapping. A user whose two ids both
   own rows is reported and left alone; unmapped ids are listed and left
-  alone; an unknown table with a `user_id` column stops the tool. The backend
-  image ships it at `/app/migrate-user-ids`; the server does not change.
+  alone; an unknown table with a `user_id` column stops the tool. Apply it
+  only right before starting a server that keys users by their Keycloak sub.
+  The report repeats the mapping's ids and is handled like the mapping. The
+  backend image ships it at `/app/migrate-user-ids`; the server does not
+  change.
 
 - **Daily encrypted Postgres backup to Scaleway Object Storage** — the
   production database had no backup since the SQLite to Postgres move.

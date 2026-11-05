@@ -37,12 +37,19 @@ By default it is a dry-run: it performs the same updates, prints the report
 and rolls back, so nothing changes. Pass --apply to commit. --reverse rewrites
 subs back to Clerk ids with the same mapping.
 
-Stop the backend before running it. Never commit the mapping file or paste it
-anywhere: it holds personal identifiers.
+Stop the backend before running it. Apply only right before starting a server
+that identifies users by their Keycloak sub: a server that still uses Clerk ids
+would show migrated users empty lists and store new rows under the old ids.
+
+Never commit the mapping file or paste it anywhere: it holds personal
+identifiers. The report repeats them (MIGRATED lines pair each Clerk id with
+its sub); handle it like the mapping.
 
 Flags:
   --mapping FILE           CSV with the header clerk_user_id,sub (required)
-  --dsn DSN                Postgres DSN; overrides --config
+  --dsn DSN                Postgres DSN; overrides --config. It shows in the
+                           process list: leave the password out and set
+                           PGPASSWORD, or prefer --config
   --config PATH            config file whose database: block gives the DSN (default config.yaml)
   --apply                  commit the changes (default: dry-run)
   --reverse                rewrite subs back to Clerk ids
@@ -79,7 +86,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return usageError("%v", err)
 	}
 	if fs.NArg() > 0 {
-		return usageError("unexpected argument %q", fs.Arg(0))
+		// The value is not echoed: an unquoted --dsn spills its password here.
+		return usageError("unexpected argument after the flags (quote the --dsn value)")
 	}
 	if *mappingPath == "" {
 		return usageError("--mapping is required")
@@ -129,9 +137,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		LockTimeout: *lockTimeout,
 	})
 	if err != nil {
+		if *apply {
+			// A failure during COMMIT (or an interrupt racing it) leaves the
+			// outcome unknown; a dry-run shows the current state safely.
+			fmt.Fprintln(stderr, "migrate-user-ids: if unsure whether the changes were committed, run again without --apply to see the current state")
+		}
 		return fail(err)
 	}
 	if err := report.WriteText(stdout); err != nil {
+		if *apply {
+			return fail(fmt.Errorf("changes committed, but writing the report failed: %w", err))
+		}
 		return fail(err)
 	}
 	return 0

@@ -2,12 +2,15 @@ package useridmigration
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"gorm.io/gorm"
 )
@@ -37,7 +40,7 @@ const (
 	StatusMigrated        Status = "migrated"         // rows moved from From to To
 	StatusAlreadyMigrated Status = "already-migrated" // no rows under From, some under To
 	StatusNoRows          Status = "no-rows"          // no rows under either id
-	StatusConflict        Status = "conflict"         // some table (or the erasure marker) has rows under both ids
+	StatusConflict        Status = "conflict"         // rows (or erasure markers) under both ids; nothing moved
 )
 
 // UserResult reports one mapped user. From and To follow the direction.
@@ -45,7 +48,7 @@ type UserResult struct {
 	From, To       string
 	Status         Status
 	Moved          map[string]int64 // table -> rows moved; ErasureTable -> 1 when a digest was rewritten
-	ConflictTables []string
+	ConflictTables []string         // on conflict: tables where To already has rows (ErasureTable: To's marker)
 }
 
 // Unmapped reports a stored user id that is neither a mapped Clerk id nor a
@@ -74,8 +77,9 @@ var errDryRun = errors.New("dry-run: rolling back")
 // digests when ErasureTable exists, for each pair, in one transaction.
 //
 // It locks the tables against writers first and fails if the locks are not
-// granted within LockTimeout. A user whose old and new ids both own rows in
-// the same table is reported as a conflict and left untouched. Ids that own
+// granted within LockTimeout. A user whose old and new ids both own rows (in
+// any table, or an erasure marker) is reported as a conflict and left
+// untouched. Ids that own
 // rows but are not in the mapping are reported and left untouched. Without
 // Apply, Run performs every update and then rolls back, so the report shows
 // exactly what an apply would do.
@@ -112,6 +116,10 @@ func Run(ctx context.Context, db *gorm.DB, pairs []Pair, opts Options) (*Report,
 		report.MovedPerTable[table] = 0
 	}
 
+	// READ COMMITTED whatever the database default: under REPEATABLE READ the
+	// snapshot would be taken by the first SELECT, before LOCK TABLE, and the
+	// counts and updates would miss rows written while the lock was awaited.
+	txOpts := &sql.TxOptions{Isolation: sql.LevelReadCommitted}
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec("SELECT set_config('lock_timeout', ?, true)", fmt.Sprintf("%dms", timeoutMS)).Error; err != nil {
 			return fmt.Errorf("set lock_timeout: %w", err)
@@ -167,7 +175,7 @@ func Run(ctx context.Context, db *gorm.DB, pairs []Pair, opts Options) (*Report,
 			return errDryRun
 		}
 		return nil
-	})
+	}, txOpts)
 	if err != nil && !errors.Is(err, errDryRun) {
 		return nil, err
 	}
@@ -273,33 +281,32 @@ func countRowsPerUser(tx *gorm.DB) (map[string]map[string]int64, error) {
 func migrateUser(tx *gorm.DB, src, dst string, counts map[string]map[string]int64, hasErasure bool, digests map[string]bool) (UserResult, error) {
 	res := UserResult{From: src, To: dst}
 	srcRows := map[string]int64{}
-	dstHasRows := false
+	var dstTables []string
 	for _, table := range Tables {
-		s, d := counts[table][src], counts[table][dst]
-		if s > 0 && d > 0 {
-			res.ConflictTables = append(res.ConflictTables, table)
+		if n := counts[table][src]; n > 0 {
+			srcRows[table] = n
 		}
-		if s > 0 {
-			srcRows[table] = s
-		}
-		if d > 0 {
-			dstHasRows = true
+		if counts[table][dst] > 0 {
+			dstTables = append(dstTables, table)
 		}
 	}
 	srcDigest, dstDigest := ErasureDigest(src), ErasureDigest(dst)
 	srcMarker := hasErasure && digests[srcDigest]
-	dstMarker := hasErasure && digests[dstDigest]
-	if srcMarker && dstMarker {
-		res.ConflictTables = append(res.ConflictTables, ErasureTable)
+	if hasErasure && digests[dstDigest] {
+		dstTables = append(dstTables, ErasureTable)
 	}
-	dstHasRows = dstHasRows || dstMarker
+	srcHasData := len(srcRows) > 0 || srcMarker
 
+	// Any data under both ids, in the same table or not, erasure markers
+	// included, is a conflict: the user is left whole for a manual merge, so
+	// a wrong pair can never fold one person's rows into another's.
 	switch {
-	case len(res.ConflictTables) > 0:
+	case srcHasData && len(dstTables) > 0:
 		res.Status = StatusConflict
+		res.ConflictTables = dstTables
 		return res, nil
-	case len(srcRows) == 0 && !srcMarker:
-		if dstHasRows {
+	case !srcHasData:
+		if len(dstTables) > 0 {
 			res.Status = StatusAlreadyMigrated
 		} else {
 			res.Status = StatusNoRows
@@ -367,7 +374,8 @@ func findUnmapped(pairs []Pair, counts map[string]map[string]int64) []Unmapped {
 }
 
 // WriteText prints the report in the line format the operator runbook greps.
-// It prints user ids and counts only, never emails or webhook URLs.
+// It prints user ids and counts only, never emails or webhook URLs. The
+// MIGRATED lines repeat the mapping: treat the report like the mapping.
 func (r *Report) WriteText(w io.Writer) error {
 	p := &textWriter{w: w}
 	mode, direction := "dry-run", "forward"
@@ -399,7 +407,7 @@ func (r *Report) WriteText(w io.Writer) error {
 		if u.Status != StatusMigrated {
 			continue
 		}
-		p.printf("MIGRATED %s -> %s:", u.From, u.To)
+		p.printf("MIGRATED %s -> %s:", printableID(u.From), printableID(u.To))
 		for _, table := range allTables {
 			if n := u.Moved[table]; n > 0 {
 				p.printf(" %s=%d", table, n)
@@ -409,11 +417,11 @@ func (r *Report) WriteText(w io.Writer) error {
 	}
 	for _, u := range r.Users {
 		if u.Status == StatusConflict {
-			p.printf("CONFLICT %s -> %s: %s\n", u.From, u.To, strings.Join(u.ConflictTables, " "))
+			p.printf("CONFLICT %s -> %s: %s\n", printableID(u.From), printableID(u.To), strings.Join(u.ConflictTables, " "))
 		}
 	}
 	for _, u := range r.Unmapped {
-		p.printf("UNMAPPED %s clerk-like=%t:", u.UserID, u.ClerkLike)
+		p.printf("UNMAPPED %s clerk-like=%t:", printableID(u.UserID), u.ClerkLike)
 		for _, table := range Tables {
 			if n := u.Rows[table]; n > 0 {
 				p.printf(" %s=%d", table, n)
@@ -439,4 +447,19 @@ func (p *textWriter) printf(format string, args ...any) {
 	if p.err == nil {
 		_, p.err = fmt.Fprintf(p.w, format, args...)
 	}
+}
+
+// printableID returns id as is when it holds only printable, non-space
+// characters, and Go-quoted otherwise, so a stored id cannot forge report
+// lines or send terminal escapes.
+func printableID(id string) string {
+	if id == "" {
+		return `""`
+	}
+	for _, r := range id {
+		if !unicode.IsPrint(r) || unicode.IsSpace(r) {
+			return strconv.Quote(id)
+		}
+	}
+	return id
 }
