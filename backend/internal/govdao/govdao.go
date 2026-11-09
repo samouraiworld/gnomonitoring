@@ -620,8 +620,11 @@ func sendProposalStatusNotification(db *gorm.DB, p database.Govdao, status strin
 		log.Printf("[govdao] SendInfoGovdao error: %v", err)
 	}
 
+	// CheckProposalStatus notifies from one goroutine per chain, and the admin
+	// API rewrites internal.EnabledChains in place under ConfigMu: read it
+	// through the locked snapshot, never directly.
 	msgT := formatProposalStatusTelegram(p, status)
-	if err := telegram.MsgTelegramGovdao(msgT, p.ChainID, internal.Config.TokenTelegramGovdao, internal.Config.DefaultChain, internal.EnabledChains, db); err != nil {
+	if err := telegram.MsgTelegramGovdao(msgT, p.ChainID, internal.Config.TokenTelegramGovdao, internal.Config.DefaultChain, enabledChainsSnapshot(), db); err != nil {
 		log.Printf("[govdao] MsgTelegramGovdao error: %v", err)
 	}
 }
@@ -667,8 +670,10 @@ func storeProposalStatus(db *gorm.DB, p database.Govdao, status string) {
 // of months-old proposals on the first run after deploy.
 //
 // Each chain is checked in its own goroutine, so a chain whose RPC endpoints
-// hang only delays its own proposals; CheckProposalStatus returns once every
-// chain is done.
+// hang does not delay another chain's notifications within a cycle.
+// CheckProposalStatus still returns only once every chain is done, so the
+// slowest chain pushes back the start of the next cycle for all of them;
+// checkChainProposalStatus bounds how long an unreachable chain can take.
 func CheckProposalStatus(db *gorm.DB) {
 	// Only enabled chains have an RPC pool to query. Proposals of a disabled
 	// chain stay in the DB untouched until that chain is enabled again.
@@ -694,18 +699,33 @@ func CheckProposalStatus(db *gorm.DB) {
 	wg.Wait()
 }
 
+// chainUnreachableAfter is how many proposals in a row must fail with every RPC
+// endpoint down before checkChainProposalStatus gives up on a chain for the
+// cycle. One is not enough: a proxy can answer 5xx on every endpoint for a
+// single proposal (a render slow enough to hit a gateway timeout), which
+// rpcpool reports the same way as a dead chain. Giving up on that one failure
+// would skip the same later proposals every cycle.
+const chainUnreachableAfter = 2
+
 // checkChainProposalStatus checks proposals, all of chain chainID, one after
-// the other. Once a fetch fails because every RPC endpoint of the chain
-// failed, the chain is unreachable for now: the remaining proposals are
-// skipped until the next cycle instead of each paying the RPC timeout. Any
-// other error (unknown realm, VM panic) concerns that proposal only.
+// the other. Once chainUnreachableAfter fetches in a row fail because every
+// RPC endpoint of the chain failed, the chain is unreachable for now: the
+// remaining proposals are skipped until the next cycle instead of each paying
+// the RPC timeout. Any other error (unknown realm, VM panic) means the chain
+// answered, and concerns that proposal only.
 func checkChainProposalStatus(db *gorm.DB, chainID string, proposals []database.Govdao) {
+	outages := 0
 	for i, p := range proposals {
 		currentStatus, err := fetchChainProposalStatus(p.ChainID, p.Id)
 		if errors.Is(err, rpcpool.ErrAllEndpointsFailed) {
-			log.Printf("[govdao][%s] every RPC endpoint failed on proposal %d, skipping the %d remaining proposals of this chain until the next cycle: %v",
-				chainID, p.Id, len(proposals)-i-1, err)
-			return
+			outages++
+			if outages >= chainUnreachableAfter {
+				log.Printf("[govdao][%s] every RPC endpoint failed on %d proposals in a row (last: %d), skipping the %d remaining proposals of this chain until the next cycle: %v",
+					chainID, outages, p.Id, len(proposals)-i-1, err)
+				return
+			}
+		} else {
+			outages = 0
 		}
 		if err != nil {
 			log.Printf("[govdao][%s] error fetching status for proposal %d: %v", p.ChainID, p.Id, err)

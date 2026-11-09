@@ -272,9 +272,12 @@ Entries are ordered newest-first within each section.
   60 s RPC timeout per proposal, so 42 proposals on that chain delayed a
   gnoland-1 ACCEPTED notification by about an hour. Each chain is now checked
   in its own goroutine, and a chain is skipped for the rest of the cycle once
-  a fetch fails because every RPC endpoint failed (logged once, with the
-  number of proposals skipped). A chain-level error on one proposal (unknown
-  realm, VM panic) still skips that proposal only. `rpcpool` now wraps
+  two proposals in a row fail because every RPC endpoint failed (logged once,
+  with the number of proposals skipped). A single such failure does not skip
+  the chain: a proxy can answer 5xx on every endpoint for one slow render
+  only. A chain-level error on one proposal (unknown realm, VM panic) still
+  skips that proposal only. The cycle still ends when the slowest chain is
+  done, so a slow chain can push back the next cycle. `rpcpool` now wraps
   `rpcpool.ErrAllEndpointsFailed` in that error so callers can match it with
   `errors.Is`; its message changes from `all N RPC endpoints failed, first
   error: …` to `rpcpool: all RPC endpoints failed: N tried, first error: …`.

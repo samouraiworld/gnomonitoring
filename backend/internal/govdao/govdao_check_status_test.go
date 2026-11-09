@@ -358,9 +358,10 @@ func TestCheckProposalStatusWithNoEnabledChainPollsNothing(t *testing.T) {
 }
 
 // A chain whose every RPC endpoint failed is skipped for the rest of the
-// cycle after its first failed fetch. Without this, a chain whose endpoints
-// hang costs the 60s RPC timeout per proposal (42 proposals = 42 min), which
-// delayed GovDAO notifications for every chain by about an hour in prod.
+// cycle after chainUnreachableAfter failed fetches in a row. Without this, a
+// chain whose endpoints hang costs the 60s RPC timeout per proposal
+// (42 proposals = 42 min), which delayed GovDAO notifications for every chain
+// by about an hour in prod.
 func TestCheckProposalStatusSkipsChainAfterAllEndpointsFailed(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	sent := stubStatusWatcher(t, map[string]string{"dev": StatusAccepted})
@@ -380,7 +381,8 @@ func TestCheckProposalStatusSkipsChainAfterAllEndpointsFailed(t *testing.T) {
 
 	CheckProposalStatus(db)
 
-	assert.Equal(t, 1, calls("betanet"), "an unreachable chain must be polled once per cycle, not once per proposal")
+	assert.Equal(t, chainUnreachableAfter, calls("betanet"),
+		"an unreachable chain must be given up on after a few failed fetches, not polled once per proposal")
 	assert.Equal(t, 1, calls("dev"))
 	require.Len(t, *sent, 1, "the reachable chain must still be checked and notified")
 	assert.Equal(t, notification{chainID: "dev", id: 7, status: StatusAccepted}, (*sent)[0])
@@ -417,6 +419,37 @@ func TestCheckProposalStatusChainLevelErrorDoesNotSkipChain(t *testing.T) {
 	CheckProposalStatus(db)
 
 	assert.Equal(t, 3, calls("dev"), "a chain-level error must not skip the chain's other proposals")
+	assert.Len(t, *sent, 2, "every proposal fetched without error must be notified")
+}
+
+// An all-endpoints failure that is not followed by another one is not an
+// outage: a proxy can answer 5xx on every endpoint for one proposal only (a
+// render slow enough to hit a gateway timeout). Giving up on the chain there
+// would skip the same later proposals every cycle, so an isolated failure
+// must not skip the chain, and a successful fetch resets the count.
+func TestCheckProposalStatusIsolatedOutagesDoNotSkipChain(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sent := stubStatusWatcher(t, map[string]string{"dev": StatusAccepted})
+
+	// Fail the 1st and 3rd fetches, whichever proposals they are, so the test
+	// does not depend on the order rows come back from the database.
+	var n atomic.Int32
+	inner := fetchChainProposalStatus
+	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
+		if call := n.Add(1); call == 1 || call == 3 {
+			return "", allEndpointsFailedErr()
+		}
+		return inner(chainID, id)
+	}
+	calls := countFetches()
+
+	for id := 1; id <= 4; id++ {
+		insertProposal(t, db, id, "dev", StatusInProgress, true)
+	}
+
+	CheckProposalStatus(db)
+
+	assert.Equal(t, 4, calls("dev"), "failures separated by a success must not skip the chain")
 	assert.Len(t, *sent, 2, "every proposal fetched without error must be notified")
 }
 
@@ -476,13 +509,15 @@ func TestCheckProposalStatusSlowChainDoesNotDelayOtherChains(t *testing.T) {
 // The skip above keys on rpcpool.ErrAllEndpointsFailed. In production the
 // error travels through chainquery.Query, which wraps it with tm2's
 // errors.Wrap; this checks the sentinel is still recognizable on the real
-// path, against a real pool whose only endpoint refuses connections.
+// path, against a real pool whose only endpoint answers 503 (an endpoint
+// failure, as a proxy in front of a dead node would answer).
 func TestExtractProposalRenderKeepsAllEndpointsFailedRecognizable(t *testing.T) {
-	srv := httptest.NewServer(http.NotFoundHandler())
-	closedURL := srv.URL
-	srv.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
 
-	client := &chainquery.Client{RPCClient: rpcpool.New([]string{closedURL})}
+	client := &chainquery.Client{RPCClient: rpcpool.New([]string{srv.URL})}
 	_, err := ExtractProposalRender(1, client)
 
 	require.ErrorIs(t, err, rpcpool.ErrAllEndpointsFailed)
