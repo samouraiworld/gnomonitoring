@@ -3,12 +3,14 @@ package govdao
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -663,6 +665,10 @@ func storeProposalStatus(db *gorm.DB, p database.Govdao, status string) {
 // land here, because the old parser read every rejected proposal as
 // "IN PROGRESS" — announcing those would flood every channel with rejections
 // of months-old proposals on the first run after deploy.
+//
+// Each chain is checked in its own goroutine, so a chain whose RPC endpoints
+// hang only delays its own proposals; CheckProposalStatus returns once every
+// chain is done.
 func CheckProposalStatus(db *gorm.DB) {
 	// Only enabled chains have an RPC pool to query. Proposals of a disabled
 	// chain stay in the DB untouched until that chain is enabled again.
@@ -676,8 +682,31 @@ func CheckProposalStatus(db *gorm.DB) {
 		return
 	}
 
+	byChain := make(map[string][]database.Govdao)
 	for _, p := range govdao {
+		byChain[p.ChainID] = append(byChain[p.ChainID], p)
+	}
+
+	var wg sync.WaitGroup
+	for chainID, proposals := range byChain {
+		wg.Go(func() { checkChainProposalStatus(db, chainID, proposals) })
+	}
+	wg.Wait()
+}
+
+// checkChainProposalStatus checks proposals, all of chain chainID, one after
+// the other. Once a fetch fails because every RPC endpoint of the chain
+// failed, the chain is unreachable for now: the remaining proposals are
+// skipped until the next cycle instead of each paying the RPC timeout. Any
+// other error (unknown realm, VM panic) concerns that proposal only.
+func checkChainProposalStatus(db *gorm.DB, chainID string, proposals []database.Govdao) {
+	for i, p := range proposals {
 		currentStatus, err := fetchChainProposalStatus(p.ChainID, p.Id)
+		if errors.Is(err, rpcpool.ErrAllEndpointsFailed) {
+			log.Printf("[govdao][%s] every RPC endpoint failed on proposal %d, skipping the %d remaining proposals of this chain until the next cycle: %v",
+				chainID, p.Id, len(proposals)-i-1, err)
+			return
+		}
 		if err != nil {
 			log.Printf("[govdao][%s] error fetching status for proposal %d: %v", p.ChainID, p.Id, err)
 			continue
