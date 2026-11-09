@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"math/rand/v2"
 	"slices"
 	"strconv"
 	"strings"
@@ -621,10 +622,16 @@ func sendProposalStatusNotification(db *gorm.DB, p database.Govdao, status strin
 	}
 
 	// CheckProposalStatus notifies from one goroutine per chain, and the admin
-	// API rewrites internal.EnabledChains in place under ConfigMu: read it
-	// through the locked snapshot, never directly.
+	// API replaces internal.Config and rewrites internal.EnabledChains in place
+	// under ConfigMu: copy what the Telegram send needs under the lock, and
+	// release it before sending.
+	internal.ConfigMu.Lock()
+	token, defaultChain := internal.Config.TokenTelegramGovdao, internal.Config.DefaultChain
+	enabledChains := slices.Clone(internal.EnabledChains)
+	internal.ConfigMu.Unlock()
+
 	msgT := formatProposalStatusTelegram(p, status)
-	if err := telegram.MsgTelegramGovdao(msgT, p.ChainID, internal.Config.TokenTelegramGovdao, internal.Config.DefaultChain, enabledChainsSnapshot(), db); err != nil {
+	if err := telegram.MsgTelegramGovdao(msgT, p.ChainID, token, defaultChain, enabledChains, db); err != nil {
 		log.Printf("[govdao] MsgTelegramGovdao error: %v", err)
 	}
 }
@@ -713,7 +720,15 @@ const chainUnreachableAfter = 2
 // remaining proposals are skipped until the next cycle instead of each paying
 // the RPC timeout. Any other error (unknown realm, VM panic) means the chain
 // answered, and concerns that proposal only.
+//
+// The order is shuffled on every cycle. Two proposals whose render always
+// fails on every endpoint (while the chain answers for the others) would
+// otherwise trip the skip at the same place each cycle and hide every
+// proposal after them forever; shuffled, they only do so in the cycles where
+// they happen to come first and side by side.
 func checkChainProposalStatus(db *gorm.DB, chainID string, proposals []database.Govdao) {
+	rand.Shuffle(len(proposals), func(i, j int) { proposals[i], proposals[j] = proposals[j], proposals[i] })
+
 	outages := 0
 	for i, p := range proposals {
 		currentStatus, err := fetchChainProposalStatus(p.ChainID, p.Id)

@@ -453,6 +453,36 @@ func TestCheckProposalStatusIsolatedOutagesDoNotSkipChain(t *testing.T) {
 	assert.Len(t, *sent, 2, "every proposal fetched without error must be notified")
 }
 
+// Two proposals whose render always fails on every endpoint, on a chain that
+// answers for the others, trip the skip whenever they are fetched first and
+// side by side. Checked in a fixed order (rows come back in insertion order
+// here: 1, 2, 3), they would do so every cycle and proposal 3 would never be
+// checked. Shuffled per cycle, proposal 3 is reached in any cycle where 1 and
+// 2 are not both first (2 orders in 3), so 50 cycles leave a (1/3)^50 chance
+// of a spurious failure.
+func TestCheckProposalStatusFailingPairDoesNotStarveLaterProposals(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sent := stubStatusWatcher(t, map[string]string{"dev": StatusAccepted})
+	inner := fetchChainProposalStatus
+	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
+		if id == 1 || id == 2 {
+			return "", allEndpointsFailedErr()
+		}
+		return inner(chainID, id)
+	}
+
+	for id := 1; id <= 3; id++ {
+		insertProposal(t, db, id, "dev", StatusInProgress, true)
+	}
+
+	for cycle := 0; cycle < 50 && len(*sent) == 0; cycle++ {
+		CheckProposalStatus(db)
+	}
+
+	require.Len(t, *sent, 1, "proposal 3 must be checked within a few cycles")
+	assert.Equal(t, notification{chainID: "dev", id: 3, status: StatusAccepted}, (*sent)[0])
+}
+
 // A chain that hangs only delays itself: another chain's ACCEPTED must go out
 // in the same cycle while the slow chain is still blocked. Each fake waits on
 // the other chain with a deadline, so the test fails (instead of hanging) when

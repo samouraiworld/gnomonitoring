@@ -275,7 +275,9 @@ Entries are ordered newest-first within each section.
   two proposals in a row fail because every RPC endpoint failed (logged once,
   with the number of proposals skipped). A single such failure does not skip
   the chain: a proxy can answer 5xx on every endpoint for one slow render
-  only. A chain-level error on one proposal (unknown realm, VM panic) still
+  only. Proposals are checked in a new random order each cycle, so two such
+  renders cannot hide the same later proposals every cycle. A chain-level
+  error on one proposal (unknown realm, VM panic) still
   skips that proposal only. The cycle still ends when the slowest chain is
   done, so a slow chain can push back the next cycle. `rpcpool` now wraps
   `rpcpool.ErrAllEndpointsFailed` in that error so callers can match it with
