@@ -9,6 +9,13 @@ Entries are ordered newest-first within each section.
 
 ### Security
 
+- **golang.org/x/net updated to v0.62.0** — replace v0.60.0 in the backend and
+  block_exporter modules. This fixes CVE-2026-78661 (GO-2026-6860), a HIGH
+  denial of service in `golang.org/x/net/html` reported by the backend
+  runtime-image security gate, and CVE-2026-97045 (GO-2026-6866). The bump
+  also moves the modules x/net v0.62.0 requires: x/crypto v0.58.0, x/sys
+  v0.49.0, x/text v0.43.0 and, through x/text, x/sync v0.24.0. No code change.
+
 - **Panel runtime libexpat updated to 2.10.0-r0** — replace the 2.9.0-r0
   library inherited from the pinned nginx image. This fixes CVE-2026-117610
   and CVE-2026-118370, both HIGH findings in the runtime-image security gate.
