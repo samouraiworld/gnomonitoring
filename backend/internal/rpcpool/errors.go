@@ -24,6 +24,13 @@ var (
 
 	// ErrProbeTimeout is recorded when a health probe exceeded probeTimeout.
 	ErrProbeTimeout = errors.New("rpcpool: health probe timed out")
+
+	// ErrAllEndpointsFailed is wrapped by every call that tried each endpoint
+	// and got an endpoint-level failure from all of them. It is never
+	// returned for a chain-level answer, which comes back unwrapped from the
+	// first endpoint that gave it. Callers match it with errors.Is to stop
+	// querying a chain that is unreachable for now.
+	ErrAllEndpointsFailed = errors.New("rpcpool: all RPC endpoints failed")
 )
 
 // endpointErrorSubstrings are the error texts gno's HTTP RPC transport

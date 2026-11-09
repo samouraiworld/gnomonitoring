@@ -55,9 +55,26 @@ func TestCall_DoesNotRotateOnChainLevelError(t *testing.T) {
 
 	_, err := c.ABCIInfo()
 	require.ErrorIs(t, err, chainErr)
+	assert.NotErrorIs(t, err, ErrAllEndpointsFailed,
+		"a chain-level answer is not an outage: callers must not treat it as one")
 	assert.Equal(t, 1, calls0)
 	assert.Equal(t, 0, calls1, "a chain-level answer must not burn another endpoint")
 	assert.Equal(t, "e0", c.ActiveEndpoint())
+}
+
+// Callers (the GovDAO status watcher) skip a chain for the rest of a cycle
+// once every endpoint failed, so the outage must be recognizable with
+// errors.Is, and the first endpoint's error must stay reachable for logs.
+func TestCall_AllDownWrapsErrAllEndpointsFailed(t *testing.T) {
+	conns := map[string]*fakeConn{
+		"e0": {endpoint: "e0", abciErr: errDown},
+		"e1": {endpoint: "e1", abciErr: errDown},
+	}
+	c := New([]string{"e0", "e1"}, WithDialer(fakeDialerFrom(conns)))
+
+	_, err := c.ABCIInfo()
+	require.ErrorIs(t, err, ErrAllEndpointsFailed)
+	assert.ErrorIs(t, err, errDown, "the first endpoint's error must stay wrapped")
 }
 
 func TestCall_AllDownReportsOnceThenRecovers(t *testing.T) {
