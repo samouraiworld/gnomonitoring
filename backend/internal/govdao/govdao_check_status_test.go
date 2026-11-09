@@ -499,13 +499,17 @@ func TestCheckProposalStatusSlowChainDoesNotDelayOtherChains(t *testing.T) {
 
 	slowStarted := make(chan struct{})
 	devNotified := make(chan struct{})
+	// Each chain holds a single proposal today; OnceFunc keeps the test valid
+	// (no double close) if a row is ever added.
+	markSlowStarted := sync.OnceFunc(func() { close(slowStarted) })
+	markDevNotified := sync.OnceFunc(func() { close(devNotified) })
 	var timedOut atomic.Bool
 
 	inner := fetchChainProposalStatus
 	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
 		switch chainID {
 		case "betanet":
-			close(slowStarted) // betanet holds a single proposal
+			markSlowStarted()
 			if !waitFor(devNotified, deadline) {
 				timedOut.Store(true)
 			}
@@ -521,7 +525,7 @@ func TestCheckProposalStatusSlowChainDoesNotDelayOtherChains(t *testing.T) {
 	notifyProposalStatus = func(db *gorm.DB, p database.Govdao, status string) {
 		notify(db, p, status)
 		if p.ChainID == "dev" {
-			close(devNotified) // dev holds a single proposal
+			markDevNotified()
 		}
 	}
 
