@@ -220,7 +220,7 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 	}
 
 	c.onAllDown(time.Now(), firstErr)
-	return fmt.Errorf("all %d RPC endpoints failed, first error: %w", n, firstErr)
+	return fmt.Errorf("%w: %d tried, first error: %w", ErrAllEndpointsFailed, n, firstErr)
 }
 
 // onSuccess promotes idx to active and emits the matching transition event.

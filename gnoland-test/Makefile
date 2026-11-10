@@ -34,7 +34,8 @@ DEV_COMPOSE := docker compose -f ../compose_dev_chain.yml --env-file ../.env --e
         stop-val1 stop-val2 stop-val3 stop-val4 \
         start-val1 start-val2 start-val3 start-val4 \
         scenario1 scenario2 scenario2-restart scenario3 scenario3-restart \
-        scenario4 scenario4-restart scenario5 scenario-mute
+        scenario1-propose scenario1-execute \
+        scenario4 scenario4-restart scenario5 scenario-mute scenario-govdao-dead-chain
 
 help:
 	@echo "Full stack (devnet + gnomonitoring, ../compose_dev_chain.yml):"
@@ -71,6 +72,9 @@ help:
 	@echo "  make scenario4-restart - restart all validators"
 	@echo "  make scenario5         - GovDAO proposal voted NO (rejected-status path; fresh chain)"
 	@echo "  make scenario-mute     - keep validator4 down to exercise the resend dedup"
+	@echo "  make scenario-govdao-dead-chain"
+	@echo "                         - a 2nd chain with hanging RPCs must not delay dev's"
+	@echo "                           GovDAO ACCEPTED notice (fresh chain; asserts, ~10 min)"
 
 # Guard: the generated .env (P2P seeds) and genesis.json are required for the
 # chain to form. docker-compose has no default for SEEDS_*, so a missing .env
@@ -182,6 +186,13 @@ start-val4:
 	docker compose start validator4
 
 scenario1: up-validator4
+	@$(MAKE) --no-print-directory scenario1-propose
+	@$(MAKE) --no-print-directory scenario1-execute
+
+# scenario1 in two halves: scenario-govdao-dead-chain makes sure proposal #0 is
+# tracked as IN PROGRESS between the two, so its later ACCEPTED is a live
+# status change the watcher announces.
+scenario1-propose: up-validator4
 	@echo ">>> Step 1: initialize GovDAO (InitWithUsers)"
 	@if gnokey query vm/qeval -remote $(RPC) \
 		-data 'gno.land/r/gov/dao.AllowedDAOs()' 2>/dev/null | grep -q 'gno.land/r/gov/dao/v3/impl'; then \
@@ -214,6 +225,8 @@ scenario1: up-validator4
 		-chainid dev -remote $(RPC) \
 		-home "$(DEV_HOME)" -insecure-password-stdin \
 		dev propose-validator4.gno
+
+scenario1-execute:
 	@echo ">>> Step 5: vote YES on proposal #0"
 	echo "$(DEV_PASS)" | gnokey maketx call \
 		-pkgpath gno.land/r/gov/dao -func MustVoteOnProposalSimple \
@@ -341,3 +354,13 @@ scenario-mute:
 	@echo "And confirm the dedup log line appears:"
 	@echo "  docker logs gnomonitoring-backend | grep 'dedup: skipping'"
 	@echo "Restart with: make scenario2-restart"
+
+# scenario-govdao-dead-chain: reproduces the 2026-11-09 incident, where an
+# enabled chain whose RPC endpoints hang delayed every chain's GovDAO status
+# notifications by about an hour, and checks the fix end to end. Unlike the
+# scenarios above it asserts the outcome itself and exits non-zero on failure.
+# Fresh chain expected (targets proposal #0): 'make dev-up' first.
+# See the header of scenario-govdao-dead-chain.sh for the steps.
+scenario-govdao-dead-chain: up-validator4
+	MAKE="$(MAKE)" DEV_COMPOSE="$(DEV_COMPOSE)" RPC="$(RPC)" PG_CONTAINER="$(PG_CONTAINER)" \
+		PG_USER="$(PG_USER)" PG_DB="$(PG_DB)" ./scenario-govdao-dead-chain.sh

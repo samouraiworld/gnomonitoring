@@ -1,11 +1,20 @@
 package govdao
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	tm2errors "github.com/gnolang/gno/tm2/pkg/errors"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/rpcpool"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,12 +57,61 @@ func stubStatusWatcher(t *testing.T, statuses map[string]string) *[]notification
 		return status, nil
 	}
 
-	var sent []notification
+	// CheckProposalStatus polls chains concurrently, so notifications may
+	// arrive from several goroutines. It returns only once every chain is
+	// done, so tests read the slice afterwards without the lock.
+	var (
+		mu   sync.Mutex
+		sent []notification
+	)
 	notifyProposalStatus = func(_ *gorm.DB, p database.Govdao, status string) {
+		mu.Lock()
+		defer mu.Unlock()
 		sent = append(sent, notification{chainID: p.ChainID, id: p.Id, status: status})
 	}
 
 	return &sent
+}
+
+// countFetches wraps the current fetchChainProposalStatus seam and returns a
+// function reporting how many times each chain was polled. Safe for the
+// concurrent per-chain polling CheckProposalStatus does.
+func countFetches() func(chainID string) int {
+	var (
+		mu    sync.Mutex
+		calls = map[string]int{}
+	)
+	inner := fetchChainProposalStatus
+	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
+		mu.Lock()
+		calls[chainID]++
+		mu.Unlock()
+		return inner(chainID, id)
+	}
+	return func(chainID string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls[chainID]
+	}
+}
+
+// allEndpointsFailedErr is what a status fetch returns in production when
+// every RPC endpoint of the chain failed: rpcpool's sentinel, wrapped by
+// chainquery.Query with tm2's errors.Wrap.
+func allEndpointsFailedErr() error {
+	return tm2errors.Wrap(
+		fmt.Errorf("%w: 2 tried, first error: %w", rpcpool.ErrAllEndpointsFailed, context.DeadlineExceeded),
+		"query error")
+}
+
+// waitFor reports whether ch was closed within d.
+func waitFor(ch <-chan struct{}, d time.Duration) bool {
+	select {
+	case <-ch:
+		return true
+	case <-time.After(d):
+		return false
+	}
 }
 
 // stubEnabledChains sets the chains CheckProposalStatus polls. Call it after
@@ -297,4 +355,204 @@ func TestCheckProposalStatusWithNoEnabledChainPollsNothing(t *testing.T) {
 	CheckProposalStatus(db)
 
 	assert.Equal(t, StatusInProgress, loadProposal(t, db, 7, "dev").Status)
+}
+
+// A chain whose every RPC endpoint failed is skipped for the rest of the
+// cycle after chainUnreachableAfter failed fetches in a row. Without this, a
+// chain whose endpoints hang costs the 60s RPC timeout per proposal
+// (42 proposals = 42 min), which delayed GovDAO notifications for every chain
+// by about an hour in prod.
+func TestCheckProposalStatusSkipsChainAfterAllEndpointsFailed(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sent := stubStatusWatcher(t, map[string]string{"dev": StatusAccepted})
+	inner := fetchChainProposalStatus
+	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
+		if chainID == "betanet" {
+			return "", allEndpointsFailedErr()
+		}
+		return inner(chainID, id)
+	}
+	calls := countFetches()
+
+	for id := range 5 {
+		insertProposal(t, db, id, "betanet", StatusInProgress, true)
+	}
+	insertProposal(t, db, 7, "dev", StatusInProgress, true)
+
+	CheckProposalStatus(db)
+
+	assert.Equal(t, chainUnreachableAfter, calls("betanet"),
+		"an unreachable chain must be given up on after a few failed fetches, not polled once per proposal")
+	assert.Equal(t, 1, calls("dev"))
+	require.Len(t, *sent, 1, "the reachable chain must still be checked and notified")
+	assert.Equal(t, notification{chainID: "dev", id: 7, status: StatusAccepted}, (*sent)[0])
+	for id := range 5 {
+		p := loadProposal(t, db, id, "betanet")
+		assert.Equal(t, StatusInProgress, p.Status, "a skipped proposal must stay untouched")
+		assert.True(t, p.StatusSynced)
+	}
+}
+
+// Only an outage of every endpoint skips the chain. A chain-level error on one
+// proposal (unknown realm, VM panic) says nothing about the others, so the
+// rest of that chain's proposals must still be checked in the same cycle.
+func TestCheckProposalStatusChainLevelErrorDoesNotSkipChain(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sent := stubStatusWatcher(t, map[string]string{"dev": StatusAccepted})
+
+	// Fail the first fetch, whichever proposal it is, so the test does not
+	// depend on the order rows come back from the database.
+	var failed atomic.Bool
+	inner := fetchChainProposalStatus
+	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
+		if failed.CompareAndSwap(false, true) {
+			return "", tm2errors.Wrap(errors.New("VM panic: index out of range"), "query error")
+		}
+		return inner(chainID, id)
+	}
+	calls := countFetches()
+
+	for id := 1; id <= 3; id++ {
+		insertProposal(t, db, id, "dev", StatusInProgress, true)
+	}
+
+	CheckProposalStatus(db)
+
+	assert.Equal(t, 3, calls("dev"), "a chain-level error must not skip the chain's other proposals")
+	assert.Len(t, *sent, 2, "every proposal fetched without error must be notified")
+}
+
+// An all-endpoints failure that is not followed by another one is not an
+// outage: a proxy can answer 5xx on every endpoint for one proposal only (a
+// render slow enough to hit a gateway timeout). Giving up on the chain there
+// would skip the same later proposals every cycle, so an isolated failure
+// must not skip the chain, and a successful fetch resets the count.
+func TestCheckProposalStatusIsolatedOutagesDoNotSkipChain(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sent := stubStatusWatcher(t, map[string]string{"dev": StatusAccepted})
+
+	// Fail the 1st and 3rd fetches, whichever proposals they are, so the test
+	// does not depend on the order rows come back from the database.
+	var n atomic.Int32
+	inner := fetchChainProposalStatus
+	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
+		if call := n.Add(1); call == 1 || call == 3 {
+			return "", allEndpointsFailedErr()
+		}
+		return inner(chainID, id)
+	}
+	calls := countFetches()
+
+	for id := 1; id <= 4; id++ {
+		insertProposal(t, db, id, "dev", StatusInProgress, true)
+	}
+
+	CheckProposalStatus(db)
+
+	assert.Equal(t, 4, calls("dev"), "failures separated by a success must not skip the chain")
+	assert.Len(t, *sent, 2, "every proposal fetched without error must be notified")
+}
+
+// Two proposals whose render always fails on every endpoint, on a chain that
+// answers for the others, trip the skip whenever they are fetched first and
+// side by side. Checked in a fixed order (rows come back in insertion order
+// here: 1, 2, 3), they would do so every cycle and proposal 3 would never be
+// checked. Shuffled per cycle, proposal 3 is reached in any cycle where 1 and
+// 2 are not both first (2 orders in 3), so 50 cycles leave a (1/3)^50 chance
+// of a spurious failure.
+func TestCheckProposalStatusFailingPairDoesNotStarveLaterProposals(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sent := stubStatusWatcher(t, map[string]string{"dev": StatusAccepted})
+	inner := fetchChainProposalStatus
+	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
+		if id == 1 || id == 2 {
+			return "", allEndpointsFailedErr()
+		}
+		return inner(chainID, id)
+	}
+
+	for id := 1; id <= 3; id++ {
+		insertProposal(t, db, id, "dev", StatusInProgress, true)
+	}
+
+	for cycle := 0; cycle < 50 && len(*sent) == 0; cycle++ {
+		CheckProposalStatus(db)
+	}
+
+	require.Len(t, *sent, 1, "proposal 3 must be checked within a few cycles")
+	assert.Equal(t, notification{chainID: "dev", id: 3, status: StatusAccepted}, (*sent)[0])
+}
+
+// A chain that hangs only delays itself: another chain's ACCEPTED must go out
+// in the same cycle while the slow chain is still blocked. Each fake waits on
+// the other chain with a deadline, so the test fails (instead of hanging) when
+// chains are polled one after the other, whatever their order:
+//   - slow chain first: it waits for dev's notification, which never comes
+//     until it gives up;
+//   - dev first: dev waits for the slow chain to start, which never happens
+//     until it gives up.
+func TestCheckProposalStatusSlowChainDoesNotDelayOtherChains(t *testing.T) {
+	const deadline = 5 * time.Second
+
+	db := testoutils.NewTestDB(t)
+	sent := stubStatusWatcher(t, map[string]string{"dev": StatusAccepted})
+
+	slowStarted := make(chan struct{})
+	devNotified := make(chan struct{})
+	// Each chain holds a single proposal today; OnceFunc keeps the test valid
+	// (no double close) if a row is ever added.
+	markSlowStarted := sync.OnceFunc(func() { close(slowStarted) })
+	markDevNotified := sync.OnceFunc(func() { close(devNotified) })
+	var timedOut atomic.Bool
+
+	inner := fetchChainProposalStatus
+	fetchChainProposalStatus = func(chainID string, id int) (string, error) {
+		switch chainID {
+		case "betanet":
+			markSlowStarted()
+			if !waitFor(devNotified, deadline) {
+				timedOut.Store(true)
+			}
+			return "", allEndpointsFailedErr()
+		case "dev":
+			if !waitFor(slowStarted, deadline) {
+				timedOut.Store(true)
+			}
+		}
+		return inner(chainID, id)
+	}
+	notify := notifyProposalStatus
+	notifyProposalStatus = func(db *gorm.DB, p database.Govdao, status string) {
+		notify(db, p, status)
+		if p.ChainID == "dev" {
+			markDevNotified()
+		}
+	}
+
+	insertProposal(t, db, 0, "betanet", StatusInProgress, true)
+	insertProposal(t, db, 7, "dev", StatusInProgress, true)
+
+	CheckProposalStatus(db)
+
+	assert.False(t, timedOut.Load(), "dev's notification must not wait for the slow chain")
+	require.Len(t, *sent, 1)
+	assert.Equal(t, notification{chainID: "dev", id: 7, status: StatusAccepted}, (*sent)[0])
+	assert.Equal(t, StatusAccepted, loadProposal(t, db, 7, "dev").Status)
+}
+
+// The skip above keys on rpcpool.ErrAllEndpointsFailed. In production the
+// error travels through chainquery.Query, which wraps it with tm2's
+// errors.Wrap; this checks the sentinel is still recognizable on the real
+// path, against a real pool whose only endpoint answers 503 (an endpoint
+// failure, as a proxy in front of a dead node would answer).
+func TestExtractProposalRenderKeepsAllEndpointsFailedRecognizable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &chainquery.Client{RPCClient: rpcpool.New([]string{srv.URL})}
+	_, err := ExtractProposalRender(1, client)
+
+	require.ErrorIs(t, err, rpcpool.ErrAllEndpointsFailed)
 }

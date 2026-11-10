@@ -22,3 +22,7 @@ config.toml
 # GovDAO scripts rendered from the committed *.tmpl files
 init-govdao.gno
 propose-validator4.gno
+
+# scenario-govdao-dead-chain.sh working files (config copy with secrets,
+# compose override), removed when the scenario exits
+.deadnet/
