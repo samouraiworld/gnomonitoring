@@ -290,6 +290,7 @@ A `Makefile` in this directory wraps the chain-lifecycle and scenario commands
 | `make scenario4` / `scenario4-restart` | Total RPC outage (stops ALL nodes) → **log-only** alert | `grep 'Error when querying latest block height'` (no DB row) |
 | `make scenario5` | GovDAO proposal voted **NO** (fresh chain) | live "New Proposal" alert + render shows `NO PERCENT: 100%` |
 | `make scenario-mute` | Resend dedup (keeps validator4 down) | exactly one `alert_logs` row/level + `dedup: skipping` log |
+| `make scenario-govdao-dead-chain` | A 2nd chain with hanging RPCs must not delay dev's GovDAO ACCEPTED notice (fresh chain) | **self-asserting**: prints `PASS`, or `FAIL` and exits non-zero |
 
 `make scenario2` stops **validator4**, so run `make scenario1` first to put it
 in the valset. The detailed walkthrough below documents what `make scenario1`
@@ -585,3 +586,41 @@ make clean-all && make full-reinit
 
 This wipes chain state while keeping (reinit) or regenerating (clean-all) the
 node identities. Acceptable for a devnet — there is no real data to preserve.
+
+### Scenario — Dead second chain must not delay GovDAO notifications
+
+Reproduces the 2026-11-09 incident. pearl-1 was enabled while its RPC endpoints
+were dead: one failed DNS resolution at once, the other accepted connections and
+never answered, so each call waited for the 60 s RPC timeout. The GovDAO status
+watcher checked every proposal of every chain one after the other, so gnoland-1's
+ACCEPTED notification went out about an hour late.
+
+```bash
+make dev-up                       # fresh chain: the scenario targets proposal #0
+make scenario-govdao-dead-chain   # ~10 min, prints PASS or FAIL
+```
+
+`scenario-govdao-dead-chain.sh` does the following:
+
+1. It restarts the backend with a second enabled chain, `deadnet`. One of its RPC
+   endpoints cannot be resolved. The other is a `deadnet-rpc` container that
+   accepts connections and never answers.
+2. It seeds 10 `IN PROGRESS` proposals for `deadnet`.
+3. It creates proposal #0 on `dev` and checks that `govdaos` tracks it as
+   `IN PROGRESS`. Then it votes YES and executes the proposal (scenario1's two
+   halves, `scenario1-propose` and `scenario1-execute`).
+4. It waits for the status cycle that sees #0 accepted, and asserts the
+   following for that cycle:
+   - dev's `proposal 0 (...) accepted` line is logged;
+   - `deadnet` fails once, then is given up on at its 2nd failure
+     (`every RPC endpoint failed on 2 proposals in a row`), instead of being
+     polled 10 times;
+   - dev's line comes before `deadnet` is given up on, so dev did not wait
+     behind the dead chain;
+   - `govdaos` stores #0 as `ACCEPTED`.
+5. When it exits, on success or failure, it restores the normal backend and
+   deletes every `deadnet` row.
+
+The scenario needs `python3` with PyYAML, which it uses to write the scenario
+config. Without the fix, the cycle spends ~60 s on each of `deadnet`'s
+proposals, and no skip line is ever logged.
