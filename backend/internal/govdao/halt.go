@@ -546,15 +546,12 @@ func (n *haltNotice) alert(chainID string) internal.AlertData {
 		d.Title = fmt.Sprintf("Chain halt moved by GovDAO: height %d → %d", n.PrevHeight, n.Height)
 		d.Fields = append(n.etaFields(), ver)
 	case haltNoticeVersionChanged:
-		prev, next := n.PrevVer, n.Version
-		if prev == "" {
-			prev = "none"
-		}
-		if next == "" {
-			next = "none"
-		}
-		d.Title = fmt.Sprintf("Chain halt minimum version changed by GovDAO: %s → %s", prev, next)
-		d.Fields = append(n.etaFields(), ver)
+		// The versions stay out of the title: two sanitized versions could
+		// pass the Slack header limit (150 chars).
+		prev := versionField(n.PrevVer)
+		prev.Name = "previous minimum version"
+		d.Title = "Chain halt minimum version changed by GovDAO"
+		d.Fields = append(n.etaFields(), prev, ver)
 	case haltNoticeReminder, haltNoticeFinalReminder:
 		if n.Height <= n.Obs.LatestHeight {
 			d.Title = fmt.Sprintf("Chain reached the halt height %d", n.Height)

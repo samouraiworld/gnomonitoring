@@ -368,6 +368,12 @@ func TestFormatHaltMessages(t *testing.T) {
 	assert.Contains(t, formatHaltPlain(n), "Chain resumed after the halt at height 9000")
 	assert.Equal(t, internal.AlertResolved, n.alert("c").Level)
 
+	n.Kind, n.PrevVer, n.Version = haltNoticeVersionChanged, strings.Repeat("a", maxHaltVersionLen)+"... (sanitized)", strings.Repeat("b", maxHaltVersionLen)+"... (sanitized)"
+	d = n.alert("gnoland-1")
+	assert.LessOrEqual(t, len(d.Title), 150, "Slack header limit")
+	assert.Contains(t, formatHaltPlain(n), "previous minimum version: aaa")
+	assert.Contains(t, formatHaltPlain(n), "minimum version to resume: bbb")
+
 	n.Kind = haltNoticeReached
 	assert.Equal(t, internal.AlertCritical, n.alert("c").Level)
 	n.Kind = haltNoticeCancelled
