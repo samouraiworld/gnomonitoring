@@ -74,10 +74,11 @@ type probeResult struct {
 }
 
 // checkOnce probes every endpoint and promotes the highest-priority healthy
-// one. Returns the promoted index, or -1 when none answered.
+// one. Returns the promoted index, or -1 when none answered or the promotion
+// was stale (a newer switch was applied while the probes ran).
 //
-// Only endpoints on the same network as the highest-priority answering
-// endpoint are considered: a backup left on another network, or on an old
+// Only endpoints on the reference network (see referenceNetwork) are
+// considered: a backup left on another network, or on an old
 // chain ID after a reset, may report a higher height that has nothing to do
 // with this chain. Among them, an endpoint is healthy when it answers Status
 // within defaultProbeTimeout, is not catching up, trails the most advanced
@@ -121,7 +122,9 @@ func (c *Client) checkOnce() int {
 		log.Printf("[rpcpool] health probe: every endpoint failed to answer within %s", defaultProbeTimeout)
 		return -1
 	}
-	c.onSuccess(results[pick].observedAt, pick, true)
+	if !c.onSuccess(results[pick].observedAt, pick, true) {
+		return -1
+	}
 	return pick
 }
 
@@ -167,15 +170,26 @@ func (c *Client) ConfirmStall(height int64) bool {
 	return false
 }
 
-// referenceNetwork returns the network reported by the highest-priority
-// endpoint that answered, or "" when none answered.
+// referenceNetwork returns the network reported by the most answering
+// endpoints, ties going to the highest-priority one, or "" when none
+// answered. A majority, rather than the primary alone, lets the backups
+// outvote a primary left on an old chain ID after a reset. With two
+// endpoints that disagree, the primary wins: the pool has no other way to
+// tell which network is the configured chain.
 func referenceNetwork(results []probeResult) string {
+	counts := make(map[string]int)
 	for _, r := range results {
 		if r.err == nil {
-			return r.network
+			counts[r.network]++
 		}
 	}
-	return ""
+	ref, refCount := "", 0
+	for _, r := range results {
+		if r.err == nil && counts[r.network] > refCount {
+			ref, refCount = r.network, counts[r.network]
+		}
+	}
+	return ref
 }
 
 // markFrozen records, for every answering endpoint on the reference network
@@ -193,8 +207,8 @@ func (c *Client) markFrozen(results []probeResult, height int64) {
 
 // pick chooses the endpoint to serve from among those on the reference
 // network that answered and report a height above floor (see pickEndpoint).
-// Endpoints marked frozen are left out while they have not moved past their
-// frozen height, and their mark is cleared once they have; if that leaves no
+// Endpoints marked frozen are left out while they stay at their frozen
+// height, and their mark is cleared once they move; if that leaves no
 // candidate, the choice is made again without leaving them out.
 func (c *Client) pick(results []probeResult, floor int64) int {
 	network := referenceNetwork(results)
@@ -216,7 +230,10 @@ func (c *Client) pick(results []probeResult, floor int64) int {
 			continue
 		}
 		if h, ok := c.frozenAt[i]; ok {
-			if r.height > h {
+			// Any move clears the mark: past the frozen height the node is
+			// advancing again, and below it the node was reset or resynced
+			// from an older snapshot, which the lag check judges on its own.
+			if r.height != h {
 				delete(c.frozenAt, i)
 			} else {
 				unfrozen[i].err = errFrozen

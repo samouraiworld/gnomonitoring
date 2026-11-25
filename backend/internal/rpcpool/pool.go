@@ -98,10 +98,16 @@ type Client struct {
 	activeIdx int
 	allDown   bool
 	// lastObservedAt is the timestamp of the most recent outcome
-	// (success or total failure) applied to activeIdx/allDown. A new
-	// outcome is applied only if it was observed strictly after this —
-	// see call's doc comment for why entry order cannot be used instead.
+	// (success or total failure) applied to allDown. A new outcome is
+	// applied only if it was observed strictly after this — see call's doc
+	// comment for why entry order cannot be used instead.
 	lastObservedAt time.Time
+	// lastActiveAt is the timestamp of the outcome that last chose
+	// activeIdx (a rotation, a probe promotion or a recovery). A switch is
+	// applied only if it was observed strictly after this. It is kept apart
+	// from lastObservedAt because a plain success on the active endpoint
+	// chooses nothing: it must not make a probe's promotion look stale.
+	lastActiveAt time.Time
 
 	dial   Dialer
 	obs    Observer
@@ -261,11 +267,17 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 // is a recovery from a full outage: then the endpoint that answered is the
 // only one known to work, so it becomes active and is the one reported.
 //
-// It returns whether the outcome was applied.
+// observedAt must be the moment the caller determined this success. Two
+// orderings apply. Against total failures (onAllDown), an outcome older than
+// lastObservedAt is stale: while the pool is all down, a stale success is
+// discarded entirely. Against other switches, a switch older than
+// lastActiveAt is stale and does not move the active endpoint. A plain
+// success never advances lastActiveAt, so the data path answering on the
+// active endpoint while a probe is still collecting answers cannot make that
+// probe's promotion look stale.
 //
-// observedAt must be the moment the caller determined this success; if a
-// newer outcome has already been applied, this completion is stale and is
-// discarded without touching state or the observer.
+// It returns whether the outcome was applied: for a switch, whether idx is
+// now the active endpoint; otherwise, whether it was not discarded.
 //
 // notifyMu is held for the whole function, before mu is even taken, so that
 // applying this transition and delivering it to the observer happen as one
@@ -276,36 +288,47 @@ func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) bool {
 	defer c.notifyMu.Unlock()
 
 	c.mu.Lock()
-	if !observedAt.After(c.lastObservedAt) {
+	freshHealth := observedAt.After(c.lastObservedAt)
+	if c.allDown && !freshHealth {
 		c.mu.Unlock()
 		return false
 	}
-	c.lastObservedAt = observedAt
-	prev := c.activeIdx
-	wasAllDown := c.allDown
-	if !switched && !wasAllDown {
-		idx = prev
+	if freshHealth {
+		c.lastObservedAt = observedAt
 	}
-	c.activeIdx = idx
-	c.allDown = false
-	endpoint := c.endpoints[idx]
+	prev := c.activeIdx
+	recovered := c.allDown
+	applied := !switched
+	switch {
+	case recovered:
+		c.allDown = false
+		c.activeIdx = idx
+		c.lastActiveAt = observedAt
+		applied = true
+	case switched && observedAt.After(c.lastActiveAt):
+		c.activeIdx = idx
+		c.lastActiveAt = observedAt
+		applied = true
+	}
+	active := c.activeIdx
+	endpoint := c.endpoints[active]
 	obs := c.obs
 	c.mu.Unlock()
 
-	if wasAllDown {
-		log.Printf("[rpcpool] recovered on endpoint #%d %s", idx, endpoint)
+	if recovered {
+		log.Printf("[rpcpool] recovered on endpoint #%d %s", active, endpoint)
 		if obs != nil {
 			obs(EventRecovered, endpoint, nil)
 		}
 		return true
 	}
-	if switched && prev != idx {
-		log.Printf("[rpcpool] active endpoint is now #%d %s (was #%d)", idx, endpoint, prev)
+	if switched && applied && prev != active {
+		log.Printf("[rpcpool] active endpoint is now #%d %s (was #%d)", active, endpoint, prev)
 		if obs != nil {
 			obs(EventRotated, endpoint, nil)
 		}
 	}
-	return true
+	return applied
 }
 
 // onAllDown records a full outage, emitting EventAllDown only on the

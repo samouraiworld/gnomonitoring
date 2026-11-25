@@ -346,11 +346,14 @@ Entries are ordered newest-first within each section.
   every subscriber while the chain ran. The probe now reads every endpoint in
   parallel, with `latest_block_height` and `catching_up`, and moves the pool
   off an endpoint that is catching up or trails the most advanced one by more
-  than `rpc_max_lag_blocks`. Before a stuck alert goes out, the other
-  endpoints are probed: if one is past the stalled height, no alert is sent
-  and the pool moves to it. With a single endpoint, or when no other endpoint
-  answers, the alert goes out as before. A call that started on the old
-  endpoint and returns after the move no longer moves the pool back.
+  than `rpc_max_lag_blocks`. Heights are compared only among endpoints on
+  the network most of them report, so a backup left on another network or an
+  old chain ID cannot take over. Before a stuck alert goes out, the other
+  endpoints are probed: if one is past the stalled height, no alert is sent,
+  the pool moves to it, and the endpoints still at the stalled height are
+  held back until they move. With a single endpoint, or when no other
+  endpoint answers, the alert goes out as before. A call that started on the
+  old endpoint and returns after the move no longer moves the pool back.
 
 - **An unreachable chain no longer delays GovDAO status notifications for
   every chain** — `CheckProposalStatus` checked every proposal of every

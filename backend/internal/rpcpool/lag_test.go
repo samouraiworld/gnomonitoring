@@ -238,7 +238,7 @@ func TestCheckOnce_PromotionUsesEachEndpointsOwnObservationTime(t *testing.T) {
 		c.onSuccess(time.Now(), 1, true) // data-path rotation while e1's probe is pending
 	}()
 
-	assert.Equal(t, 0, c.checkOnce())
+	assert.Equal(t, -1, c.checkOnce(), "a stale promotion is reported as not applied")
 	assert.Equal(t, "e1", c.ActiveEndpoint(), "a probe answer older than the rotation must not undo it")
 }
 
@@ -302,4 +302,66 @@ type slowStatusConn struct {
 func (s *slowStatusConn) Status() (*ctypes.ResultStatus, error) {
 	time.Sleep(s.delay)
 	return s.fakeConn.Status()
+}
+
+// While a slow backup keeps the probe waiting, the data path keeps answering
+// on the frozen active endpoint. Those plain successes choose nothing and
+// must not make the probe's promotion look stale.
+func TestCheckOnce_PlainSuccessDuringSlowProbeDoesNotBlockFailover(t *testing.T) {
+	e0 := &fakeConn{endpoint: "e0", height: 100}
+	e1 := &fakeConn{endpoint: "e1", height: 160}
+	e2 := &slowStatusConn{fakeConn: fakeConn{endpoint: "e2", height: 160}, delay: 200 * time.Millisecond}
+	c := New([]string{"e0", "e1", "e2"},
+		WithDialer(func(endpoint string) (rpcclient.Client, error) {
+			switch endpoint {
+			case "e0":
+				return e0, nil
+			case "e1":
+				return e1, nil
+			}
+			return e2, nil
+		}),
+		WithMaxLag(func() int64 { return 10 }),
+	)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(50 * time.Millisecond)
+		_, err := c.ABCIInfo() // plain success on the frozen active e0
+		assert.NoError(t, err)
+	}()
+
+	assert.Equal(t, 1, c.checkOnce())
+	<-done
+	assert.Equal(t, "e1", c.ActiveEndpoint())
+}
+
+// The backups outvote a primary left on an old chain ID after a reset.
+func TestCheckOnce_MajorityNetworkOutvotesPrimary(t *testing.T) {
+	c := newLagPool(t, 10,
+		&fakeConn{endpoint: "e0", height: 5000, network: "old"},
+		&fakeConn{endpoint: "e1", height: 100, network: "test"},
+		&fakeConn{endpoint: "e2", height: 100, network: "test"},
+	)
+
+	assert.Equal(t, 1, c.checkOnce())
+	assert.Equal(t, "e1", c.ActiveEndpoint())
+	assert.True(t, c.ConfirmStall(100), "the old network's height must not disprove a stall on the chain")
+}
+
+// A frozen mark is cleared when the node moves below its frozen height too
+// (chain reset or resync from an older snapshot).
+func TestCheckOnce_FrozenMarkClearedWhenHeightDrops(t *testing.T) {
+	e0 := &fakeConn{endpoint: "e0", height: 100}
+	e1 := &fakeConn{endpoint: "e1", height: 105}
+	c := newLagPool(t, 10, e0, e1)
+
+	require.False(t, c.ConfirmStall(100))
+	require.Equal(t, "e1", c.ActiveEndpoint())
+
+	e0.height = 5
+	e1.height = 6
+	assert.Equal(t, 0, c.checkOnce())
+	assert.Equal(t, "e0", c.ActiveEndpoint())
 }
