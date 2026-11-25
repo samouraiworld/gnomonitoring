@@ -18,14 +18,18 @@
 #      (restart: on-failure) and it resumes because the binary meets
 #      MIN_VERSION. Nodes still stuck are restarted by hand.
 #   5. Assert the alert_logs rows of chain dev: HALT_SCHEDULED, HALT_REMINDER,
-#      HALT_FINAL_REMINDER, HALT_REACHED (only when the chain stayed halted for
-#      over a minute) and HALT_RESUMED, each dispatched once, in order.
+#      HALT_FINAL_REMINDER, HALT_REACHED and HALT_RESUMED, each dispatched
+#      once, in order. HALT_REACHED is optional: it needs the chain to stay
+#      halted for over a minute, and a node that exits at the halt is
+#      restarted by docker at once.
 #   6. On exit, success or failure: restore the previous thresholds.
 #
 # MIN_VERSION defaults to "dev", the version compiled into an image built
 # without BUILD_VERSION: a non-semver version is compared by equality, so the
 # same binary may resume. Prints PASS, or FAIL and exits non-zero.
 set -euo pipefail
+# printf and bc must agree on '.' as the decimal separator.
+export LC_ALL=C
 cd "$(dirname "$0")"
 
 DEV_COMPOSE="${DEV_COMPOSE:-docker compose -f ../compose_dev_chain.yml --env-file ../.env --env-file .env}"
@@ -185,8 +189,10 @@ while :; do
   fi
   if [ -n "$h" ] && [ "$h" -eq "$halt_height" ]; then
     stuck_since="${stuck_since:-$(date +%s)}"
-    if [ $(( $(date +%s) - stuck_since )) -ge 60 ]; then
-      echo "    halted at $h for 60s: restarting the validators"
+    # Held long enough for the watcher (30s polls) to see a head older than
+    # a minute and send HALT_REACHED.
+    if [ $(( $(date +%s) - stuck_since )) -ge 120 ]; then
+      echo "    halted at $h for 120s: restarting the validators"
       # shellcheck disable=SC2086
       $DEV_COMPOSE restart $VALIDATORS || echo "    (restart failed)"
       stuck_since=""
