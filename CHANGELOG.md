@@ -9,6 +9,33 @@ Entries are ordered newest-first within each section.
 
 ### Security
 
+- **Go 1.26.11 and Go dependency fixes** — move every Go pin (backend and
+  block_exporter `toolchain`, Dockerfiles, rehearsal images, workflows) from
+  1.26.10 to 1.26.11 for GO-2026-6859 in `net/http`. In the backend and
+  block_exporter modules, update the OpenTelemetry modules from v1.45.0 to
+  v1.47.0 (GO-2026-6974, GO-2026-6975) and golang.org/x/crypto from v0.58.0
+  to v0.59.0 (GO-2026-5932). Pin github.com/gorilla/websocket to the
+  unreleased fix commit `v1.5.4-0.20240701034025-d67f41855da4`
+  (GO-2026-6278, weak mask-key randomness): no tagged release fixes it, and
+  gno requires v1.5.3, so v1.5.2 is not reachable. Move back to a tagged
+  release once gorilla publishes one. `go mod tidy` also moves the modules
+  these versions require (x/sys, x/text, x/sync, x/mod, testify, protobuf,
+  genproto, grpc-gateway), adds otel/log, go.yaml.in/yaml/v3 and kr/text,
+  and drops go-spew, go-difflib and (backend only) gopkg.in/yaml.v3 from the
+  indirect requirements. No gnomonitoring code change; the websocket commit
+  also rewrites the library's dial and proxy code, which the backend reaches
+  through `websocket.DefaultDialer` in the GovDAO listener.
+
+- **Panel runtime packages pinned to minimum versions** — libexpat 2.10.0-r0
+  left the Alpine 3.24 repository, which broke the panel image build:
+  Alpine keeps only the latest revision of each package, so exact `=` pins
+  fail once a new revision ships. The runtime `apk add` now uses `>=` floors
+  for brotli-libs, curl, libcurl, libexpat (2.11.0-r0), and adds libxml2
+  2.13.9-r3 (CVE-2026-86144) and libxslt 1.1.43-r4 (CVE-2026-125350,
+  CVE-2026-87636, CVE-2026-9947), HIGH findings in the runtime-image
+  security gate. The Trivy image scan still blocks any HIGH or CRITICAL
+  finding. Base-image digests stay unchanged.
+
 - **golang.org/x/net updated to v0.62.0** — replace v0.60.0 in the backend and
   block_exporter modules. This fixes CVE-2026-78661 (GO-2026-6860), a HIGH
   denial of service in `golang.org/x/net/html` reported by the backend

@@ -44,7 +44,7 @@ RUN_SYNTHETIC_RESTORE_TESTS=1 \
 ```
 
 Docker must target the known local Unix daemon on a Linux engine. The
-`--run-initdb` scenario also builds the existing Go 1.26.10 helper locally; this
+`--run-initdb` scenario also builds the existing Go 1.26.11 helper locally; this
 is not an application deployment or registry publication. Each restore uses a
 fresh private directory and fresh clone identity. No source container or volume
 is reused as a destination.

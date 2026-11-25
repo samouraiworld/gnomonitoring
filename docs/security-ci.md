@@ -6,7 +6,7 @@ The `Security` workflow runs on every pull request, on main/develop pushes, on m
 
 | Surface | Blocking check |
 | --- | --- |
-| Backend and block exporter | `govulncheck` v1.3.0: affected imported packages and called symbols, including test dependencies, with Go 1.26.10 |
+| Backend and block exporter | `govulncheck` v1.3.0: affected imported packages and called symbols, including test dependencies, with Go 1.26.11 |
 | Panel complete dependency tree | npm audit: HIGH/CRITICAL, including dependencies used to build the browser artifact |
 | Backend and panel runtime images | Trivy v0.76.1: HIGH/CRITICAL OS and library vulnerabilities, including findings without a fix |
 | Scanner infrastructure | Installation, database, network, malformed audit output and scanner errors fail the check |
@@ -43,7 +43,7 @@ bash .github/scripts/security-go.sh block_exporter
 bash .github/scripts/security-panel.sh
 ```
 
-Install the pinned govulncheck with Go 1.26.10 before running the Go commands. The npm command needs the panel lockfile to have been installed; CI uses `npm ci --ignore-scripts --include=dev --include=optional --include=peer`. Image checks require the built runtime images and the pinned Trivy scanner. A dated successful run is not a guarantee against advisories disclosed later.
+Install the pinned govulncheck with Go 1.26.11 before running the Go commands. The npm command needs the panel lockfile to have been installed; CI uses `npm ci --ignore-scripts --include=dev --include=optional --include=peer`. Image checks require the built runtime images and the pinned Trivy scanner. A dated successful run is not a guarantee against advisories disclosed later.
 
 The policy tests exercise audit findings/API errors/malformed responses, Go scanner exit propagation, prerequisite cancellation/skipping, immutable action references and the order of scan/login/publish.
 

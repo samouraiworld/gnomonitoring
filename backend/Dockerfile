@@ -1,5 +1,5 @@
 # Step 1: Build (CGO-free, pure-Go pgx driver — no SQLite/libc needed)
-FROM golang:1.26.10-bookworm AS builder
+FROM golang:1.26.11-bookworm AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./

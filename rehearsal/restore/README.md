@@ -10,7 +10,7 @@ python3 rehearsal/restore/runner.py
 
 ## Inputs and explicit execution
 
-Python 3.10 or later and the Docker CLI with Compose are required. Optional InitDB execution also builds the existing pinned Go 1.26.10 helper. The runner accepts an absolute private bundle directory produced by the [backup preparation helper](../../docs/postgres-backup-preparation.md). It validates the complete version-1 manifest, PostgreSQL major 16, exact file sizes and SHA-256 values, `SHA256SUMS`, file types and private ownership/permissions before accepting an archive. Hashes detect changed bytes; they do not authenticate the archive's creator or make its SQL trustworthy.
+Python 3.10 or later and the Docker CLI with Compose are required. Optional InitDB execution also builds the existing pinned Go 1.26.11 helper. The runner accepts an absolute private bundle directory produced by the [backup preparation helper](../../docs/postgres-backup-preparation.md). It validates the complete version-1 manifest, PostgreSQL major 16, exact file sizes and SHA-256 values, `SHA256SUMS`, file types and private ownership/permissions before accepting an archive. Hashes detect changed bytes; they do not authenticate the archive's creator or make its SQL trustworthy.
 
 Restoring an archive executes SQL chosen by its source. Accept only a separately reviewed, trusted bundle. PostgreSQL describes that trust boundary in [pg_restore](https://www.postgresql.org/docs/16/app-pgrestore.html) and the archive and version constraints in [pg_dump](https://www.postgresql.org/docs/16/app-pgdump.html). Runtime network isolation restricts connectivity; it does not turn hostile SQL into safe input.
 

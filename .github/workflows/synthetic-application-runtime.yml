@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache-dependency-path: backend/go.sum
       - name: Test default refusal and ownership boundaries without Docker
         run: python3 -B -W error::ResourceWarning -m unittest discover -s rehearsal/application -p 'test_runtime_boundary.py' -v
