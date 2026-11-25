@@ -572,6 +572,8 @@ func SeedAdminConfig(db *gorm.DB) error {
 		"bft_alert_warning_losses":            "1",
 		"bft_alert_warning_margin_pct":        "10",
 		"bft_alert_critical_margin_pct":       "3",
+		"halt_reminder_minutes":               "60",
+		"halt_final_reminder_minutes":         "5",
 	}
 	for key, value := range defaults {
 		row := AdminConfig{Key: key, Value: value}

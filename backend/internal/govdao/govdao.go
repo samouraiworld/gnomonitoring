@@ -792,6 +792,7 @@ func StartGovDAo(ctx context.Context, db *gorm.DB, chainID string, chainCfg *int
 		log.Printf("[govdao][%s] %v; GovDAO watcher not started", chainID, err)
 		return
 	}
+	go WatchChainHalt(ctx, db, chainID)
 	InitGovdao(db, chainID, chainCfg.GraphqlEndpoints, client, chainCfg.GnowebEndpoint())
 	WebsocketGovdao(ctx, db, chainID, chainCfg.GraphqlEndpoints, client, chainCfg.GnowebEndpoint())
 }

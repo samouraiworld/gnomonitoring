@@ -57,6 +57,7 @@ export default function AlertConfig() {
     { title: 'Data Retention', keys: ['raw_retention_days', 'aggregator_period_minutes'] },
     { title: 'Latency Alerts', keys: ['latency_alert_enabled', 'latency_alert_check_minutes', 'latency_alert_window_minutes', 'latency_alert_min_lag_ms', 'latency_alert_peer_factor', 'latency_alert_min_samples', 'latency_alert_resend_hours'] },
     { title: 'BFT Margin Alerts', keys: ['bft_alert_enabled', 'bft_alert_check_minutes', 'bft_alert_window_blocks', 'bft_alert_warning_losses', 'bft_alert_warning_margin_pct', 'bft_alert_critical_margin_pct'] },
+    { title: 'Chain Halt Reminders', keys: ['halt_reminder_minutes', 'halt_final_reminder_minutes'] },
   ]
 
   if (loading) {

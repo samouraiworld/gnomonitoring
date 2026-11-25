@@ -129,6 +129,20 @@ Entries are ordered newest-first within each section.
 
 ### Added
 
+- **GovDAO-voted chain halt alerts** — each enabled chain's halt params
+  (`node:p:halt_height`, `node:p:halt_min_version`, set by a GovDAO proposal
+  built with `r/sys/params.NewSetHaltRequest`) are read every 30 seconds. The
+  GovDAO subscribers (webhooks and Telegram chats of that chain) get a notice
+  when a halt is scheduled, moved, given another required version or
+  cancelled, with the halt height, the required version and the estimated time
+  to halt (block pace over the last 3000 blocks). Two reminders follow,
+  `halt_reminder_minutes` (default 60) and `halt_final_reminder_minutes`
+  (default 5) before the halt, both editable in the panel, then a "chain
+  resumed on <version>" notice once the chain moves past the halt height. A
+  halt already past (the params are never reset) is never announced. Notices
+  are recorded in `alert_logs` (`addr = 'halt'`, dedicated `HALT_*` levels), so
+  a restart repeats none of them; no schema change.
+
 - **Daily encrypted Postgres backup to Scaleway Object Storage** — the
   production database had no backup since the SQLite to Postgres move.
   `ops/backup/pg-backup-scaleway.sh` (root cron, 03:30) streams
