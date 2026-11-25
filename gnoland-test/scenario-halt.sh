@@ -19,7 +19,7 @@
 #      MIN_VERSION. Nodes still stuck are restarted by hand.
 #   5. Assert the alert_logs rows of chain dev: HALT_SCHEDULED, HALT_REMINDER,
 #      HALT_FINAL_REMINDER and HALT_RESUMED, each dispatched once, in order.
-#   6. On exit, success or failure: restore the default thresholds.
+#   6. On exit, success or failure: restore the previous thresholds.
 #
 # MIN_VERSION defaults to "dev", the version compiled into an image built
 # without BUILD_VERSION: a non-semver version is compared by equality, so the
@@ -27,6 +27,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+DEV_COMPOSE="${DEV_COMPOSE:-docker compose -f ../compose_dev_chain.yml --env-file ../.env --env-file .env}"
 RPC="${RPC:-http://localhost:26658}"
 PG_CONTAINER="${PG_CONTAINER:-gnomonitoring-postgres}"
 PG_USER="${PG_USER:-gnomonitoring}"
@@ -39,11 +40,20 @@ FINAL_REMINDER_MINUTES="${FINAL_REMINDER_MINUTES:-1}"
 # Time between the scheduled notice and the halt. Longer than the reminder
 # window, with room for the vote and execution txs.
 LEAD_SECONDS="${LEAD_SECONDS:-300}"
-VALIDATORS="${VALIDATORS:-validator validator2 validator3 validator4}"
-WORK_DIR="$PWD/.halt"
+# Compose services of the validators, restarted if a node stays halted.
+VALIDATORS="${VALIDATORS:-validator validator2 validator3}"
 
-DEV_ADDR="$(awk '/^DEV_ADDR/{print $3}' .devaddrs.mk)"
-[ -n "$DEV_ADDR" ] || { echo "FAIL: DEV_ADDR missing from .devaddrs.mk (run 'make full-reinit')"; exit 1; }
+# Any unexpected error ends the run as a FAIL, not a silent exit.
+trap 'echo "FAIL: line $LINENO: $BASH_COMMAND"' ERR
+
+# These values end up in SQL, in generated Gno code and in shell arithmetic.
+for v in REMINDER_MINUTES FINAL_REMINDER_MINUTES LEAD_SECONDS; do
+  [[ "${!v}" =~ ^[0-9]+$ ]] || { echo "FAIL: $v must be a non-negative integer"; exit 1; }
+done
+[[ "$MIN_VERSION" =~ ^[A-Za-z0-9._+/-]*$ ]] || { echo "FAIL: MIN_VERSION has unexpected characters"; exit 1; }
+
+DEV_ADDR="$(awk '/^DEV_ADDR/{print $3}' .devaddrs.mk 2>/dev/null || true)"
+[[ "$DEV_ADDR" =~ ^g1[a-z0-9]+$ ]] || { echo "FAIL: DEV_ADDR missing from .devaddrs.mk (run 'make full-reinit')"; exit 1; }
 
 psql_q() {
   docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -tAc "$1"
@@ -54,22 +64,33 @@ set_thresholds() {
           UPDATE admin_configs SET value = '$2' WHERE key = 'halt_final_reminder_minutes';" >/dev/null
 }
 
+threshold() {
+  psql_q "SELECT value FROM admin_configs WHERE key = '$1'"
+}
+
+WORK_DIR=""
+PREV_REMINDER=""
+PREV_FINAL=""
 cleanup() {
-  set_thresholds 60 5 || true
-  rm -rf "$WORK_DIR"
+  if [ -n "$PREV_REMINDER" ] && [ -n "$PREV_FINAL" ]; then
+    set_thresholds "$PREV_REMINDER" "$PREV_FINAL" || true
+  fi
+  if [ -n "$WORK_DIR" ] && [ -d "$WORK_DIR" ]; then
+    rm -rf -- "$WORK_DIR"
+  fi
 }
 trap cleanup EXIT
 
 height() {
-  curl -s "$RPC/status" | jq -r '.result.sync_info.latest_block_height // empty'
+  curl -s --max-time 5 "$RPC/status" | jq -r '.result.sync_info.latest_block_height // empty' 2>/dev/null || true
 }
 
 block_time() {
-  curl -s "$RPC/block?height=$1" | jq -r '.result.block_meta.header.time // .result.block.header.time'
+  curl -s --max-time 5 "$RPC/block?height=$1" | jq -r '.result.block_meta.header.time // .result.block.header.time'
 }
 
 halt_param() {
-  curl -s "$RPC/abci_query?path=%22params/node:p:$1%22" | jq -r '.result.response.ResponseBase.Data // empty' | base64 -d 2>/dev/null || true
+  curl -s --max-time 5 "$RPC/abci_query?path=%22params/node:p:$1%22" | jq -r '.result.response.ResponseBase.Data // empty' | base64 -d 2>/dev/null || true
 }
 
 gnokey_run() {
@@ -90,11 +111,13 @@ gnokey_call() {
     -home "$DEV_HOME" -insecure-password-stdin dev
 }
 
-mkdir -p "$WORK_DIR"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/scenario-halt.XXXXXX")"
 
 echo ">>> Step 1: reminder thresholds ${REMINDER_MINUTES}m / ${FINAL_REMINDER_MINUTES}m"
 [ "$(psql_q "SELECT count(*) FROM admin_configs WHERE key IN ('halt_reminder_minutes','halt_final_reminder_minutes')")" = 2 ] \
   || { echo "FAIL: halt_* thresholds not seeded: is the backend built from this branch?"; exit 1; }
+PREV_REMINDER="$(threshold halt_reminder_minutes)"
+PREV_FINAL="$(threshold halt_final_reminder_minutes)"
 set_thresholds "$REMINDER_MINUTES" "$FINAL_REMINDER_MINUTES"
 psql_q "DELETE FROM alert_logs WHERE chain_id = 'dev' AND addr = 'halt';" >/dev/null
 
@@ -115,6 +138,7 @@ gnokey_run "$WORK_DIR/member.gno" || echo "    (membership tx failed: already a 
 
 echo ">>> Step 3: schedule the halt by GovDAO vote"
 h0="$(height)"
+[[ "$h0" =~ ^[0-9]+$ ]] && [ "$h0" -ge 11 ] || { echo "FAIL: chain height '${h0}' too low to measure a pace"; exit 1; }
 span=50
 [ "$h0" -gt "$span" ] || span=$((h0 - 1))
 t1="$(date -d "$(block_time "$h0")" +%s.%N)"
@@ -137,12 +161,12 @@ func main(cur realm) {
 	println("PROPOSAL_ID", int64(pid))
 }
 EOF
-out="$(gnokey_run "$WORK_DIR/propose.gno")"
+out="$(gnokey_run "$WORK_DIR/propose.gno" 2>&1 || true)"
 echo "$out" | grep -E "PROPOSAL_ID|OK!|ERROR" || true
 pid="$(echo "$out" | awk '/PROPOSAL_ID/{print $2}' | tr -d '"' | head -1)"
-[ -n "$pid" ] || { echo "FAIL: no proposal id in the propose output"; exit 1; }
-gnokey_call MustVoteOnProposalSimple "$pid" YES | grep -E "OK!|ERROR"
-gnokey_call ExecuteProposal "$pid" | grep -E "OK!|ERROR"
+[[ "$pid" =~ ^[0-9]+$ ]] || { echo "FAIL: no proposal id in the propose output"; exit 1; }
+gnokey_call MustVoteOnProposalSimple "$pid" YES 2>&1 | grep -E "OK!|ERROR" || true
+gnokey_call ExecuteProposal "$pid" 2>&1 | grep -E "OK!|ERROR" || true
 
 got_height="$(halt_param halt_height)"
 got_version="$(halt_param halt_min_version)"
@@ -163,7 +187,7 @@ while :; do
     if [ $(( $(date +%s) - stuck_since )) -ge 60 ]; then
       echo "    halted at $h for 60s: restarting the validators"
       # shellcheck disable=SC2086
-      docker restart $VALIDATORS >/dev/null 2>&1 || true
+      $DEV_COMPOSE restart $VALIDATORS || echo "    (restart failed)"
       stuck_since=""
     fi
   fi

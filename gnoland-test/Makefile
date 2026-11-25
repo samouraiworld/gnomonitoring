@@ -372,5 +372,5 @@ scenario-govdao-dead-chain: up-validator4
 # both reminders, resumed. Asserts the outcome itself and exits non-zero on
 # failure. See the header of scenario-halt.sh for the steps.
 scenario-halt:
-	RPC="$(RPC)" PG_CONTAINER="$(PG_CONTAINER)" PG_USER="$(PG_USER)" PG_DB="$(PG_DB)" \
-		DEV_HOME="$(DEV_HOME)" DEV_PASS="$(DEV_PASS)" ./scenario-halt.sh
+	DEV_COMPOSE="$(DEV_COMPOSE)" RPC="$(RPC)" PG_CONTAINER="$(PG_CONTAINER)" PG_USER="$(PG_USER)" \
+		PG_DB="$(PG_DB)" DEV_HOME="$(DEV_HOME)" DEV_PASS="$(DEV_PASS)" ./scenario-halt.sh

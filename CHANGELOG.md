@@ -138,10 +138,15 @@ Entries are ordered newest-first within each section.
   to halt (block pace over the last 3000 blocks). Two reminders follow,
   `halt_reminder_minutes` (default 60) and `halt_final_reminder_minutes`
   (default 5) before the halt, both editable in the panel, then a "chain
-  resumed on <version>" notice once the chain moves past the halt height. A
-  halt already past (the params are never reset) is never announced. Notices
-  are recorded in `alert_logs` (`addr = 'halt'`, dedicated `HALT_*` levels), so
-  a restart repeats none of them; no schema change.
+  resumed" notice once the chain moves past the halt height. A halt already
+  past (the params are never reset) is never announced. The params are read at
+  the height `/status` reports, and a node that is catching up or behind the
+  last notice is ignored, so a lagging node cannot fake a cancellation. The
+  on-chain version string is shown only if it is a plain version (64 chars
+  max). Notices are recorded in `alert_logs` (`addr = 'halt'`, dedicated
+  `HALT_*` levels, `end_height` = head at decision), so a restart repeats none
+  of them; no schema change. `halt` is a reserved address for
+  `/latest_incidents?addr=`, and halt notices are left out of that list.
 
 - **Daily encrypted Postgres backup to Scaleway Object Storage** — the
   production database had no backup since the SQLite to Postgres move.
@@ -313,6 +318,12 @@ Entries are ordered newest-first within each section.
   realm prerequisite that must be satisfied before the production cutover.
 
 ### Fixed
+
+- **GovDAO info notices follow the webhook's chain** — `SendInfoGovdao` (proposal
+  ACCEPTED/REJECTED notices, and now halt notices) sent every chain's notice to
+  every GovDAO webhook. It now sends to the webhooks set to that chain and to
+  those with no chain, like the validator alerts. New-proposal notices
+  (`MultiSendReportGovdao`) are unchanged.
 
 - **An unreachable chain no longer delays GovDAO status notifications for
   every chain** — `CheckProposalStatus` checked every proposal of every

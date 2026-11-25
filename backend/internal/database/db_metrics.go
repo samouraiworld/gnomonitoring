@@ -121,7 +121,7 @@ func GetAlertLogFiltered(db *gorm.DB, chainID, period string, q AlertLogQuery) (
 		FROM (
 			SELECT DISTINCT al.chain_id, al.level, al.addr, al.start_height, al.end_height, al.msg, al.sent_at
 			FROM alert_logs al
-			WHERE al.chain_id = ?` + timeFilter
+			WHERE al.chain_id = ? AND al.addr <> 'halt'` + timeFilter
 	args := append([]any{chainID}, timeArgs...)
 	if q.Addr != "" {
 		query += ` AND al.addr = ?`
