@@ -350,7 +350,8 @@ Entries are ordered newest-first within each section.
   the chain's network, pinned from the active endpoint (and again when every
   endpoint agrees on a new one), so a backup left on another network or an
   old chain ID cannot take over. Before a stuck alert goes out, the other
-  endpoints are probed: if one is past the stalled height, no alert is sent,
+  endpoints are probed: if one is past the stalled height with a block less
+  than 60s old, no alert is sent,
   the pool moves to it, and the endpoints still at the stalled height are
   held back until they move. With a single endpoint, or when no other
   endpoint answers, the alert goes out as before. A call that started on the

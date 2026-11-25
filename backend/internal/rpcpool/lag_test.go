@@ -412,3 +412,21 @@ func TestCheckOnce_FrozenMarkClearedWhenHeightDrops(t *testing.T) {
 	assert.Equal(t, 0, c.checkOnce())
 	assert.Equal(t, "e0", c.ActiveEndpoint())
 }
+
+// During a real halt, a node on a leftover fork (or still catching up) may
+// report a higher height, but its latest block is old: that must not
+// disprove the stall. A block dated in the future must not either.
+func TestConfirmStall_HigherButStaleOrFutureTipDoesNotDisprove(t *testing.T) {
+	stale := newLagPool(t, 10,
+		&fakeConn{endpoint: "e0", height: 100},
+		&fakeConn{endpoint: "e1", height: 120, blockAge: 5 * time.Minute},
+	)
+	assert.True(t, stale.ConfirmStall(100))
+	assert.Equal(t, "e0", stale.ActiveEndpoint())
+
+	future := newLagPool(t, 10,
+		&fakeConn{endpoint: "e0", height: 100},
+		&fakeConn{endpoint: "e1", height: 120, blockAge: -5 * time.Minute},
+	)
+	assert.True(t, future.ConfirmStall(100))
+}

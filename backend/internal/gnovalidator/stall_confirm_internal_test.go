@@ -2,6 +2,7 @@ package gnovalidator
 
 import (
 	"testing"
+	"time"
 
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
@@ -14,7 +15,10 @@ import (
 // statusAt returns a fake endpoint that answers Status at a fixed height.
 func statusAt(height int64) *fakeRPCClient {
 	return &fakeRPCClient{statusFunc: func() (*ctypes.ResultStatus, error) {
-		return &ctypes.ResultStatus{SyncInfo: ctypes.SyncInfo{LatestBlockHeight: height}}, nil
+		return &ctypes.ResultStatus{SyncInfo: ctypes.SyncInfo{
+			LatestBlockHeight: height,
+			LatestBlockTime:   time.Now(),
+		}}, nil
 	}}
 }
 

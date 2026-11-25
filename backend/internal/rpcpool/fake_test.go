@@ -2,6 +2,7 @@ package rpcpool
 
 import (
 	"sync"
+	"time"
 
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
@@ -22,6 +23,9 @@ type fakeConn struct {
 	catchingUp bool
 	// network is the chain ID a successful Status() reports in NodeInfo.
 	network string
+	// blockAge is how old the latest block a successful Status() reports
+	// is; zero means a block made just now.
+	blockAge time.Duration
 	// abciErr, when non-nil, is what ABCIInfo() returns.
 	abciErr error
 	// calls counts every ABCIInfo() invocation.
@@ -35,6 +39,7 @@ func (f *fakeConn) Status() (*ctypes.ResultStatus, error) {
 	status := &ctypes.ResultStatus{SyncInfo: ctypes.SyncInfo{
 		LatestBlockHeight: f.height,
 		CatchingUp:        f.catchingUp,
+		LatestBlockTime:   time.Now().Add(-f.blockAge),
 	}}
 	status.NodeInfo.Network = f.network
 	return status, nil

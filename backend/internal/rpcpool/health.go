@@ -20,7 +20,23 @@ var errEmptyStatus = errors.New("rpcpool: health probe got an empty status")
 var (
 	errWrongNetwork = errors.New("rpcpool: endpoint is on another network")
 	errFrozen       = errors.New("rpcpool: endpoint is still at its frozen height")
+	errStaleTip     = errors.New("rpcpool: endpoint's latest block is not recent")
 )
+
+// A height past a stall disproves it only if the block at that height is
+// recent: maxTipAge old at most, and no more than maxTipSkew in the future.
+// A node on a fork left over from a rollback, or still catching up, can
+// report a higher height whose block is old; it says nothing about whether
+// the chain is moving now.
+const (
+	maxTipAge  = 60 * time.Second
+	maxTipSkew = 30 * time.Second
+)
+
+// freshTip reports whether a latest-block time t is recent at now.
+func freshTip(t, now time.Time) bool {
+	return !t.IsZero() && now.Sub(t) <= maxTipAge && t.Sub(now) <= maxTipSkew
+}
 
 // defaultProbeTimeout bounds a single health probe. gno's HTTP RPC client
 // does set its own request timeout (60s, see
@@ -65,6 +81,8 @@ type probeResult struct {
 	catchingUp bool
 	// network is the chain ID the node reports (NodeInfo.Network).
 	network string
+	// blockTime is the time of the node's latest block.
+	blockTime time.Time
 	// observedAt is when this endpoint's probe returned. Promotions are
 	// ordered by it (see call's doc comment in pool.go), so it is taken per
 	// endpoint, not once after every probe has returned: a fast answer must
@@ -131,7 +149,7 @@ func (c *Client) checkOnce() int {
 
 // ConfirmStall reports whether the chain really is stalled at height, as seen
 // from the pool's other endpoints. It returns false when any endpoint that
-// answers reports a block past height: the chain is moving and only the
+// answers reports a recent block (see freshTip) past height: the chain is moving and only the
 // endpoint that served height is behind. In that case it also moves the pool
 // to the highest-priority healthy endpoint past height, so the next call
 // reads the live chain.
@@ -161,7 +179,15 @@ func (c *Client) ConfirmStall(height int64) bool {
 		// this chain.
 		return true
 	}
-	pick := c.pick(results, height, network, true)
+	now := time.Now()
+	fresh := make([]probeResult, len(results))
+	copy(fresh, results)
+	for i, r := range fresh {
+		if r.err == nil && !freshTip(r.blockTime, now) {
+			fresh[i].err = errStaleTip
+		}
+	}
+	pick := c.pick(fresh, height, network, true)
 	if pick < 0 {
 		return true
 	}
@@ -334,6 +360,7 @@ func (c *Client) probeAll() []probeResult {
 			results[i].height = status.SyncInfo.LatestBlockHeight
 			results[i].catchingUp = status.SyncInfo.CatchingUp
 			results[i].network = status.NodeInfo.Network
+			results[i].blockTime = status.SyncInfo.LatestBlockTime
 		}(i)
 	}
 	wg.Wait()
