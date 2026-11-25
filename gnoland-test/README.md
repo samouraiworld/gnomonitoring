@@ -291,6 +291,7 @@ A `Makefile` in this directory wraps the chain-lifecycle and scenario commands
 | `make scenario5` | GovDAO proposal voted **NO** (fresh chain) | live "New Proposal" alert + render shows `NO PERCENT: 100%` |
 | `make scenario-mute` | Resend dedup (keeps validator4 down) | exactly one `alert_logs` row/level + `dedup: skipping` log |
 | `make scenario-govdao-dead-chain` | A 2nd chain with hanging RPCs must not delay dev's GovDAO ACCEPTED notice (fresh chain) | **self-asserting**: prints `PASS`, or `FAIL` and exits non-zero |
+| `make scenario-halt` | GovDAO vote schedules a chain halt (gno v1.8.0+); the chain halts and resumes | **self-asserting**: `alert_logs` `addr='halt'` rows HALT_SCHEDULED, HALT_REMINDER, HALT_FINAL_REMINDER, HALT_RESUMED |
 
 `make scenario2` stops **validator4**, so run `make scenario1` first to put it
 in the valset. The detailed walkthrough below documents what `make scenario1`

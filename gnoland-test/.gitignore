@@ -26,3 +26,6 @@ propose-validator4.gno
 # scenario-govdao-dead-chain.sh working files (config copy with secrets,
 # compose override), removed when the scenario exits
 .deadnet/
+
+# scenario-halt.sh working files, removed when the scenario exits
+.halt/

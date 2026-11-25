@@ -35,7 +35,7 @@ DEV_COMPOSE := docker compose -f ../compose_dev_chain.yml --env-file ../.env --e
         start-val1 start-val2 start-val3 start-val4 \
         scenario1 scenario2 scenario2-restart scenario3 scenario3-restart \
         scenario1-propose scenario1-execute \
-        scenario4 scenario4-restart scenario5 scenario-mute scenario-govdao-dead-chain
+        scenario4 scenario4-restart scenario5 scenario-mute scenario-govdao-dead-chain scenario-halt
 
 help:
 	@echo "Full stack (devnet + gnomonitoring, ../compose_dev_chain.yml):"
@@ -75,6 +75,8 @@ help:
 	@echo "  make scenario-govdao-dead-chain"
 	@echo "                         - a 2nd chain with hanging RPCs must not delay dev's"
 	@echo "                           GovDAO ACCEPTED notice (fresh chain; asserts, ~10 min)"
+	@echo "  make scenario-halt     - GovDAO-voted chain halt: scheduled notice, 2 reminders,"
+	@echo "                           resumed notice (gno >= v1.8.0; asserts, ~10 min)"
 
 # Guard: the generated .env (P2P seeds) and genesis.json are required for the
 # chain to form. docker-compose has no default for SEEDS_*, so a missing .env
@@ -364,3 +366,11 @@ scenario-mute:
 scenario-govdao-dead-chain: up-validator4
 	MAKE="$(MAKE)" DEV_COMPOSE="$(DEV_COMPOSE)" RPC="$(RPC)" PG_CONTAINER="$(PG_CONTAINER)" \
 		PG_USER="$(PG_USER)" PG_DB="$(PG_DB)" ./scenario-govdao-dead-chain.sh
+
+# scenario-halt: schedules a chain halt by GovDAO vote (r/sys/params
+# NewSetHaltRequest, gno v1.8.0 or later) and checks the halt notices: scheduled,
+# both reminders, resumed. Asserts the outcome itself and exits non-zero on
+# failure. See the header of scenario-halt.sh for the steps.
+scenario-halt:
+	RPC="$(RPC)" PG_CONTAINER="$(PG_CONTAINER)" PG_USER="$(PG_USER)" PG_DB="$(PG_DB)" \
+		DEV_HOME="$(DEV_HOME)" DEV_PASS="$(DEV_PASS)" ./scenario-halt.sh
