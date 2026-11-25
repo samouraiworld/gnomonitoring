@@ -282,6 +282,17 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 					shouldAlert = false
 				}
 
+				// Only the active endpoint has been read so far. If another
+				// endpoint is past this height, the chain is moving and only
+				// that endpoint is frozen: skip the alert. The pool has
+				// already moved to the live endpoint, so the next poll sees
+				// progress and resets the stagnation clock.
+				if shouldAlert && !confirmStall(chainID, latest) {
+					log.Printf("[monitor][%s] height %d stalled on the active RPC endpoint only; another endpoint is ahead, no stuck alert",
+						chainID, latest)
+					shouldAlert = false
+				}
+
 				if shouldAlert {
 					blockTime, err := database.GetTimeOfBlock(db, chainID, latest)
 					if err != nil {

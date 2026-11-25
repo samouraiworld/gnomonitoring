@@ -57,6 +57,15 @@ func WithDialer(d Dialer) Option { return func(c *Client) { c.dial = d } }
 // WithObserver registers a state-transition callback.
 func WithObserver(o Observer) Option { return func(c *Client) { c.obs = o } }
 
+// DefaultMaxLagBlocks is the lag threshold used when no WithMaxLag provider
+// is set, or when it returns a non-positive value.
+const DefaultMaxLagBlocks int64 = 10
+
+// WithMaxLag sets how many blocks an endpoint may trail the most advanced
+// endpoint before the health probe treats it as unhealthy. The provider is
+// called on every probe, so a caller can back it with a live admin setting.
+func WithMaxLag(f func() int64) Option { return func(c *Client) { c.maxLag = f } }
+
 // Client is a priority-ordered pool of RPC endpoints that satisfies
 // rpcclient.Client. Index 0 is the primary; later indexes are backups tried
 // in order. It is safe for concurrent use.
@@ -89,13 +98,40 @@ type Client struct {
 	activeIdx int
 	allDown   bool
 	// lastObservedAt is the timestamp of the most recent outcome
-	// (success or total failure) applied to activeIdx/allDown. A new
-	// outcome is applied only if it was observed strictly after this —
-	// see call's doc comment for why entry order cannot be used instead.
+	// (success or total failure) applied to allDown. A new outcome is
+	// applied only if it was observed strictly after this — see call's doc
+	// comment for why entry order cannot be used instead.
 	lastObservedAt time.Time
+	// lastActiveAt is the timestamp of the outcome that last chose
+	// activeIdx (a rotation, a probe promotion or a recovery). A switch is
+	// applied only if it was observed strictly after this. It is kept apart
+	// from lastObservedAt because a plain success on the active endpoint
+	// chooses nothing: it must not make a probe's promotion look stale.
+	lastActiveAt time.Time
 
-	dial Dialer
-	obs  Observer
+	dial   Dialer
+	obs    Observer
+	maxLag func() int64
+	// frozenAt maps an endpoint index to the height it was frozen at, as
+	// found by ConfirmStall. Guarded by mu. See pick in health.go.
+	frozenAt map[int]int64
+	// network is the chain ID this pool's endpoints must report, once
+	// networkKnown. Guarded by mu. See referenceNetwork in health.go.
+	network      string
+	networkKnown bool
+}
+
+// maxLagBlocks returns the current lag threshold, falling back to
+// DefaultMaxLagBlocks when no provider is set or it returns a non-positive
+// value.
+func (c *Client) maxLagBlocks() int64 {
+	if c.maxLag == nil {
+		return DefaultMaxLagBlocks
+	}
+	if v := c.maxLag(); v > 0 {
+		return v
+	}
+	return DefaultMaxLagBlocks
 }
 
 // New builds a pool over endpoints, in priority order.
@@ -103,6 +139,7 @@ func New(endpoints []string, opts ...Option) *Client {
 	c := &Client{
 		endpoints: append([]string(nil), endpoints...),
 		dial:      defaultDialer,
+		frozenAt:  make(map[int]int64),
 	}
 	c.conns = make([]rpcclient.Client, len(c.endpoints))
 	for _, o := range opts {
@@ -223,47 +260,79 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 	return fmt.Errorf("%w: %d tried, first error: %w", ErrAllEndpointsFailed, n, firstErr)
 }
 
-// onSuccess promotes idx to active and emits the matching transition event.
-// observedAt must be the moment call() determined this success, right after
-// fn(conn) returned nil; if a newer outcome has already been applied, this
-// completion is stale and is discarded without touching state or the
-// observer.
+// onSuccess records a success on idx and emits the matching transition
+// event. switched is true when the caller deliberately selected idx: a
+// call() that rotated past a failing endpoint, or a health probe. Only then
+// does idx become the active endpoint. A success with switched false comes
+// from a call() that answered on the endpoint it started on; if the active
+// endpoint changed while that call was in flight (a probe moved the pool off
+// a frozen endpoint, say), the call's success says nothing against that move
+// and must not undo it, so the active endpoint is left as is. The exception
+// is a recovery from a full outage: then the endpoint that answered is the
+// only one known to work, so it becomes active and is the one reported.
+//
+// observedAt must be the moment the caller determined this success. Two
+// orderings apply. Against total failures (onAllDown), an outcome older than
+// lastObservedAt is stale: while the pool is all down, a stale success is
+// discarded entirely. Against other switches, a switch older than
+// lastActiveAt is stale and does not move the active endpoint. A plain
+// success never advances lastActiveAt, so the data path answering on the
+// active endpoint while a probe is still collecting answers cannot make that
+// probe's promotion look stale.
+//
+// It returns whether the outcome was applied: for a switch, whether idx is
+// now the active endpoint; otherwise, whether it was not discarded.
 //
 // notifyMu is held for the whole function, before mu is even taken, so that
 // applying this transition and delivering it to the observer happen as one
 // unit relative to any concurrent onAllDown/onSuccess call — see the lock
 // ordering note on the Client struct.
-func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) {
+func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) bool {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
 
 	c.mu.Lock()
-	if !observedAt.After(c.lastObservedAt) {
+	freshHealth := observedAt.After(c.lastObservedAt)
+	if c.allDown && !freshHealth {
 		c.mu.Unlock()
-		return
+		return false
 	}
-	c.lastObservedAt = observedAt
+	if freshHealth {
+		c.lastObservedAt = observedAt
+	}
 	prev := c.activeIdx
-	wasAllDown := c.allDown
-	c.activeIdx = idx
-	c.allDown = false
-	endpoint := c.endpoints[idx]
+	recovered := c.allDown
+	applied := !switched
+	switch {
+	case recovered:
+		c.allDown = false
+		c.activeIdx = idx
+		c.lastActiveAt = observedAt
+		applied = true
+	case switched && observedAt.After(c.lastActiveAt):
+		c.activeIdx = idx
+		c.lastActiveAt = observedAt
+		applied = true
+	}
+	active := c.activeIdx
+	endpoint := c.endpoints[active]
 	obs := c.obs
 	c.mu.Unlock()
 
-	if wasAllDown {
-		log.Printf("[rpcpool] recovered on endpoint #%d %s", idx, endpoint)
+	if recovered {
+		log.Printf("[rpcpool] recovered on endpoint #%d %s", active, endpoint)
 		if obs != nil {
 			obs(EventRecovered, endpoint, nil)
 		}
-		return
+		return true
 	}
-	if switched && prev != idx {
-		log.Printf("[rpcpool] active endpoint is now #%d %s (was #%d)", idx, endpoint, prev)
+	if switched && applied && prev != active {
+		log.Printf("[rpcpool] active endpoint is now #%d %s (was #%d)", active, endpoint, prev)
 		if obs != nil {
 			obs(EventRotated, endpoint, nil)
 		}
 	}
+	return applied
 }
 
 // onAllDown records a full outage, emitting EventAllDown only on the

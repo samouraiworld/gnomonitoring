@@ -157,6 +157,11 @@ Entries are ordered newest-first within each section.
   the "Blockchain stuck" alert is held: the halt is expected, and the halt
   notices already tell operators. A stop at any other height still alerts.
 
+- **`rpc_max_lag_blocks`** (admin_config, default 10) — how many blocks an RPC
+  endpoint may trail the most advanced endpoint of its chain before the health
+  probe treats it as unhealthy. Read on every probe, so an edit applies
+  without a restart.
+
 - **Daily encrypted Postgres backup to Scaleway Object Storage** — the
   production database had no backup since the SQLite to Postgres move.
   `ops/backup/pg-backup-scaleway.sh` (root cron, 03:30) streams
@@ -333,6 +338,24 @@ Entries are ordered newest-first within each section.
   every GovDAO webhook. It now sends to the webhooks set to that chain and to
   those with no chain, like the validator alerts. New-proposal notices
   (`MultiSendReportGovdao`) are unchanged.
+
+- **A frozen RPC node no longer sends a false "Blockchain stuck"** — the RPC
+  pool's health probe kept only the error of each endpoint's `Status` call. A
+  node frozen at an old height but still answering stayed healthy and active,
+  so the realtime loop saw the height stall and sent "Blockchain stuck" to
+  every subscriber while the chain ran. The probe now reads every endpoint in
+  parallel, with `latest_block_height` and `catching_up`, and moves the pool
+  off an endpoint that is catching up or trails the most advanced one by more
+  than `rpc_max_lag_blocks`. Heights are compared only among endpoints on
+  the chain's network, pinned from the active endpoint (and again when every
+  endpoint agrees on a new one), so a backup left on another network or an
+  old chain ID cannot take over. Before a stuck alert goes out, the other
+  endpoints are probed: if one is past the stalled height with a block less
+  than 60s old, no alert is sent,
+  the pool moves to it, and the endpoints still at the stalled height are
+  held back until they move. With a single endpoint, or when no other
+  endpoint answers, the alert goes out as before. A call that started on the
+  old endpoint and returns after the move no longer moves the pool back.
 
 - **An unreachable chain no longer delays GovDAO status notifications for
   every chain** — `CheckProposalStatus` checked every proposal of every

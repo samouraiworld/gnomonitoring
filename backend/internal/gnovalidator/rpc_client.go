@@ -29,7 +29,11 @@ func GetChainRPCClient(chainID string) (*FallbackRPCClient, bool) {
 // so a chain restarted at runtime gets the exact same setup as one started
 // at boot.
 func StartRPCPool(ctx context.Context, db *gorm.DB, chainID string, chainCfg *internal.ChainConfig) {
-	pool := rpcpool.New(chainCfg.RPCEndpoints, rpcpool.WithObserver(NewRPCObserver(ctx, db, chainID)))
+	pool := rpcpool.New(chainCfg.RPCEndpoints,
+		rpcpool.WithObserver(NewRPCObserver(ctx, db, chainID)),
+		// Re-read per probe, so an admin edit applies without a restart.
+		rpcpool.WithMaxLag(func() int64 { return int64(GetThresholds().RPCMaxLagBlocks) }),
+	)
 	rpcpool.Register(chainID, pool)
 	pool.StartHealthChecks(ctx, GetThresholds().RPCHealthCheckInterval())
 }

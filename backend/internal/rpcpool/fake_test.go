@@ -2,6 +2,7 @@ package rpcpool
 
 import (
 	"sync"
+	"time"
 
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
@@ -15,6 +16,16 @@ type fakeConn struct {
 	endpoint string
 	// statusErr, when non-nil, is what Status() returns.
 	statusErr error
+	// height and catchingUp are what a successful Status() reports in
+	// SyncInfo. Zero values model a node at height 0 that is in sync, which
+	// is all the tests that predate lag-aware probing need.
+	height     int64
+	catchingUp bool
+	// network is the chain ID a successful Status() reports in NodeInfo.
+	network string
+	// blockAge is how old the latest block a successful Status() reports
+	// is; zero means a block made just now.
+	blockAge time.Duration
 	// abciErr, when non-nil, is what ABCIInfo() returns.
 	abciErr error
 	// calls counts every ABCIInfo() invocation.
@@ -25,7 +36,13 @@ func (f *fakeConn) Status() (*ctypes.ResultStatus, error) {
 	if f.statusErr != nil {
 		return nil, f.statusErr
 	}
-	return &ctypes.ResultStatus{}, nil
+	status := &ctypes.ResultStatus{SyncInfo: ctypes.SyncInfo{
+		LatestBlockHeight: f.height,
+		CatchingUp:        f.catchingUp,
+		LatestBlockTime:   time.Now().Add(-f.blockAge),
+	}}
+	status.NodeInfo.Network = f.network
+	return status, nil
 }
 
 func (f *fakeConn) ABCIInfo() (*ctypes.ResultABCIInfo, error) {
