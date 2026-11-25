@@ -20,6 +20,8 @@ type fakeConn struct {
 	// is all the tests that predate lag-aware probing need.
 	height     int64
 	catchingUp bool
+	// network is the chain ID a successful Status() reports in NodeInfo.
+	network string
 	// abciErr, when non-nil, is what ABCIInfo() returns.
 	abciErr error
 	// calls counts every ABCIInfo() invocation.
@@ -30,10 +32,12 @@ func (f *fakeConn) Status() (*ctypes.ResultStatus, error) {
 	if f.statusErr != nil {
 		return nil, f.statusErr
 	}
-	return &ctypes.ResultStatus{SyncInfo: ctypes.SyncInfo{
+	status := &ctypes.ResultStatus{SyncInfo: ctypes.SyncInfo{
 		LatestBlockHeight: f.height,
 		CatchingUp:        f.catchingUp,
-	}}, nil
+	}}
+	status.NodeInfo.Network = f.network
+	return status, nil
 }
 
 func (f *fakeConn) ABCIInfo() (*ctypes.ResultABCIInfo, error) {

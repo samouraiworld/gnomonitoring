@@ -15,6 +15,13 @@ import (
 // result nor an error, which leaves its height unknown.
 var errEmptyStatus = errors.New("rpcpool: health probe got an empty status")
 
+// errWrongNetwork and errFrozen mark, inside pick, an answering endpoint that
+// must not be chosen. They never leave this package.
+var (
+	errWrongNetwork = errors.New("rpcpool: endpoint is on another network")
+	errFrozen       = errors.New("rpcpool: endpoint is still at its frozen height")
+)
+
 // defaultProbeTimeout bounds a single health probe. gno's HTTP RPC client
 // does set its own request timeout (60s, see
 // tm2/pkg/bft/rpc/client/client.go), but that budget is sized for the data
@@ -56,14 +63,26 @@ type probeResult struct {
 	err        error
 	height     int64
 	catchingUp bool
+	// network is the chain ID the node reports (NodeInfo.Network).
+	network string
+	// observedAt is when this endpoint's probe returned. Promotions are
+	// ordered by it (see call's doc comment in pool.go), so it is taken per
+	// endpoint, not once after every probe has returned: a fast answer must
+	// not be passed off as newer than a call() outcome observed while a
+	// slower probe was still pending.
+	observedAt time.Time
 }
 
 // checkOnce probes every endpoint and promotes the highest-priority healthy
 // one. Returns the promoted index, or -1 when none answered.
 //
-// An endpoint is healthy when it answers Status within defaultProbeTimeout,
-// is not catching up, and trails the most advanced answering endpoint by no
-// more than maxLagBlocks. Answering is not enough on its own: a node frozen
+// Only endpoints on the same network as the highest-priority answering
+// endpoint are considered: a backup left on another network, or on an old
+// chain ID after a reset, may report a higher height that has nothing to do
+// with this chain. Among them, an endpoint is healthy when it answers Status
+// within defaultProbeTimeout, is not catching up, trails the most advanced
+// one by no more than maxLagBlocks, and is not held back as frozen by an
+// earlier ConfirmStall (see markFrozen). Answering is not enough on its own: a node frozen
 // at an old height keeps answering Status, and if it stayed active the
 // realtime loop would see the chain stall and send a false "Blockchain
 // stuck" while the chain runs. When no endpoint is healthy but some answered
@@ -84,18 +103,15 @@ type probeResult struct {
 // own more tolerant timeout, and calls onAllDown when they all genuinely
 // fail — so removing the call here loses no detection capability.
 //
-// The endpoints are probed in parallel so their heights are comparable, and
-// the promotion decision exists only once every probe has returned, so
-// observedAt is taken at that point (see call's doc comment in pool.go for
-// why outcomes are ordered by when they were observed).
+// The endpoints are probed in parallel so their heights are comparable. The
+// promotion carries the observedAt of the chosen endpoint's own probe.
 func (c *Client) checkOnce() int {
 	results := c.probeAll()
 	if len(results) == 0 {
 		return -1
 	}
-	observedAt := time.Now()
 
-	pick := pickEndpoint(results, c.maxLagBlocks(), -1)
+	pick := c.pick(results, -1)
 	if pick < 0 {
 		// Every probe failed within defaultProbeTimeout. This is
 		// deliberately not reported as EventAllDown — see checkOnce's doc
@@ -105,7 +121,7 @@ func (c *Client) checkOnce() int {
 		log.Printf("[rpcpool] health probe: every endpoint failed to answer within %s", defaultProbeTimeout)
 		return -1
 	}
-	c.onSuccess(observedAt, pick, true)
+	c.onSuccess(results[pick].observedAt, pick, true)
 	return pick
 }
 
@@ -116,9 +132,14 @@ func (c *Client) checkOnce() int {
 // to the highest-priority healthy endpoint past height, so the next call
 // reads the live chain.
 //
-// It returns true, keeping the caller's stall verdict, when no endpoint is
-// past height, when no other endpoint answers (the stall cannot be checked
-// elsewhere), and, without probing, when the pool has a single endpoint.
+// It returns true, keeping the caller's stall verdict, when no endpoint on
+// the chain's network is past height, when no other endpoint answers (the
+// stall cannot be checked elsewhere), and, without probing, when the pool has
+// a single endpoint.
+//
+// When the stall is disproved, the endpoints still at or below height are
+// marked frozen, so the next health probe does not move the pool back to one
+// of them merely because it is within maxLagBlocks of the best endpoint.
 func (c *Client) ConfirmStall(height int64) bool {
 	c.mu.Lock()
 	n := len(c.endpoints)
@@ -128,18 +149,87 @@ func (c *Client) ConfirmStall(height int64) bool {
 	}
 
 	results := c.probeAll()
-	observedAt := time.Now()
 
-	pick := pickEndpoint(results, c.maxLagBlocks(), height)
+	pick := c.pick(results, height)
 	if pick < 0 {
 		return true
 	}
+	c.markFrozen(results, height)
 	c.mu.Lock()
 	endpoint := c.endpoints[pick]
 	c.mu.Unlock()
 	log.Printf("[rpcpool] stall at height %d disproved: %s is at height %d", height, endpoint, results[pick].height)
-	c.onSuccess(observedAt, pick, true)
+	if !c.onSuccess(results[pick].observedAt, pick, true) {
+		// A newer outcome was applied while the probes ran. The chain is
+		// still moving; the frozen marks let the next probe move the pool.
+		log.Printf("[rpcpool] not switching to %s now: a newer outcome was applied meanwhile", endpoint)
+	}
 	return false
+}
+
+// referenceNetwork returns the network reported by the highest-priority
+// endpoint that answered, or "" when none answered.
+func referenceNetwork(results []probeResult) string {
+	for _, r := range results {
+		if r.err == nil {
+			return r.network
+		}
+	}
+	return ""
+}
+
+// markFrozen records, for every answering endpoint on the reference network
+// that is at or below height, the height it was frozen at.
+func (c *Client) markFrozen(results []probeResult, height int64) {
+	network := referenceNetwork(results)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, r := range results {
+		if r.err == nil && r.network == network && r.height <= height {
+			c.frozenAt[i] = r.height
+		}
+	}
+}
+
+// pick chooses the endpoint to serve from among those on the reference
+// network that answered and report a height above floor (see pickEndpoint).
+// Endpoints marked frozen are left out while they have not moved past their
+// frozen height, and their mark is cleared once they have; if that leaves no
+// candidate, the choice is made again without leaving them out.
+func (c *Client) pick(results []probeResult, floor int64) int {
+	network := referenceNetwork(results)
+	eligible := make([]probeResult, len(results))
+	copy(eligible, results)
+	unfrozen := make([]probeResult, len(results))
+	copy(unfrozen, results)
+
+	c.mu.Lock()
+	for i, r := range results {
+		if r.err != nil {
+			continue
+		}
+		if r.network != network {
+			log.Printf("[rpcpool] health probe: %s reports network %q, expected %q; ignored",
+				c.endpoints[i], r.network, network)
+			eligible[i].err = errWrongNetwork
+			unfrozen[i].err = errWrongNetwork
+			continue
+		}
+		if h, ok := c.frozenAt[i]; ok {
+			if r.height > h {
+				delete(c.frozenAt, i)
+			} else {
+				unfrozen[i].err = errFrozen
+			}
+		}
+	}
+	c.mu.Unlock()
+
+	maxLag := c.maxLagBlocks()
+	if i := pickEndpoint(unfrozen, maxLag, floor); i >= 0 {
+		return i
+	}
+	return pickEndpoint(eligible, maxLag, floor)
 }
 
 // pickEndpoint chooses which endpoint to serve from, among those that
@@ -200,12 +290,14 @@ func (c *Client) probeAll() []probeResult {
 		go func(i int) {
 			defer wg.Done()
 			status, err := probeWithTimeout(conns[i], defaultProbeTimeout)
+			results[i].observedAt = time.Now()
 			if err != nil {
 				results[i].err = err
 				return
 			}
 			results[i].height = status.SyncInfo.LatestBlockHeight
 			results[i].catchingUp = status.SyncInfo.CatchingUp
+			results[i].network = status.NodeInfo.Network
 		}(i)
 	}
 	wg.Wait()

@@ -2,8 +2,10 @@ package rpcpool
 
 import (
 	"testing"
+	"time"
 
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
+	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -180,4 +182,124 @@ func TestOnSuccess_InFlightCallDoesNotUndoProbeSwitch(t *testing.T) {
 	// The call on e0 returns after the switch, on its first attempt.
 	c.onSuccess(c.lastObservedAt.Add(1), 0, false)
 	assert.Equal(t, "e1", c.ActiveEndpoint(), "a non-rotating success must not move the active endpoint")
+}
+
+// A backup on another network (or on an old chain ID after a reset) may
+// report a far higher height. It must neither take the active slot nor
+// disprove a real stall.
+func TestCheckOnce_IgnoresEndpointOnAnotherNetwork(t *testing.T) {
+	c := newLagPool(t, 10,
+		&fakeConn{endpoint: "e0", height: 100, network: "dev"},
+		&fakeConn{endpoint: "e1", height: 5000, network: "other"},
+	)
+
+	assert.Equal(t, 0, c.checkOnce())
+	assert.Equal(t, "e0", c.ActiveEndpoint())
+	assert.True(t, c.ConfirmStall(100), "a height on another network says nothing about this chain")
+	assert.Equal(t, "e0", c.ActiveEndpoint())
+}
+
+// After ConfirmStall moved the pool off a frozen endpoint that is still
+// within the lag threshold, the next probe must not move it back while that
+// endpoint has not moved past its frozen height.
+func TestCheckOnce_DoesNotReturnToEndpointFrozenByConfirmStall(t *testing.T) {
+	e0 := &fakeConn{endpoint: "e0", height: 100}
+	e1 := &fakeConn{endpoint: "e1", height: 105}
+	c := newLagPool(t, 10, e0, e1)
+
+	require.False(t, c.ConfirmStall(100))
+	require.Equal(t, "e1", c.ActiveEndpoint())
+
+	e1.height = 106
+	assert.Equal(t, 1, c.checkOnce(), "e0 is still frozen at 100")
+	assert.Equal(t, "e1", c.ActiveEndpoint())
+
+	e0.height = 107
+	e1.height = 107
+	assert.Equal(t, 0, c.checkOnce(), "once e0 moves past its frozen height it is healthy again")
+	assert.Equal(t, "e0", c.ActiveEndpoint())
+}
+
+// A probe answered fast by e0 and slowly by e1. While the slow probe was
+// pending, the data path rotated to e1. The probe's promotion of e0 rests on
+// an answer older than that rotation and must not override it.
+func TestCheckOnce_PromotionUsesEachEndpointsOwnObservationTime(t *testing.T) {
+	e0 := &fakeConn{endpoint: "e0", height: 100}
+	e1 := &slowStatusConn{fakeConn: fakeConn{endpoint: "e1", height: 100}, delay: 100 * time.Millisecond}
+	c := New([]string{"e0", "e1"}, WithDialer(func(endpoint string) (rpcclient.Client, error) {
+		if endpoint == "e0" {
+			return e0, nil
+		}
+		return e1, nil
+	}))
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		c.onSuccess(time.Now(), 1, true) // data-path rotation while e1's probe is pending
+	}()
+
+	assert.Equal(t, 0, c.checkOnce())
+	assert.Equal(t, "e1", c.ActiveEndpoint(), "a probe answer older than the rotation must not undo it")
+}
+
+// A success that ends a full outage reports and activates the endpoint that
+// actually answered, even when the active endpoint changed while that call
+// was in flight.
+func TestOnSuccess_RecoveryActivatesTheEndpointThatAnswered(t *testing.T) {
+	var recovered []string
+	c := New([]string{"e0", "e1"},
+		WithDialer(fakeDialerFrom(map[string]*fakeConn{"e0": {endpoint: "e0"}, "e1": {endpoint: "e1"}})),
+		WithObserver(func(ev Event, endpoint string, err error) {
+			if ev == EventRecovered {
+				recovered = append(recovered, endpoint)
+			}
+		}),
+	)
+	c.activeIdx = 1
+	c.onAllDown(time.Now(), errDown)
+
+	require.True(t, c.onSuccess(time.Now().Add(time.Millisecond), 0, false))
+	assert.Equal(t, "e0", c.ActiveEndpoint())
+	assert.Equal(t, []string{"e0"}, recovered)
+}
+
+// End to end through call(): a data-path call parked on the frozen endpoint
+// while the probe moves the pool away, then succeeding, leaves the pool on
+// the live endpoint.
+func TestCall_InFlightSuccessOnFrozenEndpointDoesNotUndoProbeSwitch(t *testing.T) {
+	frozen := &flappingConn{fakeConn: &fakeConn{endpoint: "e0", height: 100}, recovered: true}
+	live := &fakeConn{endpoint: "e1", height: 160}
+	c := New([]string{"e0", "e1"},
+		WithDialer(func(endpoint string) (rpcclient.Client, error) {
+			if endpoint == "e0" {
+				return frozen, nil
+			}
+			return live, nil
+		}),
+		WithMaxLag(func() int64 { return 10 }),
+	)
+
+	entered := frozen.arm()
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.ABCIInfo()
+		done <- err
+	}()
+	<-entered
+
+	require.Equal(t, 1, c.checkOnce())
+	frozen.releaseGate()
+	require.NoError(t, <-done)
+	assert.Equal(t, "e1", c.ActiveEndpoint())
+}
+
+// slowStatusConn answers Status after delay.
+type slowStatusConn struct {
+	fakeConn
+	delay time.Duration
+}
+
+func (s *slowStatusConn) Status() (*ctypes.ResultStatus, error) {
+	time.Sleep(s.delay)
+	return s.fakeConn.Status()
 }

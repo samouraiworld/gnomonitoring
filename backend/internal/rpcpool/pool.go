@@ -106,6 +106,9 @@ type Client struct {
 	dial   Dialer
 	obs    Observer
 	maxLag func() int64
+	// frozenAt maps an endpoint index to the height it was frozen at, as
+	// found by ConfirmStall. Guarded by mu. See pick in health.go.
+	frozenAt map[int]int64
 }
 
 // maxLagBlocks returns the current lag threshold, falling back to
@@ -126,6 +129,7 @@ func New(endpoints []string, opts ...Option) *Client {
 	c := &Client{
 		endpoints: append([]string(nil), endpoints...),
 		dial:      defaultDialer,
+		frozenAt:  make(map[int]int64),
 	}
 	c.conns = make([]rpcclient.Client, len(c.endpoints))
 	for _, o := range opts {
@@ -253,7 +257,11 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 // from a call() that answered on the endpoint it started on; if the active
 // endpoint changed while that call was in flight (a probe moved the pool off
 // a frozen endpoint, say), the call's success says nothing against that move
-// and must not undo it, so the active endpoint is left as is.
+// and must not undo it, so the active endpoint is left as is. The exception
+// is a recovery from a full outage: then the endpoint that answered is the
+// only one known to work, so it becomes active and is the one reported.
+//
+// It returns whether the outcome was applied.
 //
 // observedAt must be the moment the caller determined this success; if a
 // newer outcome has already been applied, this completion is stale and is
@@ -263,19 +271,19 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 // applying this transition and delivering it to the observer happen as one
 // unit relative to any concurrent onAllDown/onSuccess call — see the lock
 // ordering note on the Client struct.
-func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) {
+func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) bool {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
 
 	c.mu.Lock()
 	if !observedAt.After(c.lastObservedAt) {
 		c.mu.Unlock()
-		return
+		return false
 	}
 	c.lastObservedAt = observedAt
 	prev := c.activeIdx
 	wasAllDown := c.allDown
-	if !switched {
+	if !switched && !wasAllDown {
 		idx = prev
 	}
 	c.activeIdx = idx
@@ -289,7 +297,7 @@ func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) {
 		if obs != nil {
 			obs(EventRecovered, endpoint, nil)
 		}
-		return
+		return true
 	}
 	if switched && prev != idx {
 		log.Printf("[rpcpool] active endpoint is now #%d %s (was #%d)", idx, endpoint, prev)
@@ -297,6 +305,7 @@ func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) {
 			obs(EventRotated, endpoint, nil)
 		}
 	}
+	return true
 }
 
 // onAllDown records a full outage, emitting EventAllDown only on the
