@@ -10,6 +10,7 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/chainquery"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
+	"github.com/samouraiworld/gnomonitoring/backend/internal/govdao"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/jobclock"
 	"gorm.io/gorm"
 )
@@ -268,6 +269,18 @@ func CollectParticipation(ctx context.Context, db *gorm.DB, chainID string, clie
 				firstAlert := lastAlert.IsZero()
 				shouldAlert := (firstAlert && stuckFor > t.StagnationFirstAlert()) ||
 					(!firstAlert && time.Since(lastAlert) > t.StagnationRepeat())
+
+				if shouldAlert && govdao.HaltScheduledAt(db, chainID, latest) {
+					// A halt voted by GovDAO at this height: the chain is
+					// expected to stop here, and the halt notices already tell
+					// the operators. Checked again after StagnationRepeat, so a
+					// halt cancelled or moved meanwhile still raises the alert.
+					log.Printf("[monitor][%s] no new block since height %d: GovDAO halt scheduled at this height, \"Blockchain stuck\" held", chainID, latest)
+					timeMu.Lock()
+					lastStagnationAlertTime[chainID] = time.Now()
+					timeMu.Unlock()
+					shouldAlert = false
+				}
 
 				if shouldAlert {
 					blockTime, err := database.GetTimeOfBlock(db, chainID, latest)

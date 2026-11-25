@@ -323,6 +323,22 @@ func loadHaltState(db *gorm.DB, chainID string) (haltState, error) {
 	return st, nil
 }
 
+// HaltScheduledAt reports whether a halt at height on chainID was announced
+// to the operators and has not resumed since: the latest halt announcement is
+// a schedule at that height, with no resume after it. The validator monitor
+// uses it to hold the "Blockchain stuck" alert while the chain waits at a halt
+// voted by GovDAO; the halt notices tell operators instead. On a read error it
+// returns false, so the stuck alert still goes out.
+func HaltScheduledAt(db *gorm.DB, chainID string, height int64) bool {
+	st, err := loadHaltState(db, chainID)
+	if err != nil {
+		log.Printf("[halt][%s] %v", chainID, err)
+		return false
+	}
+	a := st.Announcement
+	return a != nil && a.Level == LevelHaltScheduled && !st.Resumed && a.Height == height
+}
+
 // haltNoticeKind names the notice a halt check decided to send.
 type haltNoticeKind int
 

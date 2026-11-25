@@ -153,6 +153,9 @@ Entries are ordered newest-first within each section.
   `HALT_*` levels, `end_height` = head at decision), so a restart repeats none
   of them; no schema change. `halt` is a reserved address for
   `/latest_incidents?addr=`, and halt notices are left out of that list.
+  While the chain waits at an announced halt height (scheduled, not resumed),
+  the "Blockchain stuck" alert is held: the halt is expected, and the halt
+  notices already tell operators. A stop at any other height still alerts.
 
 - **Daily encrypted Postgres backup to Scaleway Object Storage** — the
   production database had no backup since the SQLite to Postgres move.
