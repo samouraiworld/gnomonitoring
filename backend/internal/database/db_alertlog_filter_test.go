@@ -200,3 +200,19 @@ func TestGetAlertLogFiltered_RejectsUnknownPeriod(t *testing.T) {
 		assert.Error(t, err, "period %q", period)
 	}
 }
+
+// Halt notices (addr 'halt') are chain events, not incidents: the chain-wide
+// incident list leaves them out.
+func TestGetAlertLogFiltered_ExcludesHaltNotices(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	const chain = "chain-filter-halt"
+	seedAlerts(t, db, chain, "g1val", 2, 100)
+	require.NoError(t, database.InsertAlertlog(db, chain, "halt", "v1.9.0", "HALT_SCHEDULED", 5000, 4000, true, time.Now(), "halt"))
+
+	alerts, err := database.GetAlertLogFiltered(db, chain, "all_time", database.AlertLogQuery{Limit: 50})
+	require.NoError(t, err)
+	require.Len(t, alerts, 2)
+	for _, a := range alerts {
+		assert.NotEqual(t, "halt", a.Addr)
+	}
+}

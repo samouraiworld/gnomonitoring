@@ -900,6 +900,8 @@ func SendReportGovdao(chainID string, id int, title, urlgnoweb, urltx, typew str
 
 }
 
+// SendInfoGovdao sends msg about chainID to the GovDAO webhooks following that
+// chain: those set to chainID, and those with no chain (every chain).
 func SendInfoGovdao(chainID string, msg string, db *gorm.DB) error {
 	msg = fmt.Sprintf("[%s] %s", chainID, msg)
 	type Webhook struct {
@@ -910,7 +912,9 @@ func SendInfoGovdao(chainID string, msg string, db *gorm.DB) error {
 	}
 
 	var webhooks []Webhook
-	if err := db.Model(&database.WebhookGovDAO{}).Find(&webhooks).Error; err != nil {
+	if err := db.Model(&database.WebhookGovDAO{}).
+		Where("chain_id = ? OR chain_id IS NULL", chainID).
+		Find(&webhooks).Error; err != nil {
 		return fmt.Errorf("failed to fetch webhooks: %w", err)
 	}
 	for _, wh := range webhooks {

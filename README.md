@@ -11,6 +11,7 @@ Two services are available:
 - **GovDAO** – Detect news proposal and  status (ACCEPTED / REFUSED / IN PROGRESS).
 
 - **Validator Alerting** – Monitors the entire validator set, calculates participation rates  and sends Discord/Slack/Telegram alerts when needed. Also exposes Prometheus metrics.
+  Also alerts when a GovDAO vote schedules, moves or cancels a chain halt (upgrade), reminds 1h and 5 min before it, and confirms when the chain resumes.
 
 ---
 
