@@ -60,6 +60,13 @@ func TestCollectParticipation_GovDAOHaltHoldsStuckAlert(t *testing.T) {
 			assert.Equal(t, int64(0), countCriticalStuckAlerts(t, db, chainID),
 				"a stop at an announced GovDAO halt must not raise 'Blockchain stuck'")
 			assert.False(t, IsAlertSent(chainID, "all"))
+			// The hold branch ran: it restarts the repeat timer without
+			// sending, so the test cannot pass on a monitor that never
+			// reached the alert check.
+			timeMu.Lock()
+			held := lastStagnationAlertTime[chainID]
+			timeMu.Unlock()
+			assert.False(t, held.IsZero(), "the stuck alert must have been held, not left unchecked")
 		})
 	}
 }
