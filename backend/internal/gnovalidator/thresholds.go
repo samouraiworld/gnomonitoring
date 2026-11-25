@@ -29,6 +29,7 @@ type Thresholds struct {
 	GapReconciliationIntervalSeconds int
 	GapReconciliationLookbackDays    int
 	RPCHealthCheckSeconds            int
+	RPCMaxLagBlocks                  int
 	LatencyAlertEnabled              bool
 	LatencyAlertCheckMinutes         int
 	LatencyAlertWindowMinutes        int
@@ -62,6 +63,7 @@ var (
 		GapReconciliationIntervalSeconds: 3600,
 		GapReconciliationLookbackDays:    7,
 		RPCHealthCheckSeconds:            60,
+		RPCMaxLagBlocks:                  10,
 		LatencyAlertEnabled:              true,
 		LatencyAlertCheckMinutes:         5,
 		LatencyAlertWindowMinutes:        60,
@@ -101,6 +103,7 @@ func LoadThresholds(db *gorm.DB) {
 		GapReconciliationIntervalSeconds: database.GetAdminConfigInt(db, "gap_reconciliation_interval_seconds", 3600),
 		GapReconciliationLookbackDays:    database.GetAdminConfigInt(db, "gap_reconciliation_lookback_days", 7),
 		RPCHealthCheckSeconds:            database.GetAdminConfigInt(db, "rpc_health_check_seconds", 60),
+		RPCMaxLagBlocks:                  database.GetAdminConfigInt(db, "rpc_max_lag_blocks", 10),
 		LatencyAlertEnabled:              database.GetAdminConfigBool(db, "latency_alert_enabled", true),
 		LatencyAlertCheckMinutes:         database.GetAdminConfigInt(db, "latency_alert_check_minutes", 5),
 		LatencyAlertWindowMinutes:        database.GetAdminConfigInt(db, "latency_alert_window_minutes", 60),

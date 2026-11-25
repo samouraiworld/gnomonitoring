@@ -2,11 +2,18 @@ package rpcpool
 
 import (
 	"context"
+	"errors"
 	"log"
+	"sync"
 	"time"
 
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
+	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
 )
+
+// errEmptyStatus is recorded when an endpoint answers Status with neither a
+// result nor an error, which leaves its height unknown.
+var errEmptyStatus = errors.New("rpcpool: health probe got an empty status")
 
 // defaultProbeTimeout bounds a single health probe. gno's HTTP RPC client
 // does set its own request timeout (60s, see
@@ -44,8 +51,24 @@ func (c *Client) StartHealthChecks(ctx context.Context, interval time.Duration) 
 	}()
 }
 
-// checkOnce probes endpoints in priority order and promotes the first one
-// that answers. Returns the promoted index, or -1 when none answered.
+// probeResult is what one health probe learned about one endpoint.
+type probeResult struct {
+	err        error
+	height     int64
+	catchingUp bool
+}
+
+// checkOnce probes every endpoint and promotes the highest-priority healthy
+// one. Returns the promoted index, or -1 when none answered.
+//
+// An endpoint is healthy when it answers Status within defaultProbeTimeout,
+// is not catching up, and trails the most advanced answering endpoint by no
+// more than maxLagBlocks. Answering is not enough on its own: a node frozen
+// at an old height keeps answering Status, and if it stayed active the
+// realtime loop would see the chain stall and send a false "Blockchain
+// stuck" while the chain runs. When no endpoint is healthy but some answered
+// (every answering node is catching up, say), the most advanced answering
+// one is promoted instead, which is still the best the pool can serve.
 //
 // checkOnce is promotion-only: it may only ever call onSuccess, never
 // onAllDown. A probe failure is bounded by defaultProbeTimeout (5s), far
@@ -61,97 +84,168 @@ func (c *Client) StartHealthChecks(ctx context.Context, interval time.Duration) 
 // own more tolerant timeout, and calls onAllDown when they all genuinely
 // fail — so removing the call here loses no detection capability.
 //
-// observedAt is captured right after probeWithTimeout returns for each
-// endpoint (or right after a dial failure), never once up front: onSuccess
-// orders transitions by when the outcome was actually observed, not by when
-// checkOnce started, so a single timestamp taken at the top of this function
-// would misrepresent every endpoint after the first (see call's doc comment
-// in pool.go for the full rationale).
+// The endpoints are probed in parallel so their heights are comparable, and
+// the promotion decision exists only once every probe has returned, so
+// observedAt is taken at that point (see call's doc comment in pool.go for
+// why outcomes are ordered by when they were observed).
 func (c *Client) checkOnce() int {
+	results := c.probeAll()
+	if len(results) == 0 {
+		return -1
+	}
+	observedAt := time.Now()
+
+	pick := pickEndpoint(results, c.maxLagBlocks(), -1)
+	if pick < 0 {
+		// Every probe failed within defaultProbeTimeout. This is
+		// deliberately not reported as EventAllDown — see checkOnce's doc
+		// comment — but it is still logged so the condition remains visible
+		// to an operator; the data path's own next call() is what decides
+		// whether this is a real outage.
+		log.Printf("[rpcpool] health probe: every endpoint failed to answer within %s", defaultProbeTimeout)
+		return -1
+	}
+	c.onSuccess(observedAt, pick, true)
+	return pick
+}
+
+// ConfirmStall reports whether the chain really is stalled at height, as seen
+// from the pool's other endpoints. It returns false when any endpoint that
+// answers reports a block past height: the chain is moving and only the
+// endpoint that served height is behind. In that case it also moves the pool
+// to the highest-priority healthy endpoint past height, so the next call
+// reads the live chain.
+//
+// It returns true, keeping the caller's stall verdict, when no endpoint is
+// past height, when no other endpoint answers (the stall cannot be checked
+// elsewhere), and, without probing, when the pool has a single endpoint.
+func (c *Client) ConfirmStall(height int64) bool {
 	c.mu.Lock()
 	n := len(c.endpoints)
 	c.mu.Unlock()
+	if n <= 1 {
+		return true
+	}
 
-	if n == 0 {
+	results := c.probeAll()
+	observedAt := time.Now()
+
+	pick := pickEndpoint(results, c.maxLagBlocks(), height)
+	if pick < 0 {
+		return true
+	}
+	c.mu.Lock()
+	endpoint := c.endpoints[pick]
+	c.mu.Unlock()
+	log.Printf("[rpcpool] stall at height %d disproved: %s is at height %d", height, endpoint, results[pick].height)
+	c.onSuccess(observedAt, pick, true)
+	return false
+}
+
+// pickEndpoint chooses which endpoint to serve from, among those that
+// answered and report a height above floor. It returns the highest-priority
+// healthy one (not catching up, within maxLag of the most advanced answering
+// endpoint), or else the most advanced one, or -1 when none qualifies.
+func pickEndpoint(results []probeResult, maxLag, floor int64) int {
+	best := int64(-1)
+	bestIdx := -1
+	for i, r := range results {
+		if r.err == nil && r.height > best {
+			best, bestIdx = r.height, i
+		}
+	}
+	if bestIdx < 0 || best <= floor {
 		return -1
 	}
-
-	var observedAt time.Time
-
-	for i := 0; i < n; i++ {
-		c.mu.Lock()
-		conn, dialErr := c.connAt(i)
-		endpoint := c.endpoints[i]
-		c.mu.Unlock()
-
-		if dialErr != nil {
-			// No observedAt is recorded here: this branch always continues to
-			// the next endpoint, and observedAt is only read on the success
-			// path below, so timestamping a failed dial would be dead.
-			log.Printf("[rpcpool] health probe: %v", dialErr)
+	for i, r := range results {
+		if r.err != nil || r.height <= floor || r.catchingUp {
 			continue
 		}
-
-		err := probeWithTimeout(conn, defaultProbeTimeout)
-		observedAt = time.Now()
-		if err != nil {
-			log.Printf("[rpcpool] health probe failed for %s: %v", endpoint, err)
-			// Discard the connection so the next dial rebuilds it rather
-			// than reusing a keep-alive socket to a node that stopped
-			// answering — but never for the endpoint currently serving the
-			// data path. A probe failure only proves the endpoint missed
-			// this probe's tight defaultProbeTimeout budget, not that it is
-			// actually down (see checkOnce's doc comment); nil'ing the
-			// active endpoint's connection on that basis would throw away a
-			// warm keep-alive pool the data path may still be using
-			// successfully under its own, far more tolerant timeout, for no
-			// benefit — the active endpoint stays active regardless of what
-			// this probe found.
-			c.mu.Lock()
-			if i != c.activeIdx {
-				c.conns[i] = nil
-			}
-			c.mu.Unlock()
-			continue
+		if best-r.height <= maxLag {
+			return i
 		}
-
-		// Re-read activeIdx right before the call instead of using a
-		// snapshot taken at the top of the loop: with defaultProbeTimeout at
-		// several seconds and several endpoints, a concurrent call() can
-		// have rotated the real active endpoint while this probe was in
-		// flight, and a stale snapshot could silently miss a genuine
-		// transition (onSuccess still re-derives prev itself, so state
-		// cannot be corrupted either way — this only affects whether the
-		// EventRotated log/observer call fires).
-		c.mu.Lock()
-		currentActive := c.activeIdx
-		c.mu.Unlock()
-
-		c.onSuccess(observedAt, i, i != currentActive)
-		return i
 	}
+	return bestIdx
+}
 
-	// Every probe failed within defaultProbeTimeout. This is deliberately
-	// not reported as EventAllDown — see checkOnce's doc comment — but it is
-	// still logged so the condition remains visible to an operator; the data
-	// path's own next call() is what decides whether this is a real outage.
-	log.Printf("[rpcpool] health probe: every endpoint failed to answer within %s", defaultProbeTimeout)
-	return -1
+// probeAll probes every endpoint in parallel and returns the results,
+// index-aligned with c.endpoints.
+//
+// A failed probe discards that endpoint's connection so the next dial
+// rebuilds it rather than reusing a keep-alive socket to a node that stopped
+// answering — but never for the endpoint currently serving the data path. A
+// probe failure only proves the endpoint missed this probe's tight
+// defaultProbeTimeout budget, not that it is actually down (see checkOnce's
+// doc comment); nil'ing the active endpoint's connection on that basis would
+// throw away a warm keep-alive pool the data path may still be using
+// successfully under its own, far more tolerant timeout.
+func (c *Client) probeAll() []probeResult {
+	c.mu.Lock()
+	n := len(c.endpoints)
+	endpoints := append([]string(nil), c.endpoints...)
+	conns := make([]rpcclient.Client, n)
+	results := make([]probeResult, n)
+	for i := 0; i < n; i++ {
+		conns[i], results[i].err = c.connAt(i)
+	}
+	c.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		if results[i].err != nil {
+			log.Printf("[rpcpool] health probe: %v", results[i].err)
+			continue
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			status, err := probeWithTimeout(conns[i], defaultProbeTimeout)
+			if err != nil {
+				results[i].err = err
+				return
+			}
+			results[i].height = status.SyncInfo.LatestBlockHeight
+			results[i].catchingUp = status.SyncInfo.CatchingUp
+		}(i)
+	}
+	wg.Wait()
+
+	c.mu.Lock()
+	for i, r := range results {
+		if r.err == nil {
+			continue
+		}
+		log.Printf("[rpcpool] health probe failed for %s: %v", endpoints[i], r.err)
+		// Only drop the connection this probe used: a concurrent call() may
+		// already have replaced it.
+		if i != c.activeIdx && c.conns[i] == conns[i] {
+			c.conns[i] = nil
+		}
+	}
+	c.mu.Unlock()
+	return results
 }
 
 // probeWithTimeout calls Status on conn, giving up after timeout. The probe
 // goroutine is left to finish on its own once the underlying HTTP call
 // returns; the buffered channel keeps it from blocking forever.
-func probeWithTimeout(conn rpcclient.Client, timeout time.Duration) error {
-	done := make(chan error, 1)
+func probeWithTimeout(conn rpcclient.Client, timeout time.Duration) (*ctypes.ResultStatus, error) {
+	type answer struct {
+		status *ctypes.ResultStatus
+		err    error
+	}
+	done := make(chan answer, 1)
 	go func() {
-		_, err := conn.Status()
-		done <- err
+		status, err := conn.Status()
+		done <- answer{status, err}
 	}()
 	select {
-	case err := <-done:
-		return err
+	case a := <-done:
+		if a.err == nil && a.status == nil {
+			return nil, errEmptyStatus
+		}
+		return a.status, a.err
 	case <-time.After(timeout):
-		return ErrProbeTimeout
+		return nil, ErrProbeTimeout
 	}
 }

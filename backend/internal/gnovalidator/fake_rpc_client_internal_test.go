@@ -15,6 +15,8 @@ type fakeRPCClient struct {
 	// blockFunc is called for every Block(height) invocation; the test
 	// controls success/failure/attempt-counting through it.
 	blockFunc func(height int64) (*ctypes.ResultBlock, error)
+	// statusFunc, when set, serves Status(); otherwise Status panics.
+	statusFunc func() (*ctypes.ResultStatus, error)
 }
 
 func (f *fakeRPCClient) Block(height *int64) (*ctypes.ResultBlock, error) {
@@ -42,7 +44,12 @@ func (f *fakeRPCClient) Genesis() (*ctypes.ResultGenesis, error) { panic("not im
 func (f *fakeRPCClient) BlockchainInfo(minHeight, maxHeight int64) (*ctypes.ResultBlockchainInfo, error) {
 	panic("not implemented")
 }
-func (f *fakeRPCClient) Status() (*ctypes.ResultStatus, error) { panic("not implemented") }
+func (f *fakeRPCClient) Status() (*ctypes.ResultStatus, error) {
+	if f.statusFunc == nil {
+		panic("not implemented")
+	}
+	return f.statusFunc()
+}
 func (f *fakeRPCClient) NetInfo() (*ctypes.ResultNetInfo, error) { panic("not implemented") }
 func (f *fakeRPCClient) DumpConsensusState() (*ctypes.ResultDumpConsensusState, error) {
 	panic("not implemented")

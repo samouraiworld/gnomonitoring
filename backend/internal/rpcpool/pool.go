@@ -57,6 +57,15 @@ func WithDialer(d Dialer) Option { return func(c *Client) { c.dial = d } }
 // WithObserver registers a state-transition callback.
 func WithObserver(o Observer) Option { return func(c *Client) { c.obs = o } }
 
+// DefaultMaxLagBlocks is the lag threshold used when no WithMaxLag provider
+// is set, or when it returns a non-positive value.
+const DefaultMaxLagBlocks int64 = 10
+
+// WithMaxLag sets how many blocks an endpoint may trail the most advanced
+// endpoint before the health probe treats it as unhealthy. The provider is
+// called on every probe, so a caller can back it with a live admin setting.
+func WithMaxLag(f func() int64) Option { return func(c *Client) { c.maxLag = f } }
+
 // Client is a priority-ordered pool of RPC endpoints that satisfies
 // rpcclient.Client. Index 0 is the primary; later indexes are backups tried
 // in order. It is safe for concurrent use.
@@ -94,8 +103,22 @@ type Client struct {
 	// see call's doc comment for why entry order cannot be used instead.
 	lastObservedAt time.Time
 
-	dial Dialer
-	obs  Observer
+	dial   Dialer
+	obs    Observer
+	maxLag func() int64
+}
+
+// maxLagBlocks returns the current lag threshold, falling back to
+// DefaultMaxLagBlocks when no provider is set or it returns a non-positive
+// value.
+func (c *Client) maxLagBlocks() int64 {
+	if c.maxLag == nil {
+		return DefaultMaxLagBlocks
+	}
+	if v := c.maxLag(); v > 0 {
+		return v
+	}
+	return DefaultMaxLagBlocks
 }
 
 // New builds a pool over endpoints, in priority order.
@@ -223,11 +246,18 @@ func (c *Client) call(fn func(rpcclient.Client) error) error {
 	return fmt.Errorf("%w: %d tried, first error: %w", ErrAllEndpointsFailed, n, firstErr)
 }
 
-// onSuccess promotes idx to active and emits the matching transition event.
-// observedAt must be the moment call() determined this success, right after
-// fn(conn) returned nil; if a newer outcome has already been applied, this
-// completion is stale and is discarded without touching state or the
-// observer.
+// onSuccess records a success on idx and emits the matching transition
+// event. switched is true when the caller deliberately selected idx: a
+// call() that rotated past a failing endpoint, or a health probe. Only then
+// does idx become the active endpoint. A success with switched false comes
+// from a call() that answered on the endpoint it started on; if the active
+// endpoint changed while that call was in flight (a probe moved the pool off
+// a frozen endpoint, say), the call's success says nothing against that move
+// and must not undo it, so the active endpoint is left as is.
+//
+// observedAt must be the moment the caller determined this success; if a
+// newer outcome has already been applied, this completion is stale and is
+// discarded without touching state or the observer.
 //
 // notifyMu is held for the whole function, before mu is even taken, so that
 // applying this transition and delivering it to the observer happen as one
@@ -245,6 +275,9 @@ func (c *Client) onSuccess(observedAt time.Time, idx int, switched bool) {
 	c.lastObservedAt = observedAt
 	prev := c.activeIdx
 	wasAllDown := c.allDown
+	if !switched {
+		idx = prev
+	}
 	c.activeIdx = idx
 	c.allDown = false
 	endpoint := c.endpoints[idx]

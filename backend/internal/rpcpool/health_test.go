@@ -143,7 +143,7 @@ func TestProbe_TimesOutOnAHangingEndpoint(t *testing.T) {
 	defer close(blocked)
 
 	conn := &hangingConn{fakeConn: fakeConn{endpoint: "e0"}, block: blocked}
-	err := probeWithTimeout(conn, 50*time.Millisecond)
+	_, err := probeWithTimeout(conn, 50*time.Millisecond)
 	assert.ErrorIs(t, err, ErrProbeTimeout)
 }
 
