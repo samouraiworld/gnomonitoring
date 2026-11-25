@@ -138,8 +138,11 @@ Entries are ordered newest-first within each section.
   to halt (block pace over the last 3000 blocks). Two reminders follow,
   `halt_reminder_minutes` (default 60) and `halt_final_reminder_minutes`
   (default 5) before the halt, both editable in the panel, then a "chain
-  resumed" notice once the chain moves past the halt height. A halt already
-  past (the params are never reset) is never announced. The params are read at
+  resumed" notice once the chain moves past the halt height, after checking at
+  that height that the halt was still set there (a move or cancel missed while
+  gnomonitoring was down is reported as a cancel, not a resume). A halt first
+  seen when the chain already sits at its height is still announced. A halt
+  already past (the params are never reset) is never announced. The params are read at
   the height `/status` reports, and a node that is catching up or behind the
   last notice is ignored, so a lagging node cannot fake a cancellation. The
   on-chain version string is shown only if it is a plain version (64 chars

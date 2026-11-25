@@ -31,6 +31,9 @@ type fakeHaltChain struct {
 	catchingUp  bool
 	prunedBelow int64   // blocks below this height are no longer served
 	queried     []int64 // heights the params were queried at
+	// pastHalt holds halt_height as it was at a given height, when it
+	// differs from the current value.
+	pastHalt map[int64][]byte
 }
 
 func (f *fakeHaltChain) timeOf(h int64) time.Time {
@@ -63,6 +66,9 @@ func (f *fakeHaltChain) ABCIQueryWithOptions(path string, _ []byte, opts rpcclie
 	switch path {
 	case haltHeightParamPath:
 		res.Response.Data = f.haltHeight
+		if past, ok := f.pastHalt[opts.Height]; ok {
+			res.Response.Data = past
+		}
 	case haltMinVersionParamPath:
 		res.Response.Data = f.minVersion
 	default:
@@ -365,7 +371,7 @@ func TestCheckChainHaltLifecycle(t *testing.T) {
 	now := time.Now()
 	check := func() {
 		now = now.Add(time.Second)
-		checkChainHalt(db, "test", f, now)
+		_ = checkChainHalt(db, "test", f, now)
 	}
 
 	check()
@@ -425,12 +431,12 @@ func TestCheckChainHaltCancel(t *testing.T) {
 	now := time.Now()
 
 	f.setHalt(10_050, "v1.9.0") // 100s ahead: inside both reminder windows
-	checkChainHalt(db, "test", f, now)
+	_ = checkChainHalt(db, "test", f, now)
 	f.height = 10_040
-	checkChainHalt(db, "test", f, now.Add(time.Second))
+	_ = checkChainHalt(db, "test", f, now.Add(time.Second))
 	f.setHalt(0, "")
-	checkChainHalt(db, "test", f, now.Add(2*time.Second))
-	checkChainHalt(db, "test", f, now.Add(3*time.Second))
+	_ = checkChainHalt(db, "test", f, now.Add(2*time.Second))
+	_ = checkChainHalt(db, "test", f, now.Add(3*time.Second))
 
 	assert.Equal(t, []haltNoticeKind{haltNoticeScheduled, haltNoticeCancelled}, kinds(*sent))
 	assert.True(t, strings.Contains(formatHaltPlain((*sent)[1]), "height 10050 cancelled"))
@@ -452,12 +458,12 @@ func TestCheckChainHaltReadErrorSendsNothing(t *testing.T) {
 	sent := stubHaltNotify(t)
 	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
 	f.setHalt(19_000, "v1.9.0")
-	checkChainHalt(db, "test", f, time.Now())
+	_ = checkChainHalt(db, "test", f, time.Now())
 	require.Len(t, *sent, 1)
 
 	// An unreadable param must not read as a cancellation.
 	f.abciErr = abci.StringError("boom")
-	checkChainHalt(db, "test", f, time.Now().Add(time.Second))
+	_ = checkChainHalt(db, "test", f, time.Now().Add(time.Second))
 	assert.Len(t, *sent, 1)
 }
 
@@ -466,12 +472,56 @@ func TestCheckChainHaltIgnoresNodeBehind(t *testing.T) {
 	sent := stubHaltNotify(t)
 	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
 	f.setHalt(19_000, "v1.9.0")
-	checkChainHalt(db, "test", f, time.Now())
+	_ = checkChainHalt(db, "test", f, time.Now())
 	require.Len(t, *sent, 1)
 
 	// The pool fails over to a node whose state predates the proposal.
 	f.height = 9_900
 	f.setHalt(0, "")
-	checkChainHalt(db, "test", f, time.Now().Add(time.Second))
+	_ = checkChainHalt(db, "test", f, time.Now().Add(time.Second))
 	assert.Len(t, *sent, 1, "a node behind must not read as a cancellation")
+}
+
+// A halt moved later while gnomonitoring was down: the chain went past the
+// announced height without stopping, so it is not reported as resumed.
+func TestCheckChainHaltMissedMoveIsNotAResume(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sent := stubHaltNotify(t)
+	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
+	f.setHalt(20_000, "v1.9.0")
+	_ = checkChainHalt(db, "test", f, time.Now())
+
+	f.setHalt(30_000, "v1.9.0")
+	f.pastHalt = map[int64][]byte{20_000: []byte(`"30000"`)}
+	f.height = 20_500
+	_ = checkChainHalt(db, "test", f, time.Now().Add(time.Second))
+	_ = checkChainHalt(db, "test", f, time.Now().Add(2*time.Second))
+
+	assert.Equal(t, []haltNoticeKind{haltNoticeScheduled, haltNoticeCancelled, haltNoticeScheduled}, kinds(*sent))
+	assert.Equal(t, int64(20_000), (*sent)[1].Height)
+	assert.Equal(t, int64(30_000), (*sent)[2].Height)
+}
+
+// A halt first seen when the chain already sits at the halt height (set a few
+// blocks ahead, or the watcher was down) is still announced, then resumed.
+func TestCheckChainHaltReachedOnFirstSight(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	sent := stubHaltNotify(t)
+	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
+	f.setHalt(10_000, "v1.9.0")
+	_ = checkChainHalt(db, "test", f, time.Now())
+	_ = checkChainHalt(db, "test", f, time.Now().Add(time.Second))
+	require.Equal(t, []haltNoticeKind{haltNoticeScheduled}, kinds(*sent))
+	assert.Contains(t, formatHaltPlain((*sent)[0]), "already reached")
+
+	f.height = 10_003
+	_ = checkChainHalt(db, "test", f, time.Now().Add(2*time.Second))
+	assert.Equal(t, []haltNoticeKind{haltNoticeScheduled, haltNoticeResumed}, kinds(*sent))
+}
+
+func TestCheckChainHaltReturnsReadError(t *testing.T) {
+	db := testoutils.NewTestDB(t)
+	stubHaltNotify(t)
+	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(0, 0), abciErr: abci.StringError("module not registered")}
+	assert.Error(t, checkChainHalt(db, "test", f, time.Now()))
 }

@@ -99,9 +99,10 @@ type haltObservation struct {
 	LatestTime   time.Time
 }
 
-// scheduled reports whether the chain still has a halt ahead of it.
+// scheduled reports whether the chain still has a halt ahead of it, or is
+// halted at it right now (the head is the halt height).
 func (o haltObservation) scheduled() bool {
-	return o.HaltHeight > o.LatestHeight
+	return o.HaltHeight != 0 && o.HaltHeight >= o.LatestHeight
 }
 
 // readHaltParam returns the raw JSON value stored under a node param at
@@ -510,6 +511,9 @@ func (n *haltNotice) lines() (string, []string) {
 		return fmt.Sprintf("⏸️ Chain halt minimum version changed by GovDAO: %s → %s", prev, next),
 			append(n.etaLines(), ver)
 	case haltNoticeReminder, haltNoticeFinalReminder:
+		if n.Height <= n.Obs.LatestHeight {
+			return fmt.Sprintf("⏸️ Chain reached the halt height %d", n.Height), append(n.etaLines(), ver)
+		}
 		return fmt.Sprintf("⏰ Chain halt in ~%s", formatHaltDuration(n.Remaining)),
 			append(n.etaLines(), ver)
 	case haltNoticeCancelled:
@@ -589,17 +593,36 @@ var (
 	notifyHalt = sendHaltNotice
 )
 
-// checkChainHalt runs one halt check for chainID.
-func checkChainHalt(db *gorm.DB, chainID string, c haltRPC, now time.Time) {
+// confirmResumed checks that the chain really halted at the announced height
+// before it is reported as resumed: if gnomonitoring missed a later vote that
+// moved or cancelled that halt, the chain went past it without stopping. The
+// param is read at the halt height itself; on a node that no longer has that
+// state, the resume is reported as observed.
+func confirmResumed(c haltRPC, n *haltNotice) *haltNotice {
+	raw, err := readHaltParam(c, haltHeightParamPath, n.Height)
+	if err != nil {
+		return n
+	}
+	h, err := parseHaltHeight(raw)
+	if err != nil || h == n.Height {
+		return n
+	}
+	// The halt at n.Height was replaced before the chain reached it.
+	return &haltNotice{Kind: haltNoticeCancelled, Height: n.Height, Version: n.Version, Obs: n.Obs,
+		Levels: []string{LevelHaltCancelled}}
+}
+
+// checkChainHalt runs one halt check for chainID. It returns the error of
+// reading the chain, which the caller logs; other failures are logged here.
+func checkChainHalt(db *gorm.DB, chainID string, c haltRPC, now time.Time) error {
 	obs, err := observeHalt(c)
 	if err != nil {
-		log.Printf("[halt][%s] read failed: %v", chainID, err)
-		return
+		return err
 	}
 	st, err := loadHaltState(db, chainID)
 	if err != nil {
 		log.Printf("[halt][%s] %v", chainID, err)
-		return
+		return nil
 	}
 
 	var pace time.Duration
@@ -612,17 +635,21 @@ func checkChainHalt(db *gorm.DB, chainID string, c haltRPC, now time.Time) {
 
 	n := decideHalt(obs, st, pace, loadHaltThresholds(db))
 	if n == nil {
-		return
+		return nil
+	}
+	if n.Kind == haltNoticeResumed {
+		n = confirmResumed(c, n)
 	}
 	msg := formatHaltPlain(n)
 	// Record before sending: a failed insert must not turn into the same
 	// notice sent on every poll.
 	if err := recordHaltNotice(db, chainID, n, msg, now); err != nil {
 		log.Printf("[halt][%s] %v; notice not sent", chainID, err)
-		return
+		return nil
 	}
 	log.Printf("[halt][%s] %s", chainID, strings.ReplaceAll(msg, "\n", " | "))
 	notifyHalt(db, chainID, n)
+	return nil
 }
 
 // WatchChainHalt polls chainID's halt params until ctx is done, announcing a
@@ -637,6 +664,9 @@ func WatchChainHalt(ctx context.Context, db *gorm.DB, chainID string) {
 	log.Printf("[halt][%s] halt watcher started (every %v)", chainID, haltPollInterval)
 	ticker := time.NewTicker(haltPollInterval)
 	defer ticker.Stop()
+	// A chain without the node params (an older gno) fails every poll the
+	// same way: log a read error when it changes, not every 30 seconds.
+	lastReadErr := ""
 	for {
 		// Checked before each poll: after a chain restart from the admin API,
 		// the old watcher must not decide one more notice next to its
@@ -644,7 +674,15 @@ func WatchChainHalt(ctx context.Context, db *gorm.DB, chainID string) {
 		if ctx.Err() != nil {
 			return
 		}
-		checkChainHalt(db, chainID, c, time.Now())
+		if err := checkChainHalt(db, chainID, c, time.Now()); err != nil {
+			if err.Error() != lastReadErr {
+				log.Printf("[halt][%s] read failed: %v", chainID, err)
+				lastReadErr = err.Error()
+			}
+		} else if lastReadErr != "" {
+			log.Printf("[halt][%s] read recovered", chainID)
+			lastReadErr = ""
+		}
 		select {
 		case <-ctx.Done():
 			return
