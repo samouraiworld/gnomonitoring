@@ -9,6 +9,24 @@ Entries are ordered newest-first within each section.
 
 ### Security
 
+- **Go 1.26.11 and Go dependency fixes** — move every Go pin (backend and
+  block_exporter `toolchain`, Dockerfiles, rehearsal images, workflows) from
+  1.26.10 to 1.26.11 for GO-2026-6859 in `net/http`. In the backend and
+  block_exporter modules, update the OpenTelemetry modules from v1.45.0 to
+  v1.47.0 (GO-2026-6974, GO-2026-6975) and golang.org/x/crypto from v0.58.0
+  to v0.59.0 (GO-2026-5932). Pin github.com/gorilla/websocket to the
+  unreleased fix commit `v1.5.4-0.20240701034025-d67f41855da4`
+  (GO-2026-6278, weak mask-key randomness): no tagged release fixes it, and
+  gno requires v1.5.3, so v1.5.2 is not reachable. `go mod tidy` also moves
+  the modules these versions require (x/sys, x/text, x/sync, x/mod, testify,
+  protobuf, genproto, grpc-gateway). No code change.
+
+- **Panel runtime packages re-pinned** — libexpat 2.10.0-r0 left the Alpine
+  3.24 repository, which broke the panel image build. Pin libexpat
+  2.11.0-r0, and add libxml2 2.13.9-r3 (CVE-2026-86144) and libxslt
+  1.1.43-r4 (CVE-2026-125350, CVE-2026-87636, CVE-2026-9947), HIGH findings
+  in the runtime-image security gate. Base-image digests stay unchanged.
+
 - **golang.org/x/net updated to v0.62.0** — replace v0.60.0 in the backend and
   block_exporter modules. This fixes CVE-2026-78661 (GO-2026-6860), a HIGH
   denial of service in `golang.org/x/net/html` reported by the backend
