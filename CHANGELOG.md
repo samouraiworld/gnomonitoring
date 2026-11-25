@@ -17,9 +17,12 @@ Entries are ordered newest-first within each section.
   to v0.59.0 (GO-2026-5932). Pin github.com/gorilla/websocket to the
   unreleased fix commit `v1.5.4-0.20240701034025-d67f41855da4`
   (GO-2026-6278, weak mask-key randomness): no tagged release fixes it, and
-  gno requires v1.5.3, so v1.5.2 is not reachable. `go mod tidy` also moves
-  the modules these versions require (x/sys, x/text, x/sync, x/mod, testify,
-  protobuf, genproto, grpc-gateway). No code change.
+  gno requires v1.5.3, so v1.5.2 is not reachable. Move back to a tagged
+  release once gorilla publishes one. `go mod tidy` also moves the modules
+  these versions require (x/sys, x/text, x/sync, x/mod, testify, protobuf,
+  genproto, grpc-gateway), adds otel/log, go.yaml.in/yaml/v3 and kr/text,
+  and drops gopkg.in/yaml.v3, go-spew and go-difflib from the indirect
+  requirements. No code change.
 
 - **Panel runtime packages re-pinned** — libexpat 2.10.0-r0 left the Alpine
   3.24 repository, which broke the panel image build. Pin libexpat
