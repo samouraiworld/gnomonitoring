@@ -21,14 +21,20 @@ Entries are ordered newest-first within each section.
   release once gorilla publishes one. `go mod tidy` also moves the modules
   these versions require (x/sys, x/text, x/sync, x/mod, testify, protobuf,
   genproto, grpc-gateway), adds otel/log, go.yaml.in/yaml/v3 and kr/text,
-  and drops gopkg.in/yaml.v3, go-spew and go-difflib from the indirect
-  requirements. No code change.
+  and drops go-spew, go-difflib and (backend only) gopkg.in/yaml.v3 from the
+  indirect requirements. No gnomonitoring code change; the websocket commit
+  also rewrites the library's dial and proxy code, which the backend reaches
+  through `websocket.DefaultDialer` in the GovDAO listener.
 
-- **Panel runtime packages re-pinned** — libexpat 2.10.0-r0 left the Alpine
-  3.24 repository, which broke the panel image build. Pin libexpat
-  2.11.0-r0, and add libxml2 2.13.9-r3 (CVE-2026-86144) and libxslt
-  1.1.43-r4 (CVE-2026-125350, CVE-2026-87636, CVE-2026-9947), HIGH findings
-  in the runtime-image security gate. Base-image digests stay unchanged.
+- **Panel runtime packages pinned to minimum versions** — libexpat 2.10.0-r0
+  left the Alpine 3.24 repository, which broke the panel image build:
+  Alpine keeps only the latest revision of each package, so exact `=` pins
+  fail once a new revision ships. The runtime `apk add` now uses `>=` floors
+  for brotli-libs, curl, libcurl, libexpat (2.11.0-r0), and adds libxml2
+  2.13.9-r3 (CVE-2026-86144) and libxslt 1.1.43-r4 (CVE-2026-125350,
+  CVE-2026-87636, CVE-2026-9947), HIGH findings in the runtime-image
+  security gate. The Trivy image scan still blocks any HIGH or CRITICAL
+  finding. Base-image digests stay unchanged.
 
 - **golang.org/x/net updated to v0.62.0** — replace v0.60.0 in the backend and
   block_exporter modules. This fixes CVE-2026-78661 (GO-2026-6860), a HIGH
