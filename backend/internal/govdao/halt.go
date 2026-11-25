@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"log"
 	"math"
 	"regexp"
@@ -19,7 +18,6 @@ import (
 	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/rpcpool"
-	"github.com/samouraiworld/gnomonitoring/backend/internal/telegram"
 	"gorm.io/gorm"
 )
 
@@ -503,114 +501,110 @@ func formatHaltDuration(d time.Duration) string {
 	}
 }
 
-// versionLine names the minimum version the node checks when it restarts
+// versionField names the minimum version the node checks when it restarts
 // after the halt. Any later release also passes the check.
-func versionLine(v string) string {
+func versionField(v string) internal.AlertField {
 	if v == "" {
-		return "Minimum version to resume: none set"
+		v = "none set"
 	}
-	return "Minimum version to resume: " + v
+	return internal.AlertField{Name: "minimum version to resume", Value: v}
 }
 
-// etaLines describes when the halt is expected.
-func (n *haltNotice) etaLines() []string {
+// etaFields describes when the halt is expected.
+func (n *haltNotice) etaFields() []internal.AlertField {
 	blocksLeft := n.Height - n.Obs.LatestHeight
 	if blocksLeft <= 0 {
-		return []string{fmt.Sprintf("Halt height: %d (already reached, current %d)", n.Height, n.Obs.LatestHeight)}
+		return []internal.AlertField{{Name: "halt height",
+			Value: fmt.Sprintf("%d (already reached, current %d)", n.Height, n.Obs.LatestHeight)}}
 	}
-	lines := []string{fmt.Sprintf("Halt height: %d (current %d, %d blocks left)", n.Height, n.Obs.LatestHeight, blocksLeft)}
+	fields := []internal.AlertField{{Name: "halt height",
+		Value: fmt.Sprintf("%d (current %d, %d blocks left)", n.Height, n.Obs.LatestHeight, blocksLeft)}}
+	eta := "unknown (block time unavailable)"
 	if n.HasETA {
 		at := n.Obs.LatestTime.Add(n.Remaining).UTC()
-		lines = append(lines, fmt.Sprintf("Estimated time to halt: ~%s (around %s, at %.2fs/block)",
-			formatHaltDuration(n.Remaining), at.Format("2006-01-02 15:04 MST"), n.Pace.Seconds()))
-	} else {
-		lines = append(lines, "Estimated time to halt: unknown (block time unavailable)")
+		eta = fmt.Sprintf("~%s (around %s, at %.2fs/block)",
+			formatHaltDuration(n.Remaining), at.Format("2006-01-02 15:04 MST"), n.Pace.Seconds())
 	}
-	return lines
+	return append(fields, internal.AlertField{Name: "estimated time to halt", Value: eta})
 }
 
-// lines renders the notice as a title and body lines, shared by every
-// channel.
-func (n *haltNotice) lines() (string, []string) {
-	ver := versionLine(n.Version)
+// alert renders the notice in the validator alert format (Discord embed,
+// Slack blocks, Telegram HTML), shared by every channel.
+func (n *haltNotice) alert(chainID string) internal.AlertData {
+	d := internal.AlertData{ChainID: chainID, Level: internal.AlertWarning, Emoji: "⏸️"}
+	ver := versionField(n.Version)
+	note := func(s string) internal.AlertField { return internal.AlertField{Name: "note", Value: s} }
 	switch n.Kind {
 	case haltNoticeScheduled:
 		advice := "Have a binary meeting the minimum version ready to restart your node after the halt."
 		if n.Version == "" {
 			advice = "Have the upgraded binary ready to restart your node after the halt."
 		}
-		return "⏸️ Chain halt scheduled by GovDAO", append(n.etaLines(), ver, advice)
+		d.Title = "Chain halt scheduled by GovDAO"
+		d.Fields = append(n.etaFields(), ver, note(advice))
 	case haltNoticeMoved:
-		return fmt.Sprintf("⏸️ Chain halt moved by GovDAO: height %d → %d", n.PrevHeight, n.Height),
-			append(n.etaLines(), ver)
+		d.Title = fmt.Sprintf("Chain halt moved by GovDAO: height %d → %d", n.PrevHeight, n.Height)
+		d.Fields = append(n.etaFields(), ver)
 	case haltNoticeVersionChanged:
-		prev := n.PrevVer
+		prev, next := n.PrevVer, n.Version
 		if prev == "" {
 			prev = "none"
 		}
-		next := n.Version
 		if next == "" {
 			next = "none"
 		}
-		return fmt.Sprintf("⏸️ Chain halt minimum version changed by GovDAO: %s → %s", prev, next),
-			append(n.etaLines(), ver)
+		d.Title = fmt.Sprintf("Chain halt minimum version changed by GovDAO: %s → %s", prev, next)
+		d.Fields = append(n.etaFields(), ver)
 	case haltNoticeReminder, haltNoticeFinalReminder:
 		if n.Height <= n.Obs.LatestHeight {
-			return fmt.Sprintf("⏸️ Chain reached the halt height %d", n.Height), append(n.etaLines(), ver)
+			d.Title = fmt.Sprintf("Chain reached the halt height %d", n.Height)
+		} else {
+			d.Emoji = "⏰"
+			d.Title = fmt.Sprintf("Chain halt in ~%s", formatHaltDuration(n.Remaining))
 		}
-		return fmt.Sprintf("⏰ Chain halt in ~%s", formatHaltDuration(n.Remaining)),
-			append(n.etaLines(), ver)
+		d.Fields = append(n.etaFields(), ver)
 	case haltNoticeReached:
-		return fmt.Sprintf("⏸️ Chain halted at height %d as scheduled", n.Height),
-			[]string{
-				fmt.Sprintf("No new block for %s.", formatHaltDuration(n.Obs.Age)),
-				ver,
-				"Restart your node on a binary meeting the minimum version.",
-			}
+		d.Level = internal.AlertCritical
+		d.Title = fmt.Sprintf("Chain halted at height %d as scheduled", n.Height)
+		d.Fields = []internal.AlertField{
+			{Name: "no new block for", Value: formatHaltDuration(n.Obs.Age)},
+			ver,
+			note("Restart your node on a binary meeting the minimum version."),
+		}
 	case haltNoticeCancelled:
-		return fmt.Sprintf("▶️ Scheduled chain halt at height %d cancelled by GovDAO", n.Height),
-			[]string{fmt.Sprintf("Current height: %d", n.Obs.LatestHeight)}
+		d.Level, d.Emoji = internal.AlertInfo, "▶️"
+		d.Title = fmt.Sprintf("Scheduled chain halt at height %d cancelled by GovDAO", n.Height)
+		d.Fields = []internal.AlertField{{Name: "current height", Value: strconv.FormatInt(n.Obs.LatestHeight, 10)}}
 	case haltNoticeResumed:
-		return fmt.Sprintf("✅ Chain resumed after the halt at height %d", n.Height),
-			[]string{fmt.Sprintf("Current height: %d", n.Obs.LatestHeight), ver}
+		d.Level, d.Emoji = internal.AlertResolved, "✅"
+		d.Title = fmt.Sprintf("Chain resumed after the halt at height %d", n.Height)
+		d.Fields = []internal.AlertField{{Name: "current height", Value: strconv.FormatInt(n.Obs.LatestHeight, 10)}, ver}
 	}
-	return "", nil
+	return d
 }
 
-// formatHaltPlain renders the Discord/Slack text (SendInfoGovdao prefixes the
-// chain ID).
+// formatHaltPlain renders the notice as plain text, one "name: value" line
+// per field, for the logs and alert_logs.msg.
 func formatHaltPlain(n *haltNotice) string {
-	title, body := n.lines()
-	return "--- \n" + title + "\n" + strings.Join(body, "\n")
-}
-
-// formatHaltTelegram renders the Telegram (HTML parse mode) text, escaping
-// every value.
-func formatHaltTelegram(chainID string, n *haltNotice) string {
-	title, body := n.lines()
+	d := n.alert("")
 	var b strings.Builder
-	fmt.Fprintf(&b, "[%s] <b>%s</b>\n", html.EscapeString(chainID), html.EscapeString(title))
-	for _, l := range body {
-		b.WriteString(html.EscapeString(l))
-		b.WriteString("\n")
+	b.WriteString(d.Emoji + " " + d.Title)
+	for _, f := range d.Fields {
+		b.WriteString("\n" + f.Name + ": " + f.Value)
 	}
 	return b.String()
 }
 
-// sendHaltNotice dispatches n to the GovDAO subscribers of chainID: every
-// GovDAO webhook, and the GovDAO Telegram chats following that chain.
+// sendValidatorAlert is internal.SendInfoValidator, replaced in tests.
+var sendValidatorAlert = internal.SendInfoValidator
+
+// sendHaltNotice dispatches n to the validator alert subscribers of chainID,
+// like the "Blockchain stuck" alert: every validator webhook of that chain
+// (or of all chains), and the validator Telegram chats following that chain.
+// The GovDAO channels already get the proposal that sets the halt.
 func sendHaltNotice(db *gorm.DB, chainID string, n *haltNotice) {
-	if err := internal.SendInfoGovdao(chainID, formatHaltPlain(n), db); err != nil {
-		log.Printf("[halt][%s] SendInfoGovdao error: %v", chainID, err)
-	}
-
-	internal.ConfigMu.Lock()
-	token, defaultChain := internal.Config.TokenTelegramGovdao, internal.Config.DefaultChain
-	enabledChains := slices.Clone(internal.EnabledChains)
-	internal.ConfigMu.Unlock()
-
-	if err := telegram.MsgTelegramGovdao(formatHaltTelegram(chainID, n), chainID, token, defaultChain, enabledChains, db); err != nil {
-		log.Printf("[halt][%s] MsgTelegramGovdao error: %v", chainID, err)
+	if err := sendValidatorAlert(chainID, n.alert(chainID), db); err != nil {
+		log.Printf("[halt][%s] SendInfoValidator error: %v", chainID, err)
 	}
 }
 

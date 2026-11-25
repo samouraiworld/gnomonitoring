@@ -11,6 +11,7 @@ import (
 	rpcclient "github.com/gnolang/gno/tm2/pkg/bft/rpc/client"
 	ctypes "github.com/gnolang/gno/tm2/pkg/bft/rpc/core/types"
 	"github.com/gnolang/gno/tm2/pkg/bft/types"
+	"github.com/samouraiworld/gnomonitoring/backend/internal"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/database"
 	"github.com/samouraiworld/gnomonitoring/backend/internal/testoutils"
 	"github.com/stretchr/testify/assert"
@@ -337,12 +338,27 @@ func TestFormatHaltMessages(t *testing.T) {
 	}
 	plain := formatHaltPlain(n)
 	assert.Contains(t, plain, "Chain halt scheduled by GovDAO")
-	assert.Contains(t, plain, "Halt height: 9000 (current 1800, 7200 blocks left)")
+	assert.Contains(t, plain, "halt height: 9000 (current 1800, 7200 blocks left)")
 	assert.Contains(t, plain, "~5h 0m (around 2026-11-25 15:00 UTC, at 2.50s/block)")
-	assert.Contains(t, plain, "Minimum version to resume: v1.9.0")
+	assert.Contains(t, plain, "minimum version to resume: v1.9.0")
+	assert.NotContains(t, plain, "---")
+
+	// Validator alert format: embed title, level, one field per fact.
+	d := n.alert("gnoland-1")
+	assert.Equal(t, internal.AlertWarning, d.Level)
+	assert.Equal(t, "⏸️", d.Emoji)
+	assert.Equal(t, "Chain halt scheduled by GovDAO", d.Title)
+	assert.Empty(t, d.Description)
+	names := make([]string, len(d.Fields))
+	for i, f := range d.Fields {
+		names[i] = f.Name
+	}
+	assert.Equal(t, []string{"halt height", "estimated time to halt", "minimum version to resume", "note"}, names)
+	_, embed := internal.RenderAlertDiscordEmbed(d)
+	assert.Equal(t, "[gnoland-1] ⏸️ Chain halt scheduled by GovDAO", embed.Title)
 
 	n.Version = "<v2&>"
-	tg := formatHaltTelegram("a&b", n)
+	tg := internal.RenderAlertTelegramHTML(n.alert("a&b"))
 	assert.Contains(t, tg, "[a&amp;b]")
 	assert.Contains(t, tg, "&lt;v2&amp;&gt;")
 	assert.NotContains(t, tg, "<v2")
@@ -350,11 +366,43 @@ func TestFormatHaltMessages(t *testing.T) {
 	n.Kind, n.HasETA = haltNoticeResumed, false
 	n.Version = "v1.9.0"
 	assert.Contains(t, formatHaltPlain(n), "Chain resumed after the halt at height 9000")
+	assert.Equal(t, internal.AlertResolved, n.alert("c").Level)
+
+	n.Kind = haltNoticeReached
+	assert.Equal(t, internal.AlertCritical, n.alert("c").Level)
+	n.Kind = haltNoticeCancelled
+	assert.Equal(t, internal.AlertInfo, n.alert("c").Level)
 
 	n.Kind, n.Version = haltNoticeScheduled, ""
-	assert.Contains(t, formatHaltPlain(n), "Minimum version to resume: none set")
+	assert.Contains(t, formatHaltPlain(n), "minimum version to resume: none set")
 	n.Obs.LatestHeight = 9000
-	assert.Contains(t, formatHaltPlain(n), "Halt height: 9000 (already reached, current 9000)")
+	assert.Contains(t, formatHaltPlain(n), "halt height: 9000 (already reached, current 9000)")
+}
+
+// TestSendHaltNoticeUsesValidatorChannel checks a halt notice goes to the
+// validator alert subscribers of its chain, in the validator alert format.
+func TestSendHaltNoticeUsesValidatorChannel(t *testing.T) {
+	type call struct {
+		chainID string
+		data    internal.AlertData
+	}
+	var calls []call
+	orig := sendValidatorAlert
+	sendValidatorAlert = func(chainID string, d internal.AlertData, _ *gorm.DB) error {
+		calls = append(calls, call{chainID, d})
+		return nil
+	}
+	t.Cleanup(func() { sendValidatorAlert = orig })
+
+	n := &haltNotice{Kind: haltNoticeReached, Height: 62, Version: "v1.9.0",
+		Obs: haltObservation{LatestHeight: 62, Age: time.Minute}}
+	sendHaltNotice(nil, "gnoland-1", n)
+
+	require.Len(t, calls, 1)
+	assert.Equal(t, "gnoland-1", calls[0].chainID)
+	assert.Equal(t, "gnoland-1", calls[0].data.ChainID)
+	assert.Equal(t, "Chain halted at height 62 as scheduled", calls[0].data.Title)
+	assert.Equal(t, internal.AlertCritical, calls[0].data.Level)
 }
 
 // sentHalt records the notices checkChainHalt dispatched.

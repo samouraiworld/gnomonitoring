@@ -132,8 +132,9 @@ Entries are ordered newest-first within each section.
 - **GovDAO-voted chain halt alerts** — each enabled chain's halt params
   (`node:p:halt_height`, `node:p:halt_min_version`, set by a GovDAO proposal
   built with `r/sys/params.NewSetHaltRequest`) are read every 30 seconds. The
-  GovDAO subscribers (webhooks and Telegram chats of that chain) get a notice
-  when a halt is scheduled, moved, given another required version or
+  validator alert subscribers (validator webhooks and validator Telegram chats
+  of that chain, like the "Blockchain stuck" alert, in the same embed format)
+  get a notice when a halt is scheduled, moved, given another required version or
   cancelled, with the halt height, the required version and the estimated time
   to halt (block pace over the last 3000 blocks). Two reminders follow,
   `halt_reminder_minutes` (default 60) and `halt_final_reminder_minutes`
