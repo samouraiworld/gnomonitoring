@@ -77,7 +77,7 @@ type probeResult struct {
 // one. Returns the promoted index, or -1 when none answered or the promotion
 // was stale (a newer switch was applied while the probes ran).
 //
-// Only endpoints on the reference network (see referenceNetwork) are
+// Only endpoints on the chain's pinned network (see referenceNetwork) are
 // considered: a backup left on another network, or on an old
 // chain ID after a reset, may report a higher height that has nothing to do
 // with this chain. Among them, an endpoint is healthy when it answers Status
@@ -112,7 +112,8 @@ func (c *Client) checkOnce() int {
 		return -1
 	}
 
-	pick := c.pick(results, -1)
+	network, known := c.referenceNetwork(results)
+	pick := c.pick(results, -1, network, known)
 	if pick < 0 {
 		// Every probe failed within defaultProbeTimeout. This is
 		// deliberately not reported as EventAllDown — see checkOnce's doc
@@ -140,8 +141,8 @@ func (c *Client) checkOnce() int {
 // stall cannot be checked elsewhere), and, without probing, when the pool has
 // a single endpoint.
 //
-// When the stall is disproved, the endpoints still at or below height are
-// marked frozen, so the next health probe does not move the pool back to one
+// When the stall is disproved, the active endpoint and the endpoints still
+// exactly at height are marked frozen, so the next health probe does not move the pool back to one
 // of them merely because it is within maxLagBlocks of the best endpoint.
 func (c *Client) ConfirmStall(height int64) bool {
 	c.mu.Lock()
@@ -153,11 +154,18 @@ func (c *Client) ConfirmStall(height int64) bool {
 
 	results := c.probeAll()
 
-	pick := c.pick(results, height)
+	network, known := c.referenceNetwork(results)
+	if !known {
+		// The active endpoint has not answered a probe yet and the
+		// endpoints do not all agree: no height can be trusted to be on
+		// this chain.
+		return true
+	}
+	pick := c.pick(results, height, network, true)
 	if pick < 0 {
 		return true
 	}
-	c.markFrozen(results, height)
+	c.markFrozen(results, height, network)
 	c.mu.Lock()
 	endpoint := c.endpoints[pick]
 	c.mu.Unlock()
@@ -170,63 +178,78 @@ func (c *Client) ConfirmStall(height int64) bool {
 	return false
 }
 
-// referenceNetwork returns the network reported by the most answering
-// endpoints, ties going to the highest-priority one, or "" when none
-// answered. A majority, rather than the primary alone, lets the backups
-// outvote a primary left on an old chain ID after a reset. With two
-// endpoints that disagree, the primary wins: the pool has no other way to
-// tell which network is the configured chain.
-func referenceNetwork(results []probeResult) string {
-	counts := make(map[string]int)
+// referenceNetwork returns the network this pool's chain is on, and whether
+// it is known. The network is pinned the first time the active endpoint
+// answers a probe (at startup that is the primary, as configured by the
+// operator), and pinned again only when every endpoint answers with the
+// same network, as after a chain-ID upgrade. A vote among whichever
+// endpoints happened to answer is deliberately not used: two backups left on
+// an old chain ID would outvote a healthy primary, and a halted active
+// endpoint that hangs its RPC would hand the vote to a backup on another
+// network.
+func (c *Client) referenceNetwork(results []probeResult) (string, bool) {
+	answered, first, same := 0, "", true
 	for _, r := range results {
-		if r.err == nil {
-			counts[r.network]++
+		if r.err != nil {
+			continue
 		}
-	}
-	ref, refCount := "", 0
-	for _, r := range results {
-		if r.err == nil && counts[r.network] > refCount {
-			ref, refCount = r.network, counts[r.network]
+		if answered == 0 {
+			first = r.network
+		} else if r.network != first {
+			same = false
 		}
+		answered++
 	}
-	return ref
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if answered > 0 && answered == len(results) && same {
+		c.network, c.networkKnown = first, true
+	}
+	if !c.networkKnown && c.activeIdx < len(results) && results[c.activeIdx].err == nil {
+		c.network, c.networkKnown = results[c.activeIdx].network, true
+	}
+	return c.network, c.networkKnown
 }
 
-// markFrozen records, for every answering endpoint on the reference network
-// that is at or below height, the height it was frozen at.
-func (c *Client) markFrozen(results []probeResult, height int64) {
-	network := referenceNetwork(results)
+// markFrozen records as frozen the active endpoint, which served the stalled
+// height, and every answering endpoint on network still exactly at height.
+// An endpoint merely lagging below height is still advancing and is left to
+// the lag check.
+func (c *Client) markFrozen(results []probeResult, height int64, network string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i, r := range results {
-		if r.err == nil && r.network == network && r.height <= height {
+		if r.err != nil || r.network != network {
+			continue
+		}
+		if r.height == height || (i == c.activeIdx && r.height <= height) {
 			c.frozenAt[i] = r.height
 		}
 	}
 }
 
-// pick chooses the endpoint to serve from among those on the reference
-// network that answered and report a height above floor (see pickEndpoint).
-// Endpoints marked frozen are left out while they stay at their frozen
-// height, and their mark is cleared once they move; if that leaves no
-// candidate, the choice is made again without leaving them out.
-func (c *Client) pick(results []probeResult, floor int64) int {
-	network := referenceNetwork(results)
-	eligible := make([]probeResult, len(results))
-	copy(eligible, results)
-	unfrozen := make([]probeResult, len(results))
-	copy(unfrozen, results)
+// pick chooses the endpoint to serve from among those on network that
+// answered and report a height above floor (see pickEndpoint). When network
+// is not known, every answering endpoint is considered, which is what the
+// probe did before it compared heights. Endpoints marked frozen are left out
+// while they stay at their frozen height, and their mark is cleared once
+// they move. A frozen endpoint is never chosen, even when nothing else
+// qualifies: the live endpoint missing one probe does not make the frozen
+// one worth serving from again.
+func (c *Client) pick(results []probeResult, floor int64, network string, known bool) int {
+	candidates := make([]probeResult, len(results))
+	copy(candidates, results)
 
 	c.mu.Lock()
 	for i, r := range results {
 		if r.err != nil {
 			continue
 		}
-		if r.network != network {
+		if known && r.network != network {
 			log.Printf("[rpcpool] health probe: %s reports network %q, expected %q; ignored",
 				c.endpoints[i], r.network, network)
-			eligible[i].err = errWrongNetwork
-			unfrozen[i].err = errWrongNetwork
+			candidates[i].err = errWrongNetwork
 			continue
 		}
 		if h, ok := c.frozenAt[i]; ok {
@@ -236,17 +259,13 @@ func (c *Client) pick(results []probeResult, floor int64) int {
 			if r.height != h {
 				delete(c.frozenAt, i)
 			} else {
-				unfrozen[i].err = errFrozen
+				candidates[i].err = errFrozen
 			}
 		}
 	}
 	c.mu.Unlock()
 
-	maxLag := c.maxLagBlocks()
-	if i := pickEndpoint(unfrozen, maxLag, floor); i >= 0 {
-		return i
-	}
-	return pickEndpoint(eligible, maxLag, floor)
+	return pickEndpoint(candidates, c.maxLagBlocks(), floor)
 }
 
 // pickEndpoint chooses which endpoint to serve from, among those that

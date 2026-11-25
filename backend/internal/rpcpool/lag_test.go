@@ -337,17 +337,64 @@ func TestCheckOnce_PlainSuccessDuringSlowProbeDoesNotBlockFailover(t *testing.T)
 	assert.Equal(t, "e1", c.ActiveEndpoint())
 }
 
-// The backups outvote a primary left on an old chain ID after a reset.
-func TestCheckOnce_MajorityNetworkOutvotesPrimary(t *testing.T) {
+// Two backups left on an old chain ID must not outvote a healthy primary:
+// the network is pinned from the active endpoint.
+func TestCheckOnce_OutdatedBackupsDoNotOutvotePrimary(t *testing.T) {
 	c := newLagPool(t, 10,
-		&fakeConn{endpoint: "e0", height: 5000, network: "old"},
-		&fakeConn{endpoint: "e1", height: 100, network: "test"},
-		&fakeConn{endpoint: "e2", height: 100, network: "test"},
+		&fakeConn{endpoint: "e0", height: 100, network: "new"},
+		&fakeConn{endpoint: "e1", height: 9000, network: "old"},
+		&fakeConn{endpoint: "e2", height: 9000, network: "old"},
 	)
 
-	assert.Equal(t, 1, c.checkOnce())
+	assert.Equal(t, 0, c.checkOnce())
+	assert.Equal(t, "e0", c.ActiveEndpoint())
+}
+
+// A halted active endpoint that hangs its RPC must not hand the stall
+// verdict to a backup on another network.
+func TestConfirmStall_ActiveSilentAndBackupOnOtherNetwork(t *testing.T) {
+	e0 := &fakeConn{endpoint: "e0", height: 100, network: "chain"}
+	e1 := &fakeConn{endpoint: "e1", height: 5000, network: "other"}
+	c := newLagPool(t, 10, e0, e1)
+
+	// Before any probe has pinned the network: nothing can be trusted.
+	e0.statusErr = errDown
+	assert.True(t, c.ConfirmStall(100))
+
+	// After a probe pinned it from the active endpoint.
+	e0.statusErr = nil
+	require.Equal(t, 0, c.checkOnce())
+	e0.statusErr = errDown
+	assert.True(t, c.ConfirmStall(100))
+	assert.Equal(t, "e0", c.ActiveEndpoint())
+}
+
+// When every endpoint reports the same new network (a chain-ID upgrade),
+// the pinned network follows.
+func TestCheckOnce_RepinsWhenEveryEndpointAgrees(t *testing.T) {
+	e0 := &fakeConn{endpoint: "e0", height: 100, network: "v1"}
+	e1 := &fakeConn{endpoint: "e1", height: 100, network: "v1"}
+	c := newLagPool(t, 10, e0, e1)
+	require.Equal(t, 0, c.checkOnce())
+
+	e0.network, e0.height = "v2", 1
+	e1.network, e1.height = "v2", 30
+	assert.Equal(t, 1, c.checkOnce(), "heights on the new network are compared again")
+}
+
+// After ConfirmStall moved off a frozen endpoint, the live endpoint missing
+// one probe must not put the frozen one back.
+func TestCheckOnce_NeverFallsBackToFrozenEndpoint(t *testing.T) {
+	e0 := &fakeConn{endpoint: "e0", height: 100}
+	e1 := &fakeConn{endpoint: "e1", height: 160}
+	c := newLagPool(t, 10, e0, e1)
+
+	require.False(t, c.ConfirmStall(100))
+	require.Equal(t, "e1", c.ActiveEndpoint())
+
+	e1.statusErr = errDown
+	assert.Equal(t, -1, c.checkOnce())
 	assert.Equal(t, "e1", c.ActiveEndpoint())
-	assert.True(t, c.ConfirmStall(100), "the old network's height must not disprove a stall on the chain")
 }
 
 // A frozen mark is cleared when the node moves below its frozen height too

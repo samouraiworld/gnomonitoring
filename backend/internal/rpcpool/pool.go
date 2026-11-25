@@ -115,6 +115,10 @@ type Client struct {
 	// frozenAt maps an endpoint index to the height it was frozen at, as
 	// found by ConfirmStall. Guarded by mu. See pick in health.go.
 	frozenAt map[int]int64
+	// network is the chain ID this pool's endpoints must report, once
+	// networkKnown. Guarded by mu. See referenceNetwork in health.go.
+	network      string
+	networkKnown bool
 }
 
 // maxLagBlocks returns the current lag threshold, falling back to

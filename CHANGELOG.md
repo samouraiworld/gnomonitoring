@@ -347,7 +347,8 @@ Entries are ordered newest-first within each section.
   parallel, with `latest_block_height` and `catching_up`, and moves the pool
   off an endpoint that is catching up or trails the most advanced one by more
   than `rpc_max_lag_blocks`. Heights are compared only among endpoints on
-  the network most of them report, so a backup left on another network or an
+  the chain's network, pinned from the active endpoint (and again when every
+  endpoint agrees on a new one), so a backup left on another network or an
   old chain ID cannot take over. Before a stuck alert goes out, the other
   endpoints are probed: if one is past the stalled height, no alert is sent,
   the pool moves to it, and the endpoints still at the stalled height are
