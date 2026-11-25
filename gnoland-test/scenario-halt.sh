@@ -18,7 +18,8 @@
 #      (restart: on-failure) and it resumes because the binary meets
 #      MIN_VERSION. Nodes still stuck are restarted by hand.
 #   5. Assert the alert_logs rows of chain dev: HALT_SCHEDULED, HALT_REMINDER,
-#      HALT_FINAL_REMINDER and HALT_RESUMED, each dispatched once, in order.
+#      HALT_FINAL_REMINDER, HALT_REACHED (only when the chain stayed halted for
+#      over a minute) and HALT_RESUMED, each dispatched once, in order.
 #   6. On exit, success or failure: restore the previous thresholds.
 #
 # MIN_VERSION defaults to "dev", the version compiled into an image built
@@ -197,16 +198,17 @@ done
 
 echo ">>> Step 5: wait for the resumed notice (poll every 30s)"
 want="HALT_SCHEDULED HALT_REMINDER HALT_FINAL_REMINDER HALT_RESUMED"
+want_reached="HALT_SCHEDULED HALT_REMINDER HALT_FINAL_REMINDER HALT_REACHED HALT_RESUMED"
 for _ in $(seq 1 24); do
   got="$(psql_q "SELECT string_agg(level, ' ' ORDER BY id) FROM alert_logs
                  WHERE chain_id = 'dev' AND addr = 'halt' AND skipped = true AND start_height = $halt_height")"
-  [ "$got" = "$want" ] && break
+  [ "$got" = "$want" ] || [ "$got" = "$want_reached" ] && break
   sleep 5
 done
 psql_q "SELECT level, start_height, moniker, skipped, sent_at FROM alert_logs
         WHERE chain_id = 'dev' AND addr = 'halt' ORDER BY id" | sed 's/^/    /'
 docker logs gnomonitoring-backend 2>&1 | grep '\[halt\]\[dev\]' | grep -v "read failed" | tail -8 | sed 's/^/    /'
-if [ "$got" = "$want" ]; then
+if [ "$got" = "$want" ] || [ "$got" = "$want_reached" ]; then
   echo "PASS: $got"
 else
   echo "FAIL: dispatched notices '$got', want '$want'"

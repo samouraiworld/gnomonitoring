@@ -40,6 +40,11 @@ func (f *fakeHaltChain) timeOf(h int64) time.Time {
 	return f.genesis.Add(time.Duration(h) * f.blockTime)
 }
 
+// now is a moment just after the head block, as a poll would see it.
+func (f *fakeHaltChain) now() time.Time {
+	return f.timeOf(f.height).Add(5 * time.Second)
+}
+
 func (f *fakeHaltChain) setHalt(height int64, version string) {
 	f.haltHeight = []byte(fmt.Sprintf("%q", fmt.Sprint(height)))
 	f.minVersion = []byte(fmt.Sprintf("%q", version))
@@ -274,9 +279,18 @@ func TestParseHaltMinVersionRejectsMarkup(t *testing.T) {
 	for _, raw := range []string{`"@everyone"`, `"<!channel>"`, `"v1\nv2"`, `"[x](https://evil)"`, fmt.Sprintf("%q", strings.Repeat("v", 65))} {
 		v, err := parseHaltMinVersion([]byte(raw))
 		require.NoError(t, err, raw)
-		assert.Equal(t, invalidHaltVersion, v, raw)
+		assert.Contains(t, v, "(sanitized)", raw)
+		assert.NotContains(t, v, "@", raw)
+		assert.NotContains(t, v, "<", raw)
+		assert.NotContains(t, v, "\n", raw)
+		assert.NotContains(t, v, "](", raw)
+		assert.LessOrEqual(t, len(v), maxHaltVersionLen+len("... (sanitized)"), raw)
 	}
-	v, err := parseHaltMinVersion([]byte(`"chain/gnoland1.1"`))
+	v, err := parseHaltMinVersion([]byte(`"@everyone"`))
+	require.NoError(t, err)
+	assert.Equal(t, "?everyone (sanitized)", v)
+
+	v, err = parseHaltMinVersion([]byte(`"chain/gnoland1.1"`))
 	require.NoError(t, err)
 	assert.Equal(t, "chain/gnoland1.1", v)
 }
@@ -368,10 +382,8 @@ func TestCheckChainHaltLifecycle(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	sent := stubHaltNotify(t)
 	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
-	now := time.Now()
 	check := func() {
-		now = now.Add(time.Second)
-		_ = checkChainHalt(db, "test", f, now)
+		_ = checkChainHalt(db, "test", f, f.now())
 	}
 
 	check()
@@ -402,12 +414,15 @@ func TestCheckChainHaltLifecycle(t *testing.T) {
 	// Halted at the halt height.
 	f.height = 20_000
 	check()
+	// No block for over a minute: the halt is reached.
+	_ = checkChainHalt(db, "test", f, f.timeOf(f.height).Add(2*time.Minute))
+	_ = checkChainHalt(db, "test", f, f.timeOf(f.height).Add(20*time.Minute))
 	// Resumed on the new binary; the param keeps the past height.
 	f.height = 20_005
 	check()
 	check()
 	assert.Equal(t, []haltNoticeKind{
-		haltNoticeScheduled, haltNoticeMoved, haltNoticeReminder, haltNoticeFinalReminder, haltNoticeResumed,
+		haltNoticeScheduled, haltNoticeMoved, haltNoticeReminder, haltNoticeFinalReminder, haltNoticeReached, haltNoticeResumed,
 	}, kinds(*sent))
 
 	var rows []database.AlertLog
@@ -420,7 +435,7 @@ func TestCheckChainHaltLifecycle(t *testing.T) {
 	}
 	assert.Equal(t, []string{
 		"HALT_SCHEDULED@19000/v1.9.0", "HALT_SCHEDULED@20000/v1.9.0", "HALT_REMINDER@20000/v1.9.0",
-		"HALT_FINAL_REMINDER@20000/v1.9.0", "HALT_RESUMED@20000/v1.9.0",
+		"HALT_FINAL_REMINDER@20000/v1.9.0", "HALT_REACHED@20000/v1.9.0", "HALT_RESUMED@20000/v1.9.0",
 	}, levels)
 }
 
@@ -428,15 +443,13 @@ func TestCheckChainHaltCancel(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	sent := stubHaltNotify(t)
 	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
-	now := time.Now()
-
 	f.setHalt(10_050, "v1.9.0") // 100s ahead: inside both reminder windows
-	_ = checkChainHalt(db, "test", f, now)
+	_ = checkChainHalt(db, "test", f, f.now())
 	f.height = 10_040
-	_ = checkChainHalt(db, "test", f, now.Add(time.Second))
+	_ = checkChainHalt(db, "test", f, f.now())
 	f.setHalt(0, "")
-	_ = checkChainHalt(db, "test", f, now.Add(2*time.Second))
-	_ = checkChainHalt(db, "test", f, now.Add(3*time.Second))
+	_ = checkChainHalt(db, "test", f, f.now())
+	_ = checkChainHalt(db, "test", f, f.now())
 
 	assert.Equal(t, []haltNoticeKind{haltNoticeScheduled, haltNoticeCancelled}, kinds(*sent))
 	assert.True(t, strings.Contains(formatHaltPlain((*sent)[1]), "height 10050 cancelled"))
@@ -458,12 +471,12 @@ func TestCheckChainHaltReadErrorSendsNothing(t *testing.T) {
 	sent := stubHaltNotify(t)
 	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
 	f.setHalt(19_000, "v1.9.0")
-	_ = checkChainHalt(db, "test", f, time.Now())
+	_ = checkChainHalt(db, "test", f, f.now())
 	require.Len(t, *sent, 1)
 
 	// An unreadable param must not read as a cancellation.
 	f.abciErr = abci.StringError("boom")
-	_ = checkChainHalt(db, "test", f, time.Now().Add(time.Second))
+	_ = checkChainHalt(db, "test", f, f.now())
 	assert.Len(t, *sent, 1)
 }
 
@@ -472,13 +485,13 @@ func TestCheckChainHaltIgnoresNodeBehind(t *testing.T) {
 	sent := stubHaltNotify(t)
 	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
 	f.setHalt(19_000, "v1.9.0")
-	_ = checkChainHalt(db, "test", f, time.Now())
+	_ = checkChainHalt(db, "test", f, f.now())
 	require.Len(t, *sent, 1)
 
 	// The pool fails over to a node whose state predates the proposal.
 	f.height = 9_900
 	f.setHalt(0, "")
-	_ = checkChainHalt(db, "test", f, time.Now().Add(time.Second))
+	_ = checkChainHalt(db, "test", f, f.now())
 	assert.Len(t, *sent, 1, "a node behind must not read as a cancellation")
 }
 
@@ -489,16 +502,25 @@ func TestCheckChainHaltMissedMoveIsNotAResume(t *testing.T) {
 	sent := stubHaltNotify(t)
 	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
 	f.setHalt(20_000, "v1.9.0")
-	_ = checkChainHalt(db, "test", f, time.Now())
+	_ = checkChainHalt(db, "test", f, f.now())
 
 	f.setHalt(30_000, "v1.9.0")
 	f.pastHalt = map[int64][]byte{20_000: []byte(`"30000"`)}
 	f.height = 20_500
-	_ = checkChainHalt(db, "test", f, time.Now().Add(time.Second))
-	_ = checkChainHalt(db, "test", f, time.Now().Add(2*time.Second))
+	_ = checkChainHalt(db, "test", f, f.now())
+	_ = checkChainHalt(db, "test", f, f.now())
 
-	assert.Equal(t, []haltNoticeKind{haltNoticeScheduled, haltNoticeCancelled, haltNoticeScheduled}, kinds(*sent))
-	assert.Equal(t, int64(20_000), (*sent)[1].Height)
+	assert.Equal(t, []haltNoticeKind{haltNoticeScheduled, haltNoticeMoved}, kinds(*sent))
+	assert.Equal(t, int64(30_000), (*sent)[1].Height)
+	assert.Equal(t, int64(20_000), (*sent)[1].PrevHeight)
+	assert.True(t, (*sent)[1].HasETA)
+
+	// A cancel missed the same way is reported as one.
+	f.setHalt(0, "")
+	f.pastHalt = map[int64][]byte{30_000: []byte(`"0"`)}
+	f.height = 30_100
+	_ = checkChainHalt(db, "test", f, f.now())
+	assert.Equal(t, haltNoticeCancelled, (*sent)[2].Kind)
 	assert.Equal(t, int64(30_000), (*sent)[2].Height)
 }
 
@@ -509,13 +531,13 @@ func TestCheckChainHaltReachedOnFirstSight(t *testing.T) {
 	sent := stubHaltNotify(t)
 	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(1_700_000_000, 0)}
 	f.setHalt(10_000, "v1.9.0")
-	_ = checkChainHalt(db, "test", f, time.Now())
-	_ = checkChainHalt(db, "test", f, time.Now().Add(time.Second))
+	_ = checkChainHalt(db, "test", f, f.now())
+	_ = checkChainHalt(db, "test", f, f.now())
 	require.Equal(t, []haltNoticeKind{haltNoticeScheduled}, kinds(*sent))
 	assert.Contains(t, formatHaltPlain((*sent)[0]), "already reached")
 
 	f.height = 10_003
-	_ = checkChainHalt(db, "test", f, time.Now().Add(2*time.Second))
+	_ = checkChainHalt(db, "test", f, f.now())
 	assert.Equal(t, []haltNoticeKind{haltNoticeScheduled, haltNoticeResumed}, kinds(*sent))
 }
 
@@ -523,5 +545,24 @@ func TestCheckChainHaltReturnsReadError(t *testing.T) {
 	db := testoutils.NewTestDB(t)
 	stubHaltNotify(t)
 	f := &fakeHaltChain{height: 10_000, blockTime: 2 * time.Second, genesis: time.Unix(0, 0), abciErr: abci.StringError("module not registered")}
-	assert.Error(t, checkChainHalt(db, "test", f, time.Now()))
+	assert.Error(t, checkChainHalt(db, "test", f, f.now()))
+}
+
+func TestDecideHaltStaleHead(t *testing.T) {
+	th := haltThresholds{Reminder: time.Hour, FinalReminder: 5 * time.Minute}
+	// A stuck node still showing an old halt ahead: nothing is announced.
+	obs := haltObservation{HaltHeight: 1_651_500, MinVersion: "v1.8.0", LatestHeight: 1_651_400, Age: time.Hour}
+	assert.Nil(t, decideHalt(obs, haltState{}, 2*time.Second, th))
+
+	// A stuck node at an old halt height it never passed: not a new halt.
+	obs = haltObservation{HaltHeight: 1_651_500, MinVersion: "v1.8.0", LatestHeight: 1_651_500, Age: time.Hour}
+	assert.Nil(t, decideHalt(obs, haltState{}, 2*time.Second, th))
+
+	// The announced halt, held for an hour: still reported as reached.
+	st := haltState{Announcement: &haltRecord{ID: 1, Level: LevelHaltScheduled, Height: 1_651_500, Version: "v1.8.0"}, Reminded: true}
+	n := decideHalt(obs, st, 2*time.Second, th)
+	require.NotNil(t, n)
+	assert.Equal(t, haltNoticeReached, n.Kind)
+	assert.Equal(t, []string{LevelHaltReached, LevelHaltFinalReminder}, n.Levels)
+	assert.Contains(t, formatHaltPlain(n), "Chain halted at height 1651500 as scheduled")
 }

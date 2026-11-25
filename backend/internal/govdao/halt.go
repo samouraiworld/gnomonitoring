@@ -51,6 +51,7 @@ const (
 	LevelHaltCancelled     = "HALT_CANCELLED"
 	LevelHaltReminder      = "HALT_REMINDER"
 	LevelHaltFinalReminder = "HALT_FINAL_REMINDER"
+	LevelHaltReached       = "HALT_REACHED"
 	LevelHaltResumed       = "HALT_RESUMED"
 )
 
@@ -75,6 +76,14 @@ const (
 
 	// maxHaltVersionLen bounds the on-chain version string shown in notices.
 	maxHaltVersionLen = 64
+
+	// haltStaleAfter is how old a head may be before the node serving it is
+	// taken as stuck or isolated: nothing is decided on it, except for a chain
+	// halted at the announced height, whose head legitimately stops moving.
+	haltStaleAfter = 15 * time.Minute
+	// haltReachedAfter is how long the head must stay at the halt height
+	// before the halt is announced as reached.
+	haltReachedAfter = time.Minute
 )
 
 // haltVersionPattern is what a displayable halt_min_version may contain: the
@@ -97,6 +106,8 @@ type haltObservation struct {
 	MinVersion   string
 	LatestHeight int64
 	LatestTime   time.Time
+	// Age is how long ago the head block was produced, at decision time.
+	Age time.Duration
 }
 
 // scheduled reports whether the chain still has a halt ahead of it, or is
@@ -149,9 +160,10 @@ func parseHaltHeight(raw []byte) (int64, error) {
 	return h, nil
 }
 
-// parseHaltMinVersion decodes the amino JSON of a string param. A value that
-// is not a plain version (see haltVersionPattern) or longer than
-// maxHaltVersionLen is replaced by a fixed placeholder, so on-chain text never
+// parseHaltMinVersion decodes the amino JSON of a string param. The value is
+// set on chain by a proposal, so every character outside haltVersionPattern
+// (markup, mentions, newlines) is replaced by '?' and the result is cut at
+// maxHaltVersionLen: an odd value stays recognizable for operators, but never
 // reaches a message as is.
 func parseHaltMinVersion(raw []byte) (string, error) {
 	if raw == nil {
@@ -162,17 +174,23 @@ func parseHaltMinVersion(raw []byte) (string, error) {
 		return "", fmt.Errorf("halt_min_version: %w", err)
 	}
 	v = strings.TrimSpace(v)
-	if v == "" {
-		return "", nil
+	if v == "" || (len(v) <= maxHaltVersionLen && haltVersionPattern.MatchString(v)) {
+		return v, nil
 	}
-	if len(v) > maxHaltVersionLen || !haltVersionPattern.MatchString(v) {
-		return invalidHaltVersion, nil
+	var b strings.Builder
+	for _, r := range v {
+		if b.Len() >= maxHaltVersionLen {
+			b.WriteString("...")
+			break
+		}
+		if r < 128 && haltVersionPattern.MatchString(string(r)) {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('?')
+		}
 	}
-	return v, nil
+	return b.String() + " (sanitized)", nil
 }
-
-// invalidHaltVersion stands for a halt_min_version that cannot be displayed.
-const invalidHaltVersion = "(unreadable version)"
 
 // observeHalt reads the chain head, then the halt params at that height.
 func observeHalt(c haltRPC) (haltObservation, error) {
@@ -262,6 +280,7 @@ type haltState struct {
 	Announcement  *haltRecord
 	Reminded      bool
 	FinalReminded bool
+	Reached       bool
 	Resumed       bool
 	// LastObserved is the highest chain head any halt notice was decided at.
 	// An observation below it comes from a node behind and is ignored.
@@ -295,12 +314,13 @@ func loadHaltState(db *gorm.DB, chainID string) (haltState, error) {
 	if err := db.Model(&database.AlertLog{}).
 		Where("chain_id = ? AND addr = ? AND start_height = ? AND id > ? AND level IN ?",
 			chainID, haltAlertAddr, a.StartHeight, a.ID,
-			[]string{LevelHaltReminder, LevelHaltFinalReminder, LevelHaltResumed}).
+			[]string{LevelHaltReminder, LevelHaltFinalReminder, LevelHaltReached, LevelHaltResumed}).
 		Distinct().Pluck("level", &levels).Error; err != nil {
 		return st, fmt.Errorf("load halt notices: %w", err)
 	}
 	st.Reminded = slices.Contains(levels, LevelHaltReminder)
 	st.FinalReminded = slices.Contains(levels, LevelHaltFinalReminder)
+	st.Reached = slices.Contains(levels, LevelHaltReached)
 	st.Resumed = slices.Contains(levels, LevelHaltResumed)
 	return st, nil
 }
@@ -315,6 +335,7 @@ const (
 	haltNoticeCancelled
 	haltNoticeReminder
 	haltNoticeFinalReminder
+	haltNoticeReached
 	haltNoticeResumed
 )
 
@@ -364,6 +385,12 @@ func decideHalt(obs haltObservation, st haltState, pace time.Duration, th haltTh
 	}
 	ann := st.Announcement
 	pending := ann != nil && ann.Level == LevelHaltScheduled && !st.Resumed
+	haltedAtAnnounced := pending && obs.LatestHeight == ann.Height && obs.HaltHeight == ann.Height
+	if obs.Age > haltStaleAfter && !haltedAtAnnounced {
+		// A head this old comes from a stuck or isolated node (or a chain
+		// stalled for another reason, where nothing changes anyway).
+		return nil
+	}
 
 	if pending && obs.LatestHeight > ann.Height {
 		// The chain went past the announced halt: it halted at that height and
@@ -390,7 +417,24 @@ func decideHalt(obs haltObservation, st haltState, pace time.Duration, th haltTh
 			n.PrevHeight = ann.Height
 			n.PrevVer = ann.Version
 		default:
-			// Already announced as is: only the reminders are left.
+			// Already announced as is: only the reminders and the halt itself
+			// are left.
+			if obs.LatestHeight == obs.HaltHeight {
+				// Block H is committed. The halt is confirmed once no block
+				// followed it for haltReachedAfter.
+				if st.Reached || obs.Age < haltReachedAfter {
+					return nil
+				}
+				n.Kind = haltNoticeReached
+				n.Levels = []string{LevelHaltReached}
+				if !st.Reminded && th.Reminder > 0 {
+					n.Levels = append(n.Levels, LevelHaltReminder)
+				}
+				if !st.FinalReminded && th.FinalReminder > 0 {
+					n.Levels = append(n.Levels, LevelHaltFinalReminder)
+				}
+				return n
+			}
 			if !n.HasETA {
 				return nil
 			}
@@ -516,6 +560,13 @@ func (n *haltNotice) lines() (string, []string) {
 		}
 		return fmt.Sprintf("⏰ Chain halt in ~%s", formatHaltDuration(n.Remaining)),
 			append(n.etaLines(), ver)
+	case haltNoticeReached:
+		return fmt.Sprintf("⏸️ Chain halted at height %d as scheduled", n.Height),
+			[]string{
+				fmt.Sprintf("No new block for %s.", formatHaltDuration(n.Obs.Age)),
+				ver,
+				"Restart your node on a binary meeting the minimum version.",
+			}
 	case haltNoticeCancelled:
 		return fmt.Sprintf("▶️ Scheduled chain halt at height %d cancelled by GovDAO", n.Height),
 			[]string{fmt.Sprintf("Current height: %d", n.Obs.LatestHeight)}
@@ -596,18 +647,37 @@ var (
 // confirmResumed checks that the chain really halted at the announced height
 // before it is reported as resumed: if gnomonitoring missed a later vote that
 // moved or cancelled that halt, the chain went past it without stopping. The
-// param is read at the halt height itself; on a node that no longer has that
+// params are read at the halt height itself. On a node that no longer has that
 // state, the resume is reported as observed.
-func confirmResumed(c haltRPC, n *haltNotice) *haltNotice {
+func confirmResumed(c haltRPC, n *haltNotice, st haltState, pace time.Duration, th haltThresholds) *haltNotice {
 	raw, err := readHaltParam(c, haltHeightParamPath, n.Height)
 	if err != nil {
 		return n
 	}
 	h, err := parseHaltHeight(raw)
-	if err != nil || h == n.Height {
+	if err != nil {
+		return n
+	}
+	if h == n.Height {
+		// The version the nodes were checked against at the halt, which a
+		// late vote may have changed after the announcement.
+		if raw, err := readHaltParam(c, haltMinVersionParamPath, n.Height); err == nil {
+			if v, err := parseHaltMinVersion(raw); err == nil {
+				n.Version = v
+			}
+		}
 		return n
 	}
 	// The halt at n.Height was replaced before the chain reached it.
+	if n.Obs.scheduled() {
+		// By another one still ahead: announce it as the move it is.
+		moved := decideHalt(n.Obs, haltState{LastObserved: st.LastObserved}, pace, th)
+		if moved != nil && moved.Kind == haltNoticeScheduled {
+			moved.Kind = haltNoticeMoved
+			moved.PrevHeight = n.Height
+			return moved
+		}
+	}
 	return &haltNotice{Kind: haltNoticeCancelled, Height: n.Height, Version: n.Version, Obs: n.Obs,
 		Levels: []string{LevelHaltCancelled}}
 }
@@ -619,6 +689,7 @@ func checkChainHalt(db *gorm.DB, chainID string, c haltRPC, now time.Time) error
 	if err != nil {
 		return err
 	}
+	obs.Age = now.Sub(obs.LatestTime)
 	st, err := loadHaltState(db, chainID)
 	if err != nil {
 		log.Printf("[halt][%s] %v", chainID, err)
@@ -633,12 +704,13 @@ func checkChainHalt(db *gorm.DB, chainID string, c haltRPC, now time.Time) error
 		}
 	}
 
-	n := decideHalt(obs, st, pace, loadHaltThresholds(db))
+	th := loadHaltThresholds(db)
+	n := decideHalt(obs, st, pace, th)
 	if n == nil {
 		return nil
 	}
 	if n.Kind == haltNoticeResumed {
-		n = confirmResumed(c, n)
+		n = confirmResumed(c, n, st, pace, th)
 	}
 	msg := formatHaltPlain(n)
 	// Record before sending: a failed insert must not turn into the same

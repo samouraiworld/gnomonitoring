@@ -137,16 +137,18 @@ Entries are ordered newest-first within each section.
   cancelled, with the halt height, the required version and the estimated time
   to halt (block pace over the last 3000 blocks). Two reminders follow,
   `halt_reminder_minutes` (default 60) and `halt_final_reminder_minutes`
-  (default 5) before the halt, both editable in the panel, then a "chain
+  (default 5) before the halt, both editable in the panel, a "chain halted"
+  notice once no block followed the halt height for a minute, then a "chain
   resumed" notice once the chain moves past the halt height, after checking at
   that height that the halt was still set there (a move or cancel missed while
   gnomonitoring was down is reported as a cancel, not a resume). A halt first
   seen when the chain already sits at its height is still announced. A halt
   already past (the params are never reset) is never announced. The params are read at
-  the height `/status` reports, and a node that is catching up or behind the
-  last notice is ignored, so a lagging node cannot fake a cancellation. The
-  on-chain version string is shown only if it is a plain version (64 chars
-  max). Notices are recorded in `alert_logs` (`addr = 'halt'`, dedicated
+  the height `/status` reports, and a node that is catching up, behind the
+  last notice, or whose head is over 15 minutes old (outside a halt) is
+  ignored, so a lagging or stuck node cannot fake a notice. A move missed
+  during downtime is reported as a move. The on-chain version string is shown
+  with any character outside a plain version replaced by `?` (64 chars max). Notices are recorded in `alert_logs` (`addr = 'halt'`, dedicated
   `HALT_*` levels, `end_height` = head at decision), so a restart repeats none
   of them; no schema change. `halt` is a reserved address for
   `/latest_incidents?addr=`, and halt notices are left out of that list.
