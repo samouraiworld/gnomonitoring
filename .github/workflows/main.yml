@@ -20,6 +20,10 @@ jobs:
             # gnomonitoringv2 is the live Postgres-era project; ~/gnomonitoring is the
             # retired SQLite-era dir (renamed *-legacy-sqlite on the box) — deploying
             # there crashloops the backend with an empty database DSN (2026-07-10).
+            # Only the backend service (detect-proposal) is rolled out. A bare
+            # `docker compose pull` also pulled the floating postgres:16 tag and
+            # `up -d` then recreated the production database container on every
+            # minor Postgres release (2026-11-26). --no-deps leaves postgres alone.
             cd gnomonitoringv2
-            docker compose pull
-            docker compose up -d
+            docker compose pull detect-proposal
+            docker compose up -d --no-deps detect-proposal
